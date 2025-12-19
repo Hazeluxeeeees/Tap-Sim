@@ -1,25 +1,41 @@
--- SERVICES (Sicherheits-Check eingebaut)
-local RunService = game:GetService("RunService")
+-- SERVICES
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 local VirtualUser = game:GetService("VirtualUser")
 
 local player = Players.LocalPlayer
 
--- REMOTES FINDER (Sucht automatisch die richtigen Pfade)
-local Events = ReplicatedStorage:WaitForChild("Remotes", 5):WaitForChild("Events", 5)
-local ClickEvent = Events and Events:FindFirstChild("ClickEvent")
-local PullRemote = Events and (Events:FindFirstChild("PullRemote") or Events:FindFirstChild("OnPull"))
-local RebirthRemote = Events and Events:FindFirstChild("RebirthRemote")
+--------------------------------------------------
+-- REMOTES
+--------------------------------------------------
+local Events = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Events")
+local ClickEvent = Events:FindFirstChild("ClickEvent")
+local AttackRemote = Events:FindFirstChild("OnAttackMob")
+local CreditRemote = Events:FindFirstChild("GetCreditsEvent")
+local RebirthRemote = Events:FindFirstChild("RebirthRemote")
+local PullRemote = Events:FindFirstChild("PullRemote") or Events:FindFirstChild("OnPull")
+local DungeonRemote = Events:FindFirstChild("Dungeon") and Events.Dungeon:FindFirstChild("OnDungeonClick")
 
 -- STATES
 local states = {
-    turboWin = false,
-    antiAfk = true
+    autoTrain = false,
+    autoAttack = false,
+    autoClaim = false,
+    autoDungeon = false,
+    autoPull = false,
+    autoRebirth = false,
+    antiAfk = true,
+    dungeonSpeed = 10
 }
+local hotkeys = { toggleGUI = Enum.KeyCode.RightShift }
+local waitingForKey = nil
 
--- ANTI-AFK (Verhindert Kick)
+--------------------------------------------------
+-- ANTI-AFK
+--------------------------------------------------
 player.Idled:Connect(function()
     if states.antiAfk then
         VirtualUser:CaptureController()
@@ -28,31 +44,139 @@ player.Idled:Connect(function()
 end)
 
 --------------------------------------------------
--- GUI DESIGN (Dein Lila Style)
+-- GUI MAIN FRAME
 --------------------------------------------------
 local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
-gui.Name = "PullSword_Fixed"
+gui.Name = "FischStyle_GamesUpdate"
+gui.ResetOnSpawn = false
 
 local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.fromOffset(280, 180)
-frame.Position = UDim2.fromScale(0.5, 0.5)
-frame.AnchorPoint = Vector2.new(0.5, 0.5)
+frame.Size = UDim2.fromOffset(340, 260) 
+frame.Position = UDim2.fromScale(0.35, 0.3)
 frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-frame.BackgroundTransparency = 0.2
-Instance.new("UIStroke", frame).Color = Color3.fromRGB(170, 0, 255)
-Instance.new("UICorner", frame)
+frame.BackgroundTransparency = 0.3
+frame.Active = true
 
-local title = Instance.new("TextLabel", frame)
-title.Size = UDim2.new(1, 0, 0, 40); title.Text = "PULL A SWORD - TURBO WIN"; title.TextColor3 = Color3.new(1, 1, 1); title.Font = Enum.Font.GothamBold; title.BackgroundTransparency = 1
+local outline = Instance.new("UIStroke", frame)
+outline.Color = Color3.fromRGB(170, 0, 255)
+outline.Thickness = 2
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 
--- TOGGLE BUTTON
-local btn = Instance.new("TextButton", frame)
-btn.Size = UDim2.new(0.8, 0, 0, 50); btn.Position = UDim2.new(0.1, 0, 0.4, 0)
-btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30); btn.TextColor3 = Color3.new(1, 1, 1); btn.Font = Enum.Font.GothamBold; btn.Text = "TURBO WIN: OFF"
-Instance.new("UICorner", btn)
+--------------------------------------------------
+-- SMOOTH DRAGGING
+--------------------------------------------------
+local dragStart, startPos, dragging
+frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true; dragStart = input.Position; startPos = frame.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        TweenService:Create(frame, TweenInfo.new(0.12), {Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)}):Play()
+    end
+end)
+UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end end)
 
-btn.MouseButton1Click:Connect(function()
-    states.turboWin = not states.turboWin
-    btn.Text = "TURBO WIN: " .. (states.turboWin and "ON" or "OFF")
-    btn.TextColor3 = states.turboWin and Color3.fromRGB(170, 0, 255) or Color3.new(1, 1, 1)
+--------------------------------------------------
+-- SIDEBAR & PAGES
+--------------------------------------------------
+local sidebar = Instance.new("Frame", frame)
+sidebar.Size = UDim2.new(0.25, 0, 1, 0); sidebar.BackgroundColor3 = Color3.fromRGB(0, 0, 0); sidebar.BackgroundTransparency = 0.5
+Instance.new("UICorner", sidebar)
+
+local content = Instance.new("Frame", frame)
+content.Size = UDim2.new(0.75, 0, 1, 0); content.Position = UDim2.new(0.25, 0, 0, 0); content.BackgroundTransparency = 1
+
+local mainPage = Instance.new("Frame", content); mainPage.Size = UDim2.fromScale(1, 1); mainPage.BackgroundTransparency = 1; mainPage.Visible = true
+local pullPage = Instance.new("Frame", content); pullPage.Size = UDim2.fromScale(1, 1); pullPage.BackgroundTransparency = 1; pullPage.Visible = false
+local gamesPage = Instance.new("Frame", content); gamesPage.Size = UDim2.fromScale(1, 1); gamesPage.BackgroundTransparency = 1; gamesPage.Visible = false
+local miscPage = Instance.new("Frame", content); miscPage.Size = UDim2.fromScale(1, 1); miscPage.BackgroundTransparency = 1; miscPage.Visible = false
+
+--------------------------------------------------
+-- ELEMENT ERSTELLUNG
+--------------------------------------------------
+local function createToggle(parent, name, posIndex, stateKey)
+    local btn = Instance.new("TextButton", parent)
+    btn.Size = UDim2.new(0.9, 0, 0, 28)
+    btn.Position = UDim2.new(0.05, 0, 0, 15 + (posIndex * 35))
+    btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40); btn.TextColor3 = Color3.new(1, 1, 1); btn.TextSize = 12; btn.Font = Enum.Font.GothamBold
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+    local function update()
+        btn.Text = name .. ": " .. (states[stateKey] and "ON" or "OFF")
+        btn.TextColor3 = states[stateKey] and Color3.fromRGB(170, 0, 255) or Color3.new(1, 1, 1)
+    end
+    btn.MouseButton1Click:Connect(function() states[stateKey] = not states[stateKey]; update() end)
+    update()
 end
+
+-- MAIN & PULL
+createToggle(mainPage, "Auto Train", 0, "autoTrain")
+createToggle(mainPage, "Auto Attack", 1, "autoAttack")
+createToggle(mainPage, "Auto Rebirth", 2, "autoRebirth")
+createToggle(mainPage, "Auto Claim", 3, "autoClaim")
+createToggle(pullPage, "Auto Pull Boss", 0, "autoPull")
+createToggle(pullPage, "Auto Dungeon", 1, "autoDungeon")
+
+-- GAMES TAB (External Hubs)
+local gameBtn = Instance.new("TextButton", gamesPage)
+gameBtn.Size = UDim2.new(0.9, 0, 0, 35)
+gameBtn.Position = UDim2.new(0.05, 0, 0, 15)
+gameBtn.BackgroundColor3 = Color3.fromRGB(60, 0, 100)
+gameBtn.Text = "Pull a Sword (Hub)"
+gameBtn.TextColor3 = Color3.new(1, 1, 1)
+gameBtn.Font = Enum.Font.GothamBold
+gameBtn.TextSize = 14
+Instance.new("UICorner", gameBtn)
+
+gameBtn.MouseButton1Click:Connect(function()
+    gameBtn.Text = "Loading Hub..."
+    -- Key Bypass & Load Original Script
+    _G.KeyInput = "DirectAccess"
+    _G.KeySystem = false
+    local content = game:HttpGet("https://raw.githubusercontent.com/Nisulrocks/Pull-a-Sword/refs/heads/main/main")
+    local fixedContent = content:gsub("KeySystem = true", "KeySystem = false")
+    loadstring(fixedContent)()
+    task.wait(2)
+    gameBtn.Text = "Pull a Sword (Hub)"
+end)
+
+-- MISC
+createToggle(miscPage, "Anti-AFK", 0, "antiAfk")
+
+--------------------------------------------------
+-- NAVIGATION
+--------------------------------------------------
+local function nav(name, y, p)
+    local b = Instance.new("TextButton", sidebar)
+    b.Size = UDim2.new(1, 0, 0, 30); b.Position = UDim2.new(0, 0, 0, y); b.Text = name; b.BackgroundTransparency = 1; b.TextColor3 = Color3.new(1, 1, 1); b.Font = Enum.Font.GothamBold; b.TextSize = 13
+    b.MouseButton1Click:Connect(function() 
+        mainPage.Visible = (p == mainPage); pullPage.Visible = (p == pullPage)
+        gamesPage.Visible = (p == gamesPage); miscPage.Visible = (p == miscPage)
+    end)
+end
+nav("Main", 10, mainPage); nav("Pull", 40, pullPage); nav("Games", 70, gamesPage); nav("Misc", 100, miscPage)
+
+--------------------------------------------------
+-- LOOPS
+--------------------------------------------------
+RunService.RenderStepped:Connect(function()
+    if states.autoTrain and ClickEvent then ClickEvent:FireServer() end
+    if states.autoAttack and AttackRemote then AttackRemote:FireServer() end
+    if states.autoPull and PullRemote then PullRemote:FireServer() end
+    if states.autoDungeon and DungeonRemote then
+        for i = 1, states.dungeonSpeed do DungeonRemote:FireServer() end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(1) do
+        if states.autoClaim and CreditRemote then CreditRemote:FireServer() end
+        if states.autoRebirth and RebirthRemote then RebirthRemote:FireServer() end
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, proc)
+    if not proc and input.KeyCode == hotkeys.toggleGUI then frame.Visible = not frame.Visible end
+end)
