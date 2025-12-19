@@ -1,0 +1,58 @@
+-- SERVICES (Sicherheits-Check eingebaut)
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local VirtualUser = game:GetService("VirtualUser")
+
+local player = Players.LocalPlayer
+
+-- REMOTES FINDER (Sucht automatisch die richtigen Pfade)
+local Events = ReplicatedStorage:WaitForChild("Remotes", 5):WaitForChild("Events", 5)
+local ClickEvent = Events and Events:FindFirstChild("ClickEvent")
+local PullRemote = Events and (Events:FindFirstChild("PullRemote") or Events:FindFirstChild("OnPull"))
+local RebirthRemote = Events and Events:FindFirstChild("RebirthRemote")
+
+-- STATES
+local states = {
+    turboWin = false,
+    antiAfk = true
+}
+
+-- ANTI-AFK (Verhindert Kick)
+player.Idled:Connect(function()
+    if states.antiAfk then
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end
+end)
+
+--------------------------------------------------
+-- GUI DESIGN (Dein Lila Style)
+--------------------------------------------------
+local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
+gui.Name = "PullSword_Fixed"
+
+local frame = Instance.new("Frame", gui)
+frame.Size = UDim2.fromOffset(280, 180)
+frame.Position = UDim2.fromScale(0.5, 0.5)
+frame.AnchorPoint = Vector2.new(0.5, 0.5)
+frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+frame.BackgroundTransparency = 0.2
+Instance.new("UIStroke", frame).Color = Color3.fromRGB(170, 0, 255)
+Instance.new("UICorner", frame)
+
+local title = Instance.new("TextLabel", frame)
+title.Size = UDim2.new(1, 0, 0, 40); title.Text = "PULL A SWORD - TURBO WIN"; title.TextColor3 = Color3.new(1, 1, 1); title.Font = Enum.Font.GothamBold; title.BackgroundTransparency = 1
+
+-- TOGGLE BUTTON
+local btn = Instance.new("TextButton", frame)
+btn.Size = UDim2.new(0.8, 0, 0, 50); btn.Position = UDim2.new(0.1, 0, 0.4, 0)
+btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30); btn.TextColor3 = Color3.new(1, 1, 1); btn.Font = Enum.Font.GothamBold; btn.Text = "TURBO WIN: OFF"
+Instance.new("UICorner", btn)
+
+btn.MouseButton1Click:Connect(function()
+    states.turboWin = not states.turboWin
+    btn.Text = "TURBO WIN: " .. (states.turboWin and "ON" or "OFF")
+    btn.TextColor3 = states.turboWin and Color3.fromRGB(170, 0, 255) or Color3.new(1, 1, 1)
+end
