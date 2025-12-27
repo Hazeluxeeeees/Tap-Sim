@@ -19,7 +19,7 @@ local WinRemote = Events:WaitForChild("WinEvent", 10)
 local RebirthRemote = Events:WaitForChild("RebirthRemote", 10)
 local CreditRemote = Events:WaitForChild("GetCreditsEvent", 10)
 
--- NEUE REMOTES
+-- NEUE REMOTES (BOSS & TOWER)
 local BossWinRemote = ReplicatedStorage:WaitForChild("EventFolder"):WaitForChild("WinBossEvent")
 local TowerRewardRemote = ReplicatedStorage:WaitForChild("TowerEventRemotes"):WaitForChild("TowerRewardsEvent")
 
@@ -28,7 +28,7 @@ local states = {
     autoTrain = false,
     autoWin = false,
     autoBossWin = false,
-    autoTowerRewards = false, -- NEU
+    autoTowerRewards = false, 
     selectedBossID = "1",
     autoRebirth = false,
     autoClaim = false,
@@ -38,25 +38,11 @@ local states = {
 }
 local hotkeys = { toggleGUI = Enum.KeyCode.RightShift }
 
--- TP KOORDINATEN
-local worlds = {
-    ["Spawn"] = Vector3.new(-709, 11, -301),
-    ["Vulcano Cave"] = Vector3.new(6088, 730, -13649),
-    ["Glacier Peaks"] = Vector3.new(-4047, -15, 4545),
-    ["Desert Island"] = Vector3.new(-6146, 306, -6242),
-    ["The Lab"] = Vector3.new(-305, -85, -4634),
-    ["Ocean"] = Vector3.new(-402, 68, 2404),
-    ["Temple"] = Vector3.new(2865, 314, -11207),
-    ["Arcade"] = Vector3.new(1635, -54, 54),
-    ["Underworld"] = Vector3.new(30582, 40, 20199),
-    ["Darkstar"] = Vector3.new(4615, 535, 4491)
-}
-
 --------------------------------------------------
 -- GUI SETUP
 --------------------------------------------------
 local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
-gui.Name = "SwordHub_Ultimate_V3"
+gui.Name = "SwordHub_Ultimate_Final"
 gui.ResetOnSpawn = false
 
 local frame = Instance.new("Frame", gui)
@@ -113,7 +99,7 @@ end
 
 -- MAIN TAB
 createToggle(pages.Main, "Auto Strength", 0, "autoTrain")
-createToggle(pages.Main, "Auto Tower Rewards", 1, "autoTowerRewards") -- NEU
+createToggle(pages.Main, "Auto ALL Tower Rewards", 1, "autoTowerRewards") 
 createToggle(pages.Main, "Auto Rebirth", 2, "autoRebirth")
 createToggle(pages.Main, "Auto Claim", 3, "autoClaim")
 
@@ -149,7 +135,11 @@ end
 createToggle(pages.Pull, "AUTO SWORD WIN", 4.5, "autoWin")
 createToggle(pages.Pull, "AUTO BOSS WIN", 5.5, "autoBossWin")
 
--- TP & MISC (Navigation weggelassen für Kürze)
+-- MISC TAB
+local unloadBtn = Instance.new("TextButton", pages.Misc)
+unloadBtn.Size = UDim2.new(0.9, 0, 0, 35); unloadBtn.Position = UDim2.new(0.05, 0, 0, 15); unloadBtn.BackgroundColor3 = Color3.fromRGB(150, 0, 0); unloadBtn.Text = "UNLOAD HUB"; unloadBtn.TextColor3 = Color3.new(1, 1, 1); Instance.new("UICorner", unloadBtn)
+unloadBtn.MouseButton1Click:Connect(function() states.running = false; gui:Destroy() end)
+
 local function nav(name, y)
     local b = Instance.new("TextButton", sidebar)
     b.Size = UDim2.new(1, 0, 0, 40); b.Position = UDim2.new(0, 0, 0, y); b.Text = name; b.BackgroundTransparency = 1; b.TextColor3 = Color3.new(1, 1, 1); b.Font = Enum.Font.GothamBold
@@ -163,14 +153,17 @@ nav("Main", 10); nav("Pull", 55); nav("TP", 100); nav("Misc", 145)
 -- LOGIK LOOPS
 --------------------------------------------------
 
--- TOWER REWARDS LOOP (DEIN NEUER REMOTE)
+-- TOWER REWARDS LOOP (Stage 1 bis 10 fest)
 task.spawn(function()
     while states.running do
         if states.autoTowerRewards then
             if TowerRewardRemote then
-                TowerRewardRemote:FireServer("-20", true)
+                for i = 1, 10 do
+                    TowerRewardRemote:FireServer(tostring(i), true)
+                    task.wait(0.1) -- Verhindert Server-Kick
+                end
             end
-            task.wait(1)
+            task.wait(5) -- Kurze Pause, bevor der nächste Check für alle Stages kommt
         else
             task.wait(1)
         end
@@ -215,7 +208,7 @@ task.spawn(function()
     end
 end)
 
--- MISC LOOPS (Rebirth/Claim)
+-- REBIRTH / CLAIM
 task.spawn(function()
     while states.running do
         if states.autoRebirth and RebirthRemote then RebirthRemote:FireServer() end
@@ -224,5 +217,4 @@ task.spawn(function()
     end
 end)
 
-unloadBtn = Instance.new("TextButton", pages.Misc); unloadBtn.Size = UDim2.new(0.9, 0, 0, 35); unloadBtn.Position = UDim2.new(0.05, 0, 0, 100); unloadBtn.Text = "UNLOAD"; unloadBtn.MouseButton1Click:Connect(function() states.running = false; gui:Destroy() end)
 UserInputService.InputBegan:Connect(function(i, p) if not p and i.KeyCode == hotkeys.toggleGUI then frame.Visible = not frame.Visible end end)
