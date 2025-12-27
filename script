@@ -8,88 +8,228 @@ local player = Players.LocalPlayer
 --------------------------------------------------
 -- REMOTES FINDER
 --------------------------------------------------
+local function getStrengthRemote()
+    return ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Events"):FindFirstChild("ClickEvent")
+end
+
 local Events = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Events")
+local WinFixRemote = Events:WaitForChild("RemoveC", 10)      
+local PullRemote = Events:WaitForChild("PullRemote", 10) or Events:WaitForChild("OnPull", 10)
+local WinRemote = Events:WaitForChild("WinEvent", 10)
+local RebirthRemote = Events:WaitForChild("RebirthRemote", 10)
+local CreditRemote = Events:WaitForChild("GetCreditsEvent", 10)
+
+-- BOSS REMOTE
 local BossWinRemote = ReplicatedStorage:WaitForChild("EventFolder"):WaitForChild("WinBossEvent")
 
 -- STATES
 local states = {
-    autoBoss = false,
-    bossID = "1", -- Standardmäßig Boss 1
+    autoTrain = false,
+    autoWin = false,
+    autoBossWin = false, -- NEU
+    selectedBossID = "1", -- NEU
+    autoRebirth = false,
+    autoClaim = false,
+    antiAfk = true,
+    selectedSwordID = 48,
     running = true
+}
+local hotkeys = { toggleGUI = Enum.KeyCode.RightShift }
+
+-- KOORDINATEN
+local worlds = {
+    ["Spawn"] = Vector3.new(-709, 11, -301),
+    ["Vulcano Cave"] = Vector3.new(6088, 730, -13649),
+    ["Glacier Peaks"] = Vector3.new(-4047, -15, 4545),
+    ["Desert Island"] = Vector3.new(-6146, 306, -6242),
+    ["The Lab"] = Vector3.new(-305, -85, -4634),
+    ["Ocean"] = Vector3.new(-402, 68, 2404),
+    ["Temple"] = Vector3.new(2865, 314, -11207),
+    ["Arcade"] = Vector3.new(1635, -54, 54),
+    ["Underworld"] = Vector3.new(30582, 40, 20199),
+    ["Darkstar"] = Vector3.new(4615, 535, 4491)
 }
 
 --------------------------------------------------
--- GUI (Angepasst für Boss-ID Eingabe)
+-- GUI
 --------------------------------------------------
 local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
-gui.Name = "BossWinHub_V2"
+gui.Name = "SwordHub_V2_BossUpdate"
+gui.ResetOnSpawn = false
 
 local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.fromOffset(250, 200)
+frame.Size = UDim2.fromOffset(380, 320) 
 frame.Position = UDim2.fromScale(0.5, 0.5)
 frame.AnchorPoint = Vector2.new(0.5, 0.5)
-frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+frame.Active = true
+Instance.new("UIStroke", frame).Color = Color3.fromRGB(170, 0, 255)
 Instance.new("UICorner", frame)
-Instance.new("UIStroke", frame).Color = Color3.fromRGB(0, 255, 150)
 
--- TITEL
-local title = Instance.new("TextLabel", frame)
-title.Size = UDim2.new(1, 0, 0, 30)
-title.Text = "BOSS WINNER"
-title.TextColor3 = Color3.new(1,1,1)
-title.BackgroundTransparency = 1
-title.Font = Enum.Font.GothamBold
-
--- BOSS ID EINGABE
-local idInput = Instance.new("TextBox", frame)
-idInput.Size = UDim2.new(0.8, 0, 0, 30)
-idInput.Position = UDim2.new(0.1, 0, 0.25, 0)
-idInput.PlaceholderText = "Boss ID hier (z.B. 1)"
-idInput.Text = "1"
-idInput.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-idInput.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", idInput)
-
-idInput.FocusLost:Connect(function()
-    states.bossID = idInput.Text
+-- DRAGGING
+local dragStart, startPos, dragging
+frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true; dragStart = input.Position; startPos = frame.Position
+    end
 end)
-
--- TOGGLE BUTTON
-local toggleBtn = Instance.new("TextButton", frame)
-toggleBtn.Size = UDim2.new(0.8, 0, 0, 40)
-toggleBtn.Position = UDim2.new(0.1, 0, 0.5, 0)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-toggleBtn.Text = "Auto Boss: OFF"
-toggleBtn.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", toggleBtn)
-
-toggleBtn.MouseButton1Click:Connect(function()
-    states.autoBoss = not states.autoBoss
-    toggleBtn.Text = "Auto Boss: " .. (states.autoBoss and "ON" or "OFF")
-    toggleBtn.BackgroundColor3 = states.autoBoss and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(60, 60, 60)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
 end)
+UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end end)
 
--- UNLOAD
-local unload = Instance.new("TextButton", frame)
-unload.Size = UDim2.new(0.8, 0, 0, 30)
-unload.Position = UDim2.new(0.1, 0, 0.75, 0)
-unload.Text = "Schließen"
-unload.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
-unload.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", unload)
-unload.MouseButton1Click:Connect(function() states.running = false; gui:Destroy() end)
+local sidebar = Instance.new("Frame", frame)
+sidebar.Size = UDim2.new(0.3, 0, 1, 0); sidebar.BackgroundColor3 = Color3.fromRGB(5, 5, 5); Instance.new("UICorner", sidebar)
+
+local content = Instance.new("Frame", frame)
+content.Size = UDim2.new(0.7, 0, 1, 0); content.Position = UDim2.new(0.3, 0, 0, 0); content.BackgroundTransparency = 1
+
+local pages = {}
+local pageNames = {"Main", "Pull", "TP", "Games", "Misc"}
+
+for _, name in ipairs(pageNames) do
+    local p = Instance.new("Frame", content)
+    p.Name = name .. "Page"
+    p.Size = UDim2.fromScale(1, 1); p.BackgroundTransparency = 1; p.Visible = (name == "Main")
+    pages[name] = p
+end
+
+local function createToggle(parent, name, posIndex, stateKey)
+    local btn = Instance.new("TextButton", parent)
+    btn.Size = UDim2.new(0.9, 0, 0, 30); btn.Position = UDim2.new(0.05, 0, 0, 15 + (posIndex * 38))
+    btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30); btn.TextColor3 = Color3.new(1, 1, 1); btn.Font = Enum.Font.GothamBold; btn.TextSize = 10; Instance.new("UICorner", btn)
+    local function update()
+        btn.Text = name .. ": " .. (states[stateKey] and "ON" or "OFF")
+        btn.TextColor3 = states[stateKey] and Color3.fromRGB(170, 0, 255) or Color3.new(1, 1, 1)
+    end
+    btn.MouseButton1Click:Connect(function() states[stateKey] = not states[stateKey]; update() end)
+    update()
+end
+
+-- MAIN TAB
+createToggle(pages.Main, "Auto Strength", 0, "autoTrain")
+createToggle(pages.Main, "Auto Rebirth", 1, "autoRebirth")
+createToggle(pages.Main, "Auto Claim", 2, "autoClaim")
 
 --------------------------------------------------
+-- PULL TAB (MIT SCHWERT- & BOSS-LISTE)
+--------------------------------------------------
+-- SCHWERT ID LISTE
+local idBtn = Instance.new("TextButton", pages.Pull)
+idBtn.Size = UDim2.new(0.42, 0, 0, 30); idBtn.Position = UDim2.new(0.05, 0, 0, 15); idBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 25); idBtn.TextColor3 = Color3.fromRGB(170, 0, 255); idBtn.Text = "Sword: " .. states.selectedSwordID; idBtn.Font = Enum.Font.GothamBold; idBtn.TextSize = 9; idBtn.ZIndex = 5; Instance.new("UICorner", idBtn)
+
+local idList = Instance.new("ScrollingFrame", pages.Pull)
+idList.Size = UDim2.new(0.42, 0, 0, 120); idList.Position = UDim2.new(0.05, 0, 0, 50); idList.BackgroundColor3 = Color3.fromRGB(20, 20, 20); idList.Visible = false; idList.CanvasSize = UDim2.new(0,0,0, 1550); idList.ZIndex = 10; Instance.new("UICorner", idList)
+
+idBtn.MouseButton1Click:Connect(function() idList.Visible = not idList.Visible end)
+
+for i = 1, 50 do
+    local b = Instance.new("TextButton", idList)
+    b.Size = UDim2.new(1, 0, 0, 30); b.Position = UDim2.new(0, 0, 0, (i-1) * 31); b.Text = "ID " .. i; b.BackgroundColor3 = Color3.fromRGB(30, 30, 30); b.TextColor3 = Color3.new(1,1,1); b.ZIndex = 11; b.Font = Enum.Font.GothamBold; b.TextSize = 10
+    b.MouseButton1Click:Connect(function() states.selectedSwordID = i; idBtn.Text = "Sword: " .. i; idList.Visible = false end)
+end
+
+-- NEU: BOSS ID LISTE (1-5)
+local bossIdBtn = Instance.new("TextButton", pages.Pull)
+bossIdBtn.Size = UDim2.new(0.42, 0, 0, 30); bossIdBtn.Position = UDim2.new(0.53, 0, 0, 15); bossIdBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 25); bossIdBtn.TextColor3 = Color3.fromRGB(255, 170, 0); bossIdBtn.Text = "Boss: " .. states.selectedBossID; bossIdBtn.Font = Enum.Font.GothamBold; bossIdBtn.TextSize = 9; bossIdBtn.ZIndex = 5; Instance.new("UICorner", bossIdBtn)
+
+local bossIdList = Instance.new("Frame", pages.Pull)
+bossIdList.Size = UDim2.new(0.42, 0, 0, 120); bossIdList.Position = UDim2.new(0.53, 0, 0, 50); bossIdList.BackgroundColor3 = Color3.fromRGB(20, 20, 20); bossIdList.Visible = false; bossIdList.ZIndex = 10; Instance.new("UICorner", bossIdList)
+
+bossIdBtn.MouseButton1Click:Connect(function() bossIdList.Visible = not bossIdList.Visible end)
+
+for i = 1, 5 do
+    local b = Instance.new("TextButton", bossIdList)
+    b.Size = UDim2.new(1, 0, 0, 24); b.Position = UDim2.new(0, 0, 0, (i-1) * 24); b.Text = "Boss ID " .. i; b.BackgroundColor3 = Color3.fromRGB(35, 35, 35); b.TextColor3 = Color3.new(1,1,1); b.ZIndex = 11; b.Font = Enum.Font.GothamBold; b.TextSize = 10
+    b.MouseButton1Click:Connect(function() states.selectedBossID = tostring(i); bossIdBtn.Text = "Boss: " .. i; bossIdList.Visible = false end)
+end
+
+-- TOGGLE BUTTONS IM PULL TAB
+createToggle(pages.Pull, "AUTO SWORD WIN", 4.5, "autoWin")
+createToggle(pages.Pull, "AUTO BOSS WIN", 5.5, "autoBossWin")
+
+-- ANDERE TABS (TP, GAMES, MISC)
+local scrollTP = Instance.new("ScrollingFrame", pages.TP)
+scrollTP.Size = UDim2.new(1, 0, 1, -20); scrollTP.Position = UDim2.new(0, 0, 0, 10); scrollTP.BackgroundTransparency = 1; scrollTP.CanvasSize = UDim2.new(0,0,0, 360); scrollTP.ScrollBarThickness = 2
+local count = 0
+for worldName, coords in pairs(worlds) do
+    local wb = Instance.new("TextButton", scrollTP)
+    wb.Size = UDim2.new(0.9, 0, 0, 30); wb.Position = UDim2.new(0.05, 0, 0, 5 + (count * 35)); wb.BackgroundColor3 = Color3.fromRGB(35, 35, 35); wb.TextColor3 = Color3.new(1,1,1); wb.Text = worldName; wb.Font = Enum.Font.GothamBold; wb.TextSize = 10; Instance.new("UICorner", wb)
+    wb.MouseButton1Click:Connect(function() if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then player.Character.HumanoidRootPart.CFrame = CFrame.new(coords) end end)
+    count = count + 1
+end
+
+local gBtn = Instance.new("TextButton", pages.Games)
+gBtn.Size = UDim2.new(0.9, 0, 0, 35); gBtn.Position = UDim2.new(0.05, 0, 0, 15); gBtn.BackgroundColor3 = Color3.fromRGB(60, 0, 100); gBtn.Text = "Load Sword Hub"; gBtn.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", gBtn)
+gBtn.MouseButton1Click:Connect(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/Nisulrocks/Pull-a-Sword/refs/heads/main/main"))() end)
+
+createToggle(pages.Misc, "Anti-AFK", 0, "antiAfk")
+local unloadBtn = Instance.new("TextButton", pages.Misc)
+unloadBtn.Size = UDim2.new(0.9, 0, 0, 35); unloadBtn.Position = UDim2.new(0.05, 0, 0, 100); unloadBtn.BackgroundColor3 = Color3.fromRGB(150, 0, 0); unloadBtn.Text = "UNLOAD"; unloadBtn.TextColor3 = Color3.new(1, 1, 1); Instance.new("UICorner", unloadBtn)
+
+local function nav(name, y)
+    local b = Instance.new("TextButton", sidebar)
+    b.Size = UDim2.new(1, 0, 0, 40); b.Position = UDim2.new(0, 0, 0, y); b.Text = name; b.BackgroundTransparency = 1; b.TextColor3 = Color3.new(1, 1, 1); b.Font = Enum.Font.GothamBold
+    b.MouseButton1Click:Connect(function()
+        for _, p in pairs(pages) do p.Visible = false end; pages[name].Visible = true
+    end)
+end
+nav("Main", 10); nav("Pull", 55); nav("TP", 100); nav("Games", 145); nav("Misc", 190)
+
+--------------------------------------------------
+-- LOGIK LOOPS
+--------------------------------------------------
+
 -- BOSS WIN LOOP
---------------------------------------------------
 task.spawn(function()
     while states.running do
-        if states.autoBoss then
-            -- Hier wird genau dein Remote mit der ID gefeuert
-            BossWinRemote:FireServer(states.bossID)
-            task.wait(0.1) -- Sehr schnell (10-mal pro Sekunde)
+        if states.autoBossWin then
+            if BossWinRemote then 
+                BossWinRemote:FireServer(states.selectedBossID) 
+            end
+            task.wait(0.2) -- Geschwindigkeit des Remote-Signals
         else
             task.wait(0.5)
         end
     end
 end)
+
+-- AUTO STRENGTH
+task.spawn(function()
+    while states.running do
+        if states.autoTrain then 
+            local clickRemote = getStrengthRemote()
+            if clickRemote then clickRemote:FireServer() end 
+        end
+        task.wait(0.02)
+    end
+end)
+
+-- AUTO SWORD WIN
+task.spawn(function()
+    while states.running do
+        if states.autoWin then
+            if PullRemote then PullRemote:FireServer(states.selectedSwordID) end
+            if WinFixRemote then WinFixRemote:FireServer(1) end
+            task.wait(0.35)
+            if WinRemote then WinRemote:FireServer(states.selectedSwordID) end
+            task.wait(1.1)
+        else
+            task.wait(0.5)
+        end
+    end
+end)
+
+task.spawn(function()
+    while states.running do
+        if states.autoRebirth and RebirthRemote then RebirthRemote:FireServer() end
+        if states.autoClaim and CreditRemote then CreditRemote:FireServer() end
+        task.wait(2)
+    end
+end)
+
+unloadBtn.MouseButton1Click:Connect(function() states.running = false; gui:Destroy() end)
+UserInputService.InputBegan:Connect(function(i, p) if not p and i.KeyCode == hotkeys.toggleGUI then frame.Visible = not frame.Visible end end)
