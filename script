@@ -3,11 +3,18 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local VirtualUser = game:GetService("VirtualUser")
+local Lighting = game:GetService("Lighting")
 
 local player = Players.LocalPlayer
 
+-- BLUR EFFECT
+local blur = Instance.new("BlurEffect")
+blur.Size = 25 -- Starker Blur
+blur.Enabled = true
+blur.Parent = Lighting
+
 --------------------------------------------------
--- REMOTES FINDER
+-- REMOTES
 --------------------------------------------------
 local Events = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Events")
 local PullRemote = Events:WaitForChild("PullRemote", 10) or Events:WaitForChild("OnPull", 10)
@@ -16,7 +23,6 @@ local WinFixRemote = Events:WaitForChild("RemoveC", 10)
 local RebirthRemote = Events:WaitForChild("RebirthRemote", 10)
 local CreditRemote = Events:WaitForChild("GetCreditsEvent", 10)
 
--- NEUE REMOTES (EXAKTE PFADE)
 local BossWinRemote = ReplicatedStorage:WaitForChild("EventFolder"):WaitForChild("WinBossEvent")
 local TowerRewardRemote = ReplicatedStorage:WaitForChild("TowerEventRemotes"):WaitForChild("TowerRewardsEvent")
 
@@ -33,7 +39,15 @@ local states = {
     selectedSwordID = 48,
     running = true
 }
-local hotkeys = { toggleGUI = Enum.KeyCode.RightShift }
+
+-- ANTI-AFK FIX
+player.Idled:Connect(function()
+    if states.antiAfk then
+        VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+        task.wait(1)
+        VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+    end
+end)
 
 -- KOORDINATEN
 local worlds = {
@@ -50,20 +64,10 @@ local worlds = {
 }
 
 --------------------------------------------------
--- ANTI-AFK (ROBUST)
---------------------------------------------------
-player.Idled:Connect(function()
-    if states.antiAfk then
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton2(Vector2.new())
-    end
-end)
-
---------------------------------------------------
--- GUI
+-- GUI (KLASSISCH + BLUR)
 --------------------------------------------------
 local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
-gui.Name = "SwordHub_V4_Fixed"
+gui.Name = "SwordHub_Blur_Edition"
 gui.ResetOnSpawn = false
 
 local frame = Instance.new("Frame", gui)
@@ -87,11 +91,8 @@ local pageNames = {"Main", "Pull", "TP", "Misc"}
 for _, name in ipairs(pageNames) do
     local p = Instance.new("ScrollingFrame", content)
     p.Name = name .. "Page"
-    p.Size = UDim2.fromScale(1, 1)
-    p.BackgroundTransparency = 1
-    p.Visible = (name == "Main")
-    p.ScrollBarThickness = 2
-    p.CanvasSize = UDim2.new(0,0,0, 400)
+    p.Size = UDim2.fromScale(1, 1); p.BackgroundTransparency = 1; p.Visible = (name == "Main")
+    p.CanvasSize = UDim2.new(0, 0, 0, 450); p.ScrollBarThickness = 2
     pages[name] = p
 end
 
@@ -107,47 +108,48 @@ local function createToggle(parent, name, posIndex, stateKey)
     update()
 end
 
--- MAIN PAGE
-createToggle(pages.Main, "Auto Training", 0, "autoTrain")
-createToggle(pages.Main, "Auto Tower (1-10)", 1, "autoTowerRewards")
+-- MAIN
+createToggle(pages.Main, "Auto Train", 0, "autoTrain")
+createToggle(pages.Main, "Auto Tower Rewards", 1, "autoTowerRewards")
 createToggle(pages.Main, "Auto Rebirth", 2, "autoRebirth")
-createToggle(pages.Main, "Auto Claim Credits", 3, "autoClaim")
+createToggle(pages.Main, "Auto Claim", 3, "autoClaim")
 
--- PULL PAGE
-local idBtn = Instance.new("TextButton", pages.Pull)
-idBtn.Size = UDim2.new(0.9, 0, 0, 30); idBtn.Position = UDim2.new(0.05, 0, 0, 10); idBtn.Text = "Sword ID: " .. states.selectedSwordID; idBtn.BackgroundColor3 = Color3.fromRGB(40,40,40); idBtn.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", idBtn)
+-- PULL (DROPDOWNS)
+local function createDropdown(parent, name, pos, startVal, list, callback)
+    local b = Instance.new("TextButton", parent)
+    b.Size = UDim2.new(0.9, 0, 0, 30); b.Position = UDim2.new(0.05, 0, 0, pos); b.Text = name .. ": " .. startVal; b.BackgroundColor3 = Color3.fromRGB(25, 25, 25); b.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", b)
+    local f = Instance.new("ScrollingFrame", parent); f.Size = UDim2.new(0.9, 0, 0, 100); f.Position = UDim2.new(0.05, 0, 0, pos + 35); f.Visible = false; f.ZIndex = 10; f.CanvasSize = UDim2.new(0,0,0, #list * 25)
+    b.MouseButton1Click:Connect(function() f.Visible = not f.Visible end)
+    for i, v in ipairs(list) do
+        local opt = Instance.new("TextButton", f); opt.Size = UDim2.new(1, 0, 0, 25); opt.Position = UDim2.new(0, 0, 0, (i-1)*25); opt.Text = tostring(v); opt.BackgroundColor3 = Color3.fromRGB(40,40,40); opt.TextColor3 = Color3.new(1,1,1)
+        opt.MouseButton1Click:Connect(function() callback(v); b.Text = name .. ": " .. v; f.Visible = false end)
+    end
+end
 
-local bossBtn = Instance.new("TextButton", pages.Pull)
-bossBtn.Size = UDim2.new(0.9, 0, 0, 30); bossBtn.Position = UDim2.new(0.05, 0, 0, 45); bossBtn.Text = "Boss ID: " .. states.selectedBossID; bossBtn.BackgroundColor3 = Color3.fromRGB(40,40,40); bossBtn.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", bossBtn)
+createDropdown(pages.Pull, "Sword ID", 10, states.selectedSwordID, {10, 20, 30, 40, 48, 50}, function(v) states.selectedSwordID = v end)
+createDropdown(pages.Pull, "Boss ID", 150, states.selectedBossID, {"1", "2", "3", "4", "5"}, function(v) states.selectedBossID = v end)
+createToggle(pages.Pull, "Auto Win Sword", 7, "autoWin")
+createToggle(pages.Pull, "Auto Win Boss", 8, "autoBossWin")
 
-createToggle(pages.Pull, "AUTO SWORD WIN", 2.5, "autoWin")
-createToggle(pages.Pull, "AUTO BOSS WIN", 3.5, "autoBossWin")
-
--- TP PAGE (REPARIERT)
+-- TP TAB FIX
 local tpCount = 0
 for worldName, coords in pairs(worlds) do
     local wb = Instance.new("TextButton", pages.TP)
-    wb.Size = UDim2.new(0.9, 0, 0, 30); wb.Position = UDim2.new(0.05, 0, 0, 10 + (tpCount * 35)); wb.BackgroundColor3 = Color3.fromRGB(30, 30, 30); wb.TextColor3 = Color3.new(1,1,1); wb.Text = worldName; wb.Font = Enum.Font.GothamBold; Instance.new("UICorner", wb)
-    wb.MouseButton1Click:Connect(function() 
-        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then 
-            player.Character.HumanoidRootPart.CFrame = CFrame.new(coords) 
-        end 
-    end)
+    wb.Size = UDim2.new(0.9, 0, 0, 30); wb.Position = UDim2.new(0.05, 0, 0, 10 + (tpCount * 35)); wb.BackgroundColor3 = Color3.fromRGB(35, 35, 35); wb.TextColor3 = Color3.new(1,1,1); wb.Text = worldName; Instance.new("UICorner", wb)
+    wb.MouseButton1Click:Connect(function() if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then player.Character.HumanoidRootPart.CFrame = CFrame.new(coords) end end)
     tpCount = tpCount + 1
 end
 
--- MISC PAGE
+-- MISC
 createToggle(pages.Misc, "Anti-AFK", 0, "antiAfk")
 local unl = Instance.new("TextButton", pages.Misc); unl.Size = UDim2.new(0.9, 0, 0, 35); unl.Position = UDim2.new(0.05, 0, 0, 100); unl.Text = "UNLOAD"; unl.BackgroundColor3 = Color3.fromRGB(100,0,0); unl.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", unl)
-unl.MouseButton1Click:Connect(function() states.running = false; gui:Destroy() end)
+unl.MouseButton1Click:Connect(function() blur:Destroy(); states.running = false; gui:Destroy() end)
 
 -- NAV
 local function nav(name, y)
     local b = Instance.new("TextButton", sidebar)
     b.Size = UDim2.new(1, 0, 0, 40); b.Position = UDim2.new(0, 0, 0, y); b.Text = name; b.BackgroundTransparency = 1; b.TextColor3 = Color3.new(1, 1, 1); b.Font = Enum.Font.GothamBold
-    b.MouseButton1Click:Connect(function()
-        for _, p in pairs(pages) do p.Visible = false end; pages[name].Visible = true
-    end)
+    b.MouseButton1Click:Connect(function() for _, p in pairs(pages) do p.Visible = false end; pages[name].Visible = true end)
 end
 nav("Main", 10); nav("Pull", 55); nav("TP", 100); nav("Misc", 145)
 
@@ -155,56 +157,56 @@ nav("Main", 10); nav("Pull", 55); nav("TP", 100); nav("Misc", 145)
 -- LOOPS
 --------------------------------------------------
 
--- TOWER LOOP (FIXED 1-10)
+-- TOWER SPAM LOOP (Holt 1-10 dauerhaft ab)
 task.spawn(function()
     while states.running do
         if states.autoTowerRewards then
             for i = 1, 10 do
                 TowerRewardRemote:FireServer(tostring(i), true)
             end
-            task.wait(2)
+            task.wait(0.5) -- Schneller Check für neue Tower-Beitritte
+        else
+            task.wait(1)
         end
-        task.wait(1)
     end
 end)
 
--- BOSS LOOP
+-- BOSS WIN LOOP
 task.spawn(function()
     while states.running do
         if states.autoBossWin then
             BossWinRemote:FireServer(states.selectedBossID)
-            task.wait(0.2)
         end
-        task.wait(0.5)
+        task.wait(0.3)
     end
 end)
 
--- TRAINING LOOP
+-- AUTO TRAIN
 task.spawn(function()
     while states.running do
         if states.autoTrain then
-            local r = ReplicatedStorage.Remotes.Events:FindFirstChild("ClickEvent")
+            local r = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Events"):FindFirstChild("ClickEvent")
             if r then r:FireServer() end
         end
-        task.wait(0.01)
+        task.wait(0.02)
     end
 end)
 
--- AUTO SWORD WIN
+-- AUTO WIN SWORD
 task.spawn(function()
     while states.running do
         if states.autoWin then
             PullRemote:FireServer(states.selectedSwordID)
-            task.wait(0.3)
+            task.wait(0.5)
             WinRemote:FireServer(states.selectedSwordID)
         end
         task.wait(1)
     end
 end)
 
--- DRAGGING
+-- DRAGGING & TOGGLE
 local dragStart, startPos, dragging
 frame.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true; dragStart = input.Position; startPos = frame.Position end end)
 UserInputService.InputChanged:Connect(function(input) if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then local delta = input.Position - dragStart; frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y) end end)
 UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end end)
-UserInputService.InputBegan:Connect(function(i, p) if not p and i.KeyCode == hotkeys.toggleGUI then frame.Visible = not frame.Visible end end)
+UserInputService.InputBegan:Connect(function(i, p) if not p and i.KeyCode == Enum.KeyCode.RightShift then frame.Visible = not frame.Visible; blur.Enabled = frame.Visible end end)
