@@ -1762,13 +1762,20 @@ function RayfieldLibrary:CreateWindow(Settings)
 		end
 	end
 
-	if (Settings.KeySystem) then
+if (Settings.KeySystem) then
+		-- BYPASS START
+		Passthrough = true
+		-- Der restliche Code wird durch das 'if not Passthrough' unten übersprungen
+		-- BYPASS END
+
 		if not Settings.KeySettings then
 			Passthrough = true
 			return
 		end
 
 		ensureFolder(RayfieldFolder.."/Key System")
+
+		-- ... (Rest des Codes bleibt gleich, wird aber durch Passthrough = true nicht mehr die UI öffnen)
 
 		if typeof(Settings.KeySettings.Key) == "string" then Settings.KeySettings.Key = {Settings.KeySettings.Key} end
 
@@ -1803,7 +1810,7 @@ function RayfieldLibrary:CreateWindow(Settings)
 			Rayfield.Enabled = true
 			local KeyUI = useStudio and script.Parent:FindFirstChild('Key') or game:GetObjects("rbxassetid://11380036235")[1]
 
-			KeyUI.Enabled = false
+			KeyUI.Enabled = true
 
 			if gethui then
 				KeyUI.Parent = gethui()
