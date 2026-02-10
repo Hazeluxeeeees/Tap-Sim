@@ -17,52 +17,144 @@ local locations = {
 }
 
 local waitTime = 16 * 60 
-local timeAtEachPos = 5 
 local huntRange = 300 
+local isRunning = true
+local isLoaded = true
 
 local cs = game:GetService("CollectionService")
 local player = game:GetService("Players").LocalPlayer
-local userInput = game:GetService("UserInputService")
 
-
-
+----------------------------------------------------------------
+-- GUI CREATION
+----------------------------------------------------------------
 local screenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
-screenGui.Name = "EssenceTimerGui"
+screenGui.Name = "EssenceHunterV5_EN"
 screenGui.ResetOnSpawn = false
 
 local mainFrame = Instance.new("Frame", screenGui)
-mainFrame.Size = UDim2.new(0, 250, 0, 80)
+mainFrame.Size = UDim2.new(0, 250, 0, 120)
 mainFrame.Position = UDim2.new(0.5, -125, 0.1, 0)
-mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 mainFrame.BackgroundTransparency = 0.2
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
-mainFrame.Draggable = true
+mainFrame.Draggable = true 
 
 local corner = Instance.new("UICorner", mainFrame)
 corner.CornerRadius = UDim.new(0, 12)
 
+-- UNLOAD BUTTON (RED DOT)
+local closeBtn = Instance.new("TextButton", mainFrame)
+closeBtn.Size = UDim2.new(0, 15, 0, 15)
+closeBtn.Position = UDim2.new(1, -25, 0, 10)
+closeBtn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+closeBtn.Text = ""
 
+local closeCorner = Instance.new("UICorner", closeBtn)
+closeCorner.CornerRadius = UDim.new(1, 0)
+
+-- CONFIRMATION PANEL
+local confirmFrame = Instance.new("Frame", mainFrame)
+confirmFrame.Size = UDim2.new(1, 0, 1, 0)
+confirmFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+confirmFrame.BackgroundTransparency = 0.05
+confirmFrame.Visible = false
+confirmFrame.ZIndex = 10
+
+local confirmCorner = Instance.new("UICorner", confirmFrame)
+confirmCorner.CornerRadius = UDim.new(0, 12)
+
+local confirmText = Instance.new("TextLabel", confirmFrame)
+confirmText.Size = UDim2.new(1, 0, 0.6, 0)
+confirmText.BackgroundTransparency = 1
+confirmText.Text = "Are you sure you want to unload\nthe Essence Hunter Script?"
+confirmText.TextColor3 = Color3.fromRGB(255, 255, 255)
+confirmText.Font = Enum.Font.GothamBold
+confirmText.TextSize = 12
+confirmText.ZIndex = 11
+
+local yesBtn = Instance.new("TextButton", confirmFrame)
+yesBtn.Size = UDim2.new(0.4, 0, 0.3, 0)
+yesBtn.Position = UDim2.new(0.05, 0, 0.6, 0)
+yesBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+yesBtn.Text = "Yes"
+yesBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+yesBtn.Font = Enum.Font.GothamBold
+yesBtn.ZIndex = 11
+
+local noBtn = Instance.new("TextButton", confirmFrame)
+noBtn.Size = UDim2.new(0.4, 0, 0.3, 0)
+noBtn.Position = UDim2.new(0.55, 0, 0.6, 0)
+noBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+noBtn.Text = "No"
+noBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+noBtn.Font = Enum.Font.GothamBold
+noBtn.ZIndex = 11
+
+Instance.new("UICorner", yesBtn).CornerRadius = UDim.new(0, 6)
+Instance.new("UICorner", noBtn).CornerRadius = UDim.new(0, 6)
+
+-- STANDARD UI ELEMENTS
 local title = Instance.new("TextLabel", mainFrame)
-title.Size = UDim2.new(1, 0, 0.4, 0)
+title.Size = UDim2.new(1, 0, 0.3, 0)
 title.BackgroundTransparency = 1
-title.Text = "Next Essence Collect:"
-title.TextColor3 = Color3.fromRGB(200, 200, 200)
+title.Text = "Essence Hunter"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.Font = Enum.Font.GothamBold
-title.TextSize = 14
+title.TextSize = 18
 
 local timerLabel = Instance.new("TextLabel", mainFrame)
-timerLabel.Size = UDim2.new(1, 0, 0.6, 0)
-timerLabel.Position = UDim2.new(0, 0, 0.4, 0)
+timerLabel.Size = UDim2.new(1, 0, 0.4, 0)
+timerLabel.Position = UDim2.new(0, 0, 0.3, 0)
 timerLabel.BackgroundTransparency = 1
-timerLabel.Text = "Scanning..."
-timerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+timerLabel.Text = "STARTING..."
+timerLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
 timerLabel.Font = Enum.Font.GothamBlack
-timerLabel.TextSize = 24
+timerLabel.TextSize = 30 
 
+local toggleBtn = Instance.new("TextButton", mainFrame)
+toggleBtn.Size = UDim2.new(0.8, 0, 0.22, 0)
+toggleBtn.Position = UDim2.new(0.1, 0, 0.72, 0)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
+toggleBtn.Text = "AUTO-COLLECT: ON"
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 6)
 
+----------------------------------------------------------------
+-- BUTTON EVENTS
+----------------------------------------------------------------
+closeBtn.MouseButton1Click:Connect(function()
+    confirmFrame.Visible = true
+end)
 
+noBtn.MouseButton1Click:Connect(function()
+    confirmFrame.Visible = false
+end)
 
+yesBtn.MouseButton1Click:Connect(function()
+    isLoaded = false
+    isRunning = false
+    screenGui:Destroy()
+end)
+
+toggleBtn.MouseButton1Click:Connect(function()
+    if not isLoaded then return end
+    isRunning = not isRunning
+    if isRunning then
+        toggleBtn.Text = "AUTO-COLLECT: ON"
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
+    else
+        toggleBtn.Text = "AUTO-COLLECT: OFF"
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 0, 0)
+        timerLabel.Text = "PAUSED"
+        timerLabel.TextColor3 = Color3.fromRGB(255, 0, 0)
+    end
+end)
+
+----------------------------------------------------------------
+-- LOGIC
+----------------------------------------------------------------
 local function formatTime(seconds)
     local mins = math.floor(seconds / 60)
     local secs = seconds % 60
@@ -76,6 +168,7 @@ local function teleport(pos)
 end
 
 local function findAndCollectAnyEssence()
+    if not isRunning or not isLoaded then return end
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return false end
@@ -86,52 +179,48 @@ local function findAndCollectAnyEssence()
                 teleport(essencePos)
                 task.wait(0.5)
                 local prompt = essence:FindFirstChildWhichIsA("ProximityPrompt", true)
-                if prompt then fireproximityprompt(prompt) task.wait(0.5) end
+                if prompt then fireproximityprompt(prompt) end
+                task.wait(0.5)
                 return true
             end
         end
     end
-    return false
 end
 
-
-
 task.spawn(function()
-    while true do
-        local char = player.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        
-        if root then
-            local startPos = root.CFrame
-            timerLabel.Text = "RUNNING..."
-            timerLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+    while isLoaded do
+        if isRunning then
+            local char = player.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if root then
+                local startPos = root.CFrame
+                
+                timerLabel.Text = "COLLECTING..."
+                timerLabel.TextColor3 = Color3.fromRGB(0, 255, 0) 
+                
+                for i, target in ipairs(locations) do
+                    if not isRunning or not isLoaded then break end
+                    teleport(target)
+                    task.wait(1.5)
+                    for _ = 1, 6 do 
+                        if not isRunning or not isLoaded then break end
+                        findAndCollectAnyEssence()
+                        task.wait(0.5)
+                    end
+                end
 
-
-            for i, target in ipairs(locations) do
-                teleport(target)
-                task.wait(1.5)
-                for _ = 1, 4 do 
-                    findAndCollectAnyEssence()
-                    task.wait(0.5)
+                if isRunning and isLoaded then
+                    teleport(startPos.Position)
+                    timerLabel.TextColor3 = Color3.fromRGB(255, 0, 0) 
+                    local nextRun = tick() + waitTime
+                    while tick() < nextRun and isRunning and isLoaded do
+                        timerLabel.Text = formatTime(math.ceil(nextRun - tick()))
+                        findAndCollectAnyEssence()
+                        task.wait(1)
+                    end
                 end
             end
-
-
-            teleport(startPos.Position)
-            timerLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-            
-
-            local nextRun = tick() + waitTime
-            while tick() < nextRun do
-                local remaining = math.ceil(nextRun - tick())
-                timerLabel.Text = formatTime(remaining)
-                
-
-                findAndCollectAnyEssence()
-                task.wait(1)
-            end
-        else
-            task.wait(2)
         end
+        task.wait(1)
     end
 end)
