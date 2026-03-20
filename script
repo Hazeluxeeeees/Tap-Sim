@@ -1,5 +1,6 @@
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
+local VirtualUser = game:GetService("VirtualUser")
 local Player = game:GetService("Players").LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -25,6 +26,29 @@ local function SaveConfig()
         end)
     end
 end
+
+-- === ANTI-AFK (SIMULIERTER LEERTASTEN-DRUCK) ===
+task.spawn(function()
+    while true do
+        task.wait(60)
+        pcall(function()
+            -- Simuliert den Druck der Leertaste über VirtualUser
+            VirtualUser:CaptureController()
+            
+            -- Erster Sprung
+            VirtualUser:SetKeyDown(" ")
+            task.wait(0.1)
+            VirtualUser:SetKeyUp(" ")
+            
+            task.wait(0.4) -- Kurze Pause für den Doppelsprung
+            
+            -- Zweiter Sprung
+            VirtualUser:SetKeyDown(" ")
+            task.wait(0.1)
+            VirtualUser:SetKeyUp(" ")
+        end)
+    end
+end)
 
 -- === DRAG FUNKTION ===
 local function MakeDraggable(frame, handle)
@@ -78,7 +102,7 @@ local function SendWebhook(rewardTable)
                         title = "🏆 Hazeluxe Bericht: " .. Player.Name,
                         color = 65535,
                         fields = fields,
-                        footer = {text = "V11 • " .. os.date("%X")}
+                        footer = {text = "V15 • Anti AFK • " .. os.date("%X")}
                     }}
                 })
             })
@@ -140,7 +164,6 @@ AddButton(WebPage, "TEST SENDEN", Color3.fromRGB(60, 60, 60), function() SendWeb
 -- === SETTINGS ===
 local function SetGUISize(mode)
     if mode == "Mobile" then
-        -- 15% Verkleinerung gegenüber vorher (420 -> 357, 280 -> 238)
         Main.Size = UDim2.new(0, 357, 0, 238); Sidebar.Size = UDim2.new(0, 105, 1, 0); Content.Position = UDim2.new(0, 115, 0, 8); Content.Size = UDim2.new(1, -125, 1, -16)
     else
         Main.Size = UDim2.new(0, 520, 0, 340); Sidebar.Size = UDim2.new(0, 140, 1, 0); Content.Position = UDim2.new(0, 150, 0, 10); Content.Size = UDim2.new(1, -160, 1, -20)
@@ -175,7 +198,6 @@ if isfile(saveFile) then
     if success then Config = data end
 end
 
--- UI anwenden
 SetGUISize(Config.UISize)
 WebInp.Text = Config.WebhookURL
 WebPage.Visible = true; activePage = WebPage; UpdateSessionUI()
