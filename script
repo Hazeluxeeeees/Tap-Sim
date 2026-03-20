@@ -4,57 +4,60 @@ local Player = game:GetService("Players").LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- === CONFIG & DATA ===
-local folderName = "Configs"
-local lastConfigFile = "LastConfig.txt"
+local folderName = "HazeHUB"
+local saveFile = folderName .. "/HazeHUB_AutoSave.json"
 local Config = { 
     WebhookURL = "", 
-    ToggleKey = "RightShift", 
-    AutoLoad = false,
-    AntiAFK = false -- Neuer Toggle-Wert
+    UISize = "PC"
 }
 local SessionTotals = {} 
 local roundCount = 0
-local selectedConfig = "Default"
 
 local Remote = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Client"):WaitForChild("UI"):WaitForChild("GameEndedUI")
 
 if makefolder then pcall(function() makefolder(folderName) end) end
 
--- === FUNKTIONEN ===
-local function SaveConfig(name)
-    local target = name or selectedConfig
-    writefile(folderName .. "/" .. target .. ".json", HttpService:JSONEncode(Config))
-    if Config.AutoLoad then writefile(lastConfigFile, target) end
-end
-
-local function LoadConfig(name)
-    local path = folderName .. "/" .. name .. ".json"
-    if isfile(path) then
-        local success, data = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
-        if success then 
-            Config = data 
-            selectedConfig = name
-            return true 
-        end
+-- === SPEICHER FUNKTION ===
+local function SaveConfig()
+    if writefile then
+        writefile(saveFile, HttpService:JSONEncode(Config))
     end
-    return false
 end
 
+-- === DRAG FUNKTION ===
+local function MakeDraggable(frame, handle)
+    local dragging, dragInput, dragStart, startPos
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = input.Position; startPos = frame.Position
+            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        end
+    end)
+    handle.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+-- === WEBHOOK LOGIK ===
 local function SendWebhook(rewardTable)
-    if Config.WebhookURL == "" or not Config.WebhookURL:find("discord.com") then return end
+    if not Config.WebhookURL or Config.WebhookURL == "" or not Config.WebhookURL:find("discord.com") then return end
     
     local fields = {}
+    table.insert(fields, {["name"] = "👤 Spieler", ["value"] = "```" .. Player.Name .. "```", ["inline"] = true})
+    table.insert(fields, {["name"] = "🎮 Modus", ["value"] = "```" .. Config.UISize .. "```", ["inline"] = true})
+
     local roundLoot = ""
     for _, item in pairs(rewardTable) do
         if typeof(item) == "Instance" then
-            local n = item.Name
             local v = item:FindFirstChild("Amount") or item:FindFirstChild("Value")
-            local amt = v and tonumber(v.Value) or 0
-            roundLoot = roundLoot .. string.format("🎁 **%s**: %d\n", n, amt)
+            roundLoot = roundLoot .. string.format("🎁 **%s**: %d\n", item.Name, v and tonumber(v.Value) or 1)
         end
     end
-
-    table.insert(fields, {["name"] = "─── Runde #"..roundCount.." ───", ["value"] = roundLoot ~= "" and roundLoot or "Nichts", ["inline"] = false})
+    table.insert(fields, {["name"] = "─── Runde #"..roundCount.." ───", ["value"] = roundLoot ~= "" and roundLoot or "Kein Loot", ["inline"] = false})
     
     local totalLoot = ""
     for name, total in pairs(SessionTotals) do
@@ -62,263 +65,114 @@ local function SendWebhook(rewardTable)
     end
     table.insert(fields, {["name"] = "─── Session Gesamt ───", ["value"] = totalLoot ~= "" and totalLoot or "Nichts", ["inline"] = false})
 
-    pcall(function()
-        (request or http_request)({
-            Url = Config.WebhookURL:gsub("discord.com", "webhook.lewisakura.moe"),
-            Method = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body = HttpService:JSONEncode({
-                embeds = {{
-                    title = "🏆 Hazeluxe Bericht: " .. Player.Name,
-                    color = 0x00FFAA,
-                    fields = fields,
-                    footer = {text = " V6.9 • " .. os.date("%X")}
-                }}
+    task.spawn(function()
+        pcall(function()
+            (request or http_request or syn.request)({
+                Url = Config.WebhookURL:gsub("discord.com", "webhook.lewisakura.moe"),
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = HttpService:JSONEncode({
+                    embeds = {{
+                        title = "🏆 Hazeluxe Bericht: " .. Player.Name,
+                        color = 65535,
+                        fields = fields,
+                        footer = {text = "V10 • " .. os.date("%X")}
+                    }}
+                })
             })
-        })
+        end)
     end)
 end
 
 -- === UI BUILDER ===
 local ScreenGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
-local Main = Instance.new("Frame", ScreenGui)
-Main.Size = UDim2.new(0, 500, 0, 320)
-Main.Position = UDim2.new(0.5, -250, 0.5, -160)
-Main.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-Instance.new("UICorner", Main)
+local Main = Instance.new("Frame", ScreenGui); Main.BackgroundColor3 = Color3.fromRGB(20, 20, 20); Main.BackgroundTransparency = 0.1; Instance.new("UICorner", Main)
+local Sidebar = Instance.new("Frame", Main); Sidebar.BackgroundColor3 = Color3.fromRGB(10, 10, 10); Sidebar.BackgroundTransparency = 0.1; Instance.new("UICorner", Sidebar)
+local Content = Instance.new("Frame", Main); Content.BackgroundTransparency = 1
 
--- Mobile Button (Verschiebbar)
-local MiniBtn = Instance.new("TextButton", ScreenGui)
-MiniBtn.Size = UDim2.new(0, 45, 0, 45)
-MiniBtn.Position = UDim2.new(0.1, 0, 0.1, 0)
-MiniBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
-MiniBtn.Text = "G"
-MiniBtn.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", MiniBtn).CornerRadius = UDim.new(1, 0)
+local MiniBtn = Instance.new("TextButton", ScreenGui); MiniBtn.Size = UDim2.new(0, 50, 0, 50); MiniBtn.Position = UDim2.new(0, 10, 0.5, 0); MiniBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 255); MiniBtn.Text = "G"; MiniBtn.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", MiniBtn).CornerRadius = UDim.new(1, 0)
 
--- Drag Logic für Mobile Button
-local dragging, dragInput, dragStart, startPos
-MiniBtn.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = MiniBtn.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then dragging = false end
-        end)
-    end
-end)
-MiniBtn.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
-        local delta = input.Position - dragStart
-        MiniBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
+MakeDraggable(Main, Main); MakeDraggable(MiniBtn, MiniBtn)
 
-MiniBtn.MouseButton1Click:Connect(function() Main.Visible = not Main.Visible end)
-
--- PC Toggle (RightShift)
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if not gpe and input.KeyCode == Enum.KeyCode.RightShift then
-        Main.Visible = not Main.Visible
-    end
-end)
-
--- Sidebar & Content
-local Sidebar = Instance.new("Frame", Main)
-Sidebar.Size = UDim2.new(0, 130, 1, 0)
-Sidebar.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-Instance.new("UICorner", Sidebar)
-
-local TabHolder = Instance.new("Frame", Sidebar)
-TabHolder.Position = UDim2.new(0.1, 0, 0.1, 0)
-TabHolder.Size = UDim2.new(0.8, 0, 0.8, 0)
-TabHolder.BackgroundTransparency = 1
-Instance.new("UIListLayout", TabHolder).Padding = UDim.new(0, 5)
-
-local Content = Instance.new("Frame", Main)
-Content.Position = UDim2.new(0, 140, 0, 10)
-Content.Size = UDim2.new(1, -150, 1, -20)
-Content.BackgroundTransparency = 1
+local TabHolder = Instance.new("Frame", Sidebar); TabHolder.Position = UDim2.new(0.1, 0, 0.1, 0); TabHolder.Size = UDim2.new(0.8, 0, 0.8, 0); TabHolder.BackgroundTransparency = 1; Instance.new("UIListLayout", TabHolder).Padding = UDim.new(0, 5)
 
 local activePage = nil
 local function CreateTab(name)
-    local B = Instance.new("TextButton", TabHolder)
-    B.Size = UDim2.new(1, 0, 0, 30)
-    B.Text = name
-    B.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-    B.TextColor3 = Color3.new(1,1,1)
-    Instance.new("UICorner", B)
-
-    local P = Instance.new("ScrollingFrame", Content)
-    P.Size = UDim2.new(1, 0, 1, 0)
-    P.Visible = false
-    P.BackgroundTransparency = 1
-    P.ScrollBarThickness = 2
-    P.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    Instance.new("UIListLayout", P).Padding = UDim.new(0, 10)
-
-    B.MouseButton1Click:Connect(function()
-        if activePage then activePage.Visible = false end
-        P.Visible = true activePage = P
-    end)
+    local B = Instance.new("TextButton", TabHolder); B.Size = UDim2.new(1, 0, 0, 35); B.Text = name; B.BackgroundColor3 = Color3.fromRGB(35, 35, 35); B.TextColor3 = Color3.new(1,1,1); B.TextScaled = true; Instance.new("UICorner", B)
+    local P = Instance.new("ScrollingFrame", Content); P.Size = UDim2.new(1, 0, 1, 0); P.Visible = false; P.BackgroundTransparency = 1; P.ScrollBarThickness = 2; P.AutomaticCanvasSize = Enum.AutomaticSize.Y; Instance.new("UIListLayout", P).Padding = UDim.new(0, 10)
+    B.MouseButton1Click:Connect(function() if activePage then activePage.Visible = false end P.Visible = true; activePage = P end)
     return P
 end
 
 local WebPage = CreateTab("Webhook")
 local SessionPage = CreateTab("Session")
-local ConfPage = CreateTab("Configs")
 local SettPage = CreateTab("Settings")
 
--- Webhook UI
-local WebInp = Instance.new("TextBox", WebPage)
-WebInp.Size = UDim2.new(1, -10, 0, 40)
-WebInp.PlaceholderText = "Discord Webhook URL..."
-WebInp.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-WebInp.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", WebInp)
-WebInp.FocusLost:Connect(function() Config.WebhookURL = WebInp.Text SaveConfig() end)
+local function AddButton(parent, text, color, func)
+    local b = Instance.new("TextButton", parent); b.Size = UDim2.new(1, -10, 0, 40); b.Text = text; b.BackgroundColor3 = color; b.TextColor3 = Color3.new(1,1,1); b.TextScaled = true; Instance.new("UICorner", b)
+    b.MouseButton1Click:Connect(func); return b
+end
 
--- Settings: Anti-AFK Toggle
-local AntiAFKBtn = Instance.new("TextButton", SettPage)
-AntiAFKBtn.Size = UDim2.new(1, -10, 0, 40)
-AntiAFKBtn.Text = "Anti-AFK: " .. (Config.AntiAFK and "AN" or "AUS")
-AntiAFKBtn.BackgroundColor3 = Config.AntiAFK and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(80, 80, 80)
-AntiAFKBtn.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", AntiAFKBtn)
+-- === SESSION TAB ===
+local SessionHeader = Instance.new("TextLabel", SessionPage); SessionHeader.Size = UDim2.new(1, 0, 0, 40); SessionHeader.BackgroundTransparency = 1; SessionHeader.TextColor3 = Color3.new(0, 1, 0.7); SessionHeader.TextScaled = true; SessionHeader.Text = "Runden: 0"
+local SessionList = Instance.new("Frame", SessionPage); SessionList.Size = UDim2.new(1, -10, 0, 0); SessionList.AutomaticSize = Enum.AutomaticSize.Y; SessionList.BackgroundTransparency = 1; Instance.new("UIListLayout", SessionList).Padding = UDim.new(0, 8)
 
-AntiAFKBtn.MouseButton1Click:Connect(function()
-    Config.AntiAFK = not Config.AntiAFK
-    AntiAFKBtn.Text = "Anti-AFK: " .. (Config.AntiAFK and "AN" or "AUS")
-    AntiAFKBtn.BackgroundColor3 = Config.AntiAFK and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(80, 80, 80)
+local function UpdateSessionUI()
+    SessionHeader.Text = "Runden gespielt: " .. roundCount
+    for _, v in pairs(SessionList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
+    for name, amt in pairs(SessionTotals) do
+        local frame = Instance.new("Frame", SessionList); frame.Size = UDim2.new(1, 0, 0, 45); frame.BackgroundColor3 = Color3.fromRGB(30, 35, 40); Instance.new("UICorner", frame)
+        local l = Instance.new("TextLabel", frame); l.Size = UDim2.new(1, -20, 1, 0); l.Position = UDim2.new(0, 10, 0, 0); l.BackgroundTransparency = 1; l.TextColor3 = Color3.new(1, 1, 1); l.TextScaled = true; l.Text = name .. ": " .. amt; l.TextXAlignment = Enum.TextXAlignment.Left
+    end
+end
+AddButton(SessionPage, "RESET SESSION", Color3.fromRGB(130, 20, 20), function() SessionTotals = {}; roundCount = 0; UpdateSessionUI() end)
+
+-- === WEBHOOK TAB ===
+local WebInp = Instance.new("TextBox", WebPage); WebInp.Size = UDim2.new(1,-10,0,45); WebInp.PlaceholderText = "Webhook URL..."; WebInp.BackgroundColor3 = Color3.fromRGB(50,50,50); WebInp.TextColor3 = Color3.new(1,1,1); WebInp.TextScaled = true; Instance.new("UICorner", WebInp)
+WebInp.FocusLost:Connect(function() 
+    Config.WebhookURL = WebInp.Text 
     SaveConfig()
 end)
+AddButton(WebPage, "TEST SENDEN", Color3.fromRGB(60, 60, 60), function() SendWebhook({}) end)
 
-local Unload = Instance.new("TextButton", SettPage)
-Unload.Size = UDim2.new(1, -10, 0, 40)
-Unload.Text = "GUI ENTLADEN"
-Unload.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
-Unload.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", Unload)
-Unload.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
-
--- === CONFIG LOGIK (Dropdown) ===
-local NewConf = Instance.new("TextBox", ConfPage)
-NewConf.Size = UDim2.new(1, -10, 0, 30)
-NewConf.PlaceholderText = "Name für neue Config..."
-NewConf.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-NewConf.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", NewConf)
-
-local CreateB = Instance.new("TextButton", ConfPage)
-CreateB.Size = UDim2.new(1, -10, 0, 30)
-CreateB.Text = "ERSTELLEN & SPEICHERN"
-CreateB.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
-CreateB.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", CreateB)
-
-local DropMain = Instance.new("TextButton", ConfPage)
-DropMain.Size = UDim2.new(1, -10, 0, 35)
-DropMain.Text = "Wähle: " .. selectedConfig
-DropMain.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-DropMain.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", DropMain)
-
-local DropList = Instance.new("Frame", ConfPage)
-DropList.Size = UDim2.new(1, -10, 0, 0)
-DropList.AutomaticSize = Enum.AutomaticSize.Y
-DropList.Visible = false
-DropList.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-Instance.new("UIListLayout", DropList)
-
-local function RefreshDrop()
-    for _, v in pairs(DropList:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
-    for _, file in pairs(listfiles(folderName)) do
-        local name = file:gsub(folderName.."/", ""):gsub(".json", "")
-        local B = Instance.new("TextButton", DropList)
-        B.Size = UDim2.new(1, 0, 0, 30)
-        B.Text = name
-        B.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-        B.TextColor3 = Color3.new(1,1,1)
-        B.MouseButton1Click:Connect(function()
-            selectedConfig = name
-            DropMain.Text = "Wähle: " .. name
-            DropList.Visible = false
-        end)
+-- === SETTINGS ===
+local function SetGUISize(mode)
+    if mode == "Mobile" then
+        Main.Size = UDim2.new(0, 420, 0, 280); Sidebar.Size = UDim2.new(0, 120, 1, 0); Content.Position = UDim2.new(0, 130, 0, 10); Content.Size = UDim2.new(1, -140, 1, -20)
+    else
+        Main.Size = UDim2.new(0, 520, 0, 340); Sidebar.Size = UDim2.new(0, 140, 1, 0); Content.Position = UDim2.new(0, 150, 0, 10); Content.Size = UDim2.new(1, -160, 1, -20)
     end
+    Config.UISize = mode
+    SaveConfig()
 end
+AddButton(SettPage, "PC MODUS", Color3.fromRGB(50,50,50), function() SetGUISize("PC") end)
+AddButton(SettPage, "MOBILE MODUS", Color3.fromRGB(50,50,50), function() SetGUISize("Mobile") end)
+AddButton(SettPage, "UNLOAD GUI", Color3.fromRGB(150, 50, 50), function() ScreenGui:Destroy() end)
 
-DropMain.MouseButton1Click:Connect(function() RefreshDrop() DropList.Visible = not DropList.Visible end)
-CreateB.MouseButton1Click:Connect(function() if NewConf.Text ~= "" then SaveConfig(NewConf.Text) RefreshDrop() end end)
-
-local LoadB = Instance.new("TextButton", ConfPage)
-LoadB.Size = UDim2.new(1, -10, 0, 35)
-LoadB.Text = "AUSGEWÄHLTE LADEN"
-LoadB.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
-LoadB.TextColor3 = Color3.new(1,1,1)
-Instance.new("UICorner", LoadB)
-LoadB.MouseButton1Click:Connect(function() 
-    if LoadConfig(selectedConfig) then 
-        WebInp.Text = Config.WebhookURL 
-        AntiAFKBtn.Text = "Anti-AFK: " .. (Config.AntiAFK and "AN" or "AUS")
-        AntiAFKBtn.BackgroundColor3 = Config.AntiAFK and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(80, 80, 80)
-    end 
-end)
-
--- === SESSION LOGIK ===
-local function UpdateSession()
-    for _, v in pairs(SessionPage:GetChildren()) do if not v:IsA("UIListLayout") then v:Destroy() end end
-    local L = Instance.new("TextLabel", SessionPage); L.Size = UDim2.new(1,0,0,30); L.Text = "Runden: "..roundCount; L.TextColor3 = Color3.new(1,0.8,0); L.BackgroundTransparency = 1
-    for name, amt in pairs(SessionTotals) do
-        local F = Instance.new("Frame", SessionPage); F.Size = UDim2.new(1,-10,0,35); F.BackgroundColor3 = Color3.fromRGB(35,50,40); Instance.new("UICorner", F)
-        local T = Instance.new("TextLabel", F); T.Size = UDim2.new(1,-10,1,0); T.Position = UDim2.new(0,10,0,0); T.Text = name..": "..amt; T.TextColor3 = Color3.new(0,1,0.6); T.BackgroundTransparency = 1; T.TextXAlignment = Enum.TextXAlignment.Left
-    end
-end
-
+-- === EVENTS ===
 Remote.OnClientEvent:Connect(function(cat, data)
     if cat == "Rewards - Items" then 
         roundCount = roundCount + 1
         for _, item in pairs(data) do
             if typeof(item) == "Instance" then
-                local n = item.Name
                 local v = item:FindFirstChild("Amount") or item:FindFirstChild("Value")
-                local amt = v and tonumber(v.Value) or 0
-                SessionTotals[n] = (SessionTotals[n] or 0) + amt
+                SessionTotals[item.Name] = (SessionTotals[item.Name] or 0) + (v and tonumber(v.Value) or 1)
             end
         end
-        UpdateSession()
+        UpdateSessionUI()
         SendWebhook(data)
     end
 end)
 
--- Startup
-if isfile(lastConfigFile) then
-    local last = readfile(lastConfigFile)
-    if LoadConfig(last) then 
-        WebInp.Text = Config.WebhookURL 
-        AntiAFKBtn.Text = "Anti-AFK: " .. (Config.AntiAFK and "AN" or "AUS")
-        AntiAFKBtn.BackgroundColor3 = Config.AntiAFK and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(80, 80, 80)
-    end
-end
-WebPage.Visible = true activePage = WebPage
-UpdateSession()
+-- === LOAD & STARTUP ===
+MiniBtn.MouseButton1Click:Connect(function() Main.Visible = not Main.Visible end)
 
--- === ANTI-AFK ENGINE ===
-task.spawn(function()
-    while task.wait(300) do
-        if Config.AntiAFK then
-            local Character = Player.Character
-            if Character then
-                local Humanoid = Character:FindFirstChildOfClass("Humanoid")
-                if Humanoid then
-                    Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                    task.wait(0.2)
-                    Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                end
-            end
-        end
-    end
-end)
+if isfile(saveFile) then
+    local success, data = pcall(function() return HttpService:JSONDecode(readfile(saveFile)) end)
+    if success then Config = data end
+end
+
+-- UI anwenden
+SetGUISize(Config.UISize)
+WebInp.Text = Config.WebhookURL
+WebPage.Visible = true; activePage = WebPage; UpdateSessionUI()
