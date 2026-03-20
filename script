@@ -64,10 +64,10 @@ local function SendWebhook(rewardTable)
             Headers = { ["Content-Type"] = "application/json" },
             Body = HttpService:JSONEncode({
                 embeds = {{
-                    title = "🏆 Gemini Bericht: " .. Player.Name,
+                    title = "🏆 Hazeluxe Bericht: " .. Player.Name,
                     color = 0x00FFAA,
                     fields = fields,
-                    footer = {text = "Gemini V6.8 • " .. os.date("%X")}
+                    footer = {text = " V6.8 • " .. os.date("%X")}
                 }}
             })
         })
