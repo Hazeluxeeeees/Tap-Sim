@@ -1,226 +1,249 @@
-local locations = {
-    Vector3.new(-205.0104, 211.8453, 184.4277),
-    Vector3.new(-114.8744, 210.4916, 192.3103),
-    Vector3.new(-133.3614, 618.8844, 259.2695),
-    Vector3.new(-242.0043, 1219.3078, 308.5415),
-    Vector3.new(-67.6513, 1766.2596, 219.2989),
-    Vector3.new(-203.5570, 3503.5825, 458.1306),
-    Vector3.new(-294.1224, 9188.2167, 408.2637),
-    Vector3.new(1275.0939, 662.5795, -13481.1650),
-    Vector3.new(1398.2928, 649.2727, -13223.1503),
-    Vector3.new(1358.5063, 864.5585, -13533.4218),
-    Vector3.new(1430.9868, 1734.2550, -13193.5),
-    Vector3.new(1328.0238, 1733.4241, -13238.6044),
-    Vector3.new(1045.7285, 3112.8732, -13040.9199),
-    Vector3.new(1713.1822, 3225.5842, -13130.0029),
-    Vector3.new(1103.6279, 4183.7109, -12831.0566),
-}
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local Player = game:GetService("Players").LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local waitTime = 16 * 60 
-local huntRange = 300 
-local isRunning = true
-local isLoaded = true
+-- === CONFIG & DATA ===
+local folderName = "Gemini_Configs"
+local lastConfigFile = "Gemini_LastConfig.txt"
+local Config = { WebhookURL = "", ToggleKey = "RightShift", AutoLoad = false }
+local SessionTotals = {} 
+local roundCount = 0
+local selectedConfig = "Default"
 
-local cs = game:GetService("CollectionService")
-local player = game:GetService("Players").LocalPlayer
+local Remote = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Client"):WaitForChild("UI"):WaitForChild("GameEndedUI")
 
-----------------------------------------------------------------
--- GUI CREATION
-----------------------------------------------------------------
-local screenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
-screenGui.Name = "EssenceHunterV5_EN"
-screenGui.ResetOnSpawn = false
+if makefolder then pcall(function() makefolder(folderName) end) end
 
-local mainFrame = Instance.new("Frame", screenGui)
-mainFrame.Size = UDim2.new(0, 250, 0, 120)
-mainFrame.Position = UDim2.new(0.5, -125, 0.1, 0)
-mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-mainFrame.BackgroundTransparency = 0.2
-mainFrame.BorderSizePixel = 0
-mainFrame.Active = true
-mainFrame.Draggable = true 
-
-local corner = Instance.new("UICorner", mainFrame)
-corner.CornerRadius = UDim.new(0, 12)
-
--- UNLOAD BUTTON (RED DOT)
-local closeBtn = Instance.new("TextButton", mainFrame)
-closeBtn.Size = UDim2.new(0, 15, 0, 15)
-closeBtn.Position = UDim2.new(1, -25, 0, 10)
-closeBtn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-closeBtn.Text = ""
-
-local closeCorner = Instance.new("UICorner", closeBtn)
-closeCorner.CornerRadius = UDim.new(1, 0)
-
--- CONFIRMATION PANEL
-local confirmFrame = Instance.new("Frame", mainFrame)
-confirmFrame.Size = UDim2.new(1, 0, 1, 0)
-confirmFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-confirmFrame.BackgroundTransparency = 0.05
-confirmFrame.Visible = false
-confirmFrame.ZIndex = 10
-
-local confirmCorner = Instance.new("UICorner", confirmFrame)
-confirmCorner.CornerRadius = UDim.new(0, 12)
-
-local confirmText = Instance.new("TextLabel", confirmFrame)
-confirmText.Size = UDim2.new(1, 0, 0.6, 0)
-confirmText.BackgroundTransparency = 1
-confirmText.Text = "Are you sure you want to unload\nthe Essence Hunter Script?"
-confirmText.TextColor3 = Color3.fromRGB(255, 255, 255)
-confirmText.Font = Enum.Font.GothamBold
-confirmText.TextSize = 12
-confirmText.ZIndex = 11
-
-local yesBtn = Instance.new("TextButton", confirmFrame)
-yesBtn.Size = UDim2.new(0.4, 0, 0.3, 0)
-yesBtn.Position = UDim2.new(0.05, 0, 0.6, 0)
-yesBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-yesBtn.Text = "Yes"
-yesBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-yesBtn.Font = Enum.Font.GothamBold
-yesBtn.ZIndex = 11
-
-local noBtn = Instance.new("TextButton", confirmFrame)
-noBtn.Size = UDim2.new(0.4, 0, 0.3, 0)
-noBtn.Position = UDim2.new(0.55, 0, 0.6, 0)
-noBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-noBtn.Text = "No"
-noBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-noBtn.Font = Enum.Font.GothamBold
-noBtn.ZIndex = 11
-
-Instance.new("UICorner", yesBtn).CornerRadius = UDim.new(0, 6)
-Instance.new("UICorner", noBtn).CornerRadius = UDim.new(0, 6)
-
--- STANDARD UI ELEMENTS
-local title = Instance.new("TextLabel", mainFrame)
-title.Size = UDim2.new(1, 0, 0.3, 0)
-title.BackgroundTransparency = 1
-title.Text = "Essence Hunter"
-title.TextColor3 = Color3.fromRGB(255, 255, 255)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 18
-
-local timerLabel = Instance.new("TextLabel", mainFrame)
-timerLabel.Size = UDim2.new(1, 0, 0.4, 0)
-timerLabel.Position = UDim2.new(0, 0, 0.3, 0)
-timerLabel.BackgroundTransparency = 1
-timerLabel.Text = "STARTING..."
-timerLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-timerLabel.Font = Enum.Font.GothamBlack
-timerLabel.TextSize = 30 
-
-local toggleBtn = Instance.new("TextButton", mainFrame)
-toggleBtn.Size = UDim2.new(0.8, 0, 0.22, 0)
-toggleBtn.Position = UDim2.new(0.1, 0, 0.72, 0)
-toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
-toggleBtn.Text = "AUTO-COLLECT: ON"
-toggleBtn.Font = Enum.Font.GothamBold
-toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 6)
-
-----------------------------------------------------------------
--- BUTTON EVENTS
-----------------------------------------------------------------
-closeBtn.MouseButton1Click:Connect(function()
-    confirmFrame.Visible = true
-end)
-
-noBtn.MouseButton1Click:Connect(function()
-    confirmFrame.Visible = false
-end)
-
-yesBtn.MouseButton1Click:Connect(function()
-    isLoaded = false
-    isRunning = false
-    screenGui:Destroy()
-end)
-
-toggleBtn.MouseButton1Click:Connect(function()
-    if not isLoaded then return end
-    isRunning = not isRunning
-    if isRunning then
-        toggleBtn.Text = "AUTO-COLLECT: ON"
-        toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
-    else
-        toggleBtn.Text = "AUTO-COLLECT: OFF"
-        toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 0, 0)
-        timerLabel.Text = "PAUSED"
-        timerLabel.TextColor3 = Color3.fromRGB(255, 0, 0)
-    end
-end)
-
-----------------------------------------------------------------
--- LOGIC
-----------------------------------------------------------------
-local function formatTime(seconds)
-    local mins = math.floor(seconds / 60)
-    local secs = seconds % 60
-    return string.format("%02d:%02d", mins, secs)
+-- === FUNKTIONEN ===
+local function SaveConfig(name)
+    local target = name or selectedConfig
+    writefile(folderName .. "/" .. target .. ".json", HttpService:JSONEncode(Config))
+    if Config.AutoLoad then writefile(lastConfigFile, target) end
 end
 
-local function teleport(pos)
-    local char = player.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if root then root.CFrame = CFrame.new(pos) end
-end
-
-local function findAndCollectAnyEssence()
-    if not isRunning or not isLoaded then return end
-    local char = player.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return false end
-    for _, essence in pairs(cs:GetTagged("BlockEssence")) do
-        if essence.Parent then
-            local essencePos = essence:GetPivot().Position
-            if (root.Position - essencePos).Magnitude <= huntRange then
-                teleport(essencePos)
-                task.wait(0.5)
-                local prompt = essence:FindFirstChildWhichIsA("ProximityPrompt", true)
-                if prompt then fireproximityprompt(prompt) end
-                task.wait(0.5)
-                return true
-            end
+local function LoadConfig(name)
+    local path = folderName .. "/" .. name .. ".json"
+    if isfile(path) then
+        local success, data = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
+        if success then 
+            Config = data 
+            selectedConfig = name
+            return true 
         end
     end
+    return false
 end
 
-task.spawn(function()
-    while isLoaded do
-        if isRunning then
-            local char = player.Character
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-            if root then
-                local startPos = root.CFrame
-                
-                timerLabel.Text = "COLLECTING..."
-                timerLabel.TextColor3 = Color3.fromRGB(0, 255, 0) 
-                
-                for i, target in ipairs(locations) do
-                    if not isRunning or not isLoaded then break end
-                    teleport(target)
-                    task.wait(1.5)
-                    for _ = 1, 6 do 
-                        if not isRunning or not isLoaded then break end
-                        findAndCollectAnyEssence()
-                        task.wait(0.5)
-                    end
-                end
+local function SendWebhook(rewardTable)
+    if Config.WebhookURL == "" or not Config.WebhookURL:find("discord.com") then return end
+    
+    local fields = {}
+    local roundLoot = ""
+    for _, item in pairs(rewardTable) do
+        if typeof(item) == "Instance" then
+            local n = item.Name
+            local v = item:FindFirstChild("Amount") or item:FindFirstChild("Value")
+            local amt = v and tonumber(v.Value) or 0
+            roundLoot = roundLoot .. string.format("🎁 **%s**: %d\n", n, amt)
+        end
+    end
 
-                if isRunning and isLoaded then
-                    teleport(startPos.Position)
-                    timerLabel.TextColor3 = Color3.fromRGB(255, 0, 0) 
-                    local nextRun = tick() + waitTime
-                    while tick() < nextRun and isRunning and isLoaded do
-                        timerLabel.Text = formatTime(math.ceil(nextRun - tick()))
-                        findAndCollectAnyEssence()
-                        task.wait(1)
-                    end
-                end
+    table.insert(fields, {["name"] = "─── Runde #"..roundCount.." ───", ["value"] = roundLoot ~= "" and roundLoot or "Nichts", ["inline"] = false})
+    
+    local totalLoot = ""
+    for name, total in pairs(SessionTotals) do
+        totalLoot = totalLoot .. string.format("📊 **%s**: %d\n", name, total)
+    end
+    table.insert(fields, {["name"] = "─── Session Gesamt ───", ["value"] = totalLoot ~= "" and totalLoot or "Nichts", ["inline"] = false})
+
+    pcall(function()
+        (request or http_request)({
+            Url = Config.WebhookURL:gsub("discord.com", "webhook.lewisakura.moe"),
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode({
+                embeds = {{
+                    title = "🏆 Gemini Bericht: " .. Player.Name,
+                    color = 0x00FFAA,
+                    fields = fields,
+                    footer = {text = "Gemini V6.8 • " .. os.date("%X")}
+                }}
+            })
+        })
+    end)
+end
+
+-- === UI BUILDER ===
+local ScreenGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
+local Main = Instance.new("Frame", ScreenGui)
+Main.Size = UDim2.new(0, 500, 0, 320)
+Main.Position = UDim2.new(0.5, -250, 0.5, -160)
+Main.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+Instance.new("UICorner", Main)
+
+-- Mobile Button
+local MiniBtn = Instance.new("TextButton", ScreenGui)
+MiniBtn.Size = UDim2.new(0, 45, 0, 45)
+MiniBtn.Position = UDim2.new(0.1, 0, 0.1, 0)
+MiniBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+MiniBtn.Text = "G"
+MiniBtn.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", MiniBtn).CornerRadius = UDim.new(1, 0)
+MiniBtn.MouseButton1Click:Connect(function() Main.Visible = not Main.Visible end)
+
+-- Sidebar & Content
+local Sidebar = Instance.new("Frame", Main)
+Sidebar.Size = UDim2.new(0, 130, 1, 0)
+Sidebar.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+Instance.new("UICorner", Sidebar)
+
+local TabHolder = Instance.new("Frame", Sidebar)
+TabHolder.Position = UDim2.new(0.1, 0, 0.1, 0)
+TabHolder.Size = UDim2.new(0.8, 0, 0.8, 0)
+TabHolder.BackgroundTransparency = 1
+Instance.new("UIListLayout", TabHolder).Padding = UDim.new(0, 5)
+
+local Content = Instance.new("Frame", Main)
+Content.Position = UDim2.new(0, 140, 0, 10)
+Content.Size = UDim2.new(1, -150, 1, -20)
+Content.BackgroundTransparency = 1
+
+local activePage = nil
+local function CreateTab(name)
+    local B = Instance.new("TextButton", TabHolder)
+    B.Size = UDim2.new(1, 0, 0, 30)
+    B.Text = name
+    B.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    B.TextColor3 = Color3.new(1,1,1)
+    Instance.new("UICorner", B)
+
+    local P = Instance.new("ScrollingFrame", Content)
+    P.Size = UDim2.new(1, 0, 1, 0)
+    P.Visible = false
+    P.BackgroundTransparency = 1
+    P.ScrollBarThickness = 2
+    P.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    Instance.new("UIListLayout", P).Padding = UDim.new(0, 10)
+
+    B.MouseButton1Click:Connect(function()
+        if activePage then activePage.Visible = false end
+        P.Visible = true activePage = P
+    end)
+    return P
+end
+
+local WebPage = CreateTab("Webhook")
+local SessionPage = CreateTab("Session")
+local ConfPage = CreateTab("Configs")
+local SettPage = CreateTab("Settings")
+
+-- Webhook
+local WebInp = Instance.new("TextBox", WebPage)
+WebInp.Size = UDim2.new(1, -10, 0, 40)
+WebInp.PlaceholderText = "Discord Webhook URL..."
+WebInp.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+WebInp.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", WebInp)
+WebInp.FocusLost:Connect(function() Config.WebhookURL = WebInp.Text SaveConfig() end)
+
+-- Config Dropdown & Creation
+local NewConf = Instance.new("TextBox", ConfPage)
+NewConf.Size = UDim2.new(1, -10, 0, 30)
+NewConf.PlaceholderText = "Name für neue Config..."
+NewConf.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+NewConf.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", NewConf)
+
+local CreateB = Instance.new("TextButton", ConfPage)
+CreateB.Size = UDim2.new(1, -10, 0, 30)
+CreateB.Text = "ERSTELLEN & SPEICHERN"
+CreateB.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+CreateB.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", CreateB)
+
+local DropMain = Instance.new("TextButton", ConfPage)
+DropMain.Size = UDim2.new(1, -10, 0, 35)
+DropMain.Text = "Wähle: " .. selectedConfig
+DropMain.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+DropMain.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", DropMain)
+
+local DropList = Instance.new("Frame", ConfPage)
+DropList.Size = UDim2.new(1, -10, 0, 0)
+DropList.AutomaticSize = Enum.AutomaticSize.Y
+DropList.Visible = false
+DropList.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+Instance.new("UIListLayout", DropList)
+
+local function RefreshDrop()
+    for _, v in pairs(DropList:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
+    for _, file in pairs(listfiles(folderName)) do
+        local name = file:gsub(folderName.."/", ""):gsub(".json", "")
+        local B = Instance.new("TextButton", DropList)
+        B.Size = UDim2.new(1, 0, 0, 30)
+        B.Text = name
+        B.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+        B.TextColor3 = Color3.new(1,1,1)
+        B.MouseButton1Click:Connect(function()
+            selectedConfig = name
+            DropMain.Text = "Wähle: " .. name
+            DropList.Visible = false
+        end)
+    end
+end
+
+DropMain.MouseButton1Click:Connect(function() RefreshDrop() DropList.Visible = not DropList.Visible end)
+CreateB.MouseButton1Click:Connect(function() if NewConf.Text ~= "" then SaveConfig(NewConf.Text) RefreshDrop() end end)
+
+local LoadB = Instance.new("TextButton", ConfPage)
+LoadB.Size = UDim2.new(1, -10, 0, 35)
+LoadB.Text = "AUSGEWÄHLTE LADEN"
+LoadB.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+LoadB.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", LoadB)
+LoadB.MouseButton1Click:Connect(function() if LoadConfig(selectedConfig) then WebInp.Text = Config.WebhookURL end end)
+
+-- Settings
+local Unload = Instance.new("TextButton", SettPage)
+Unload.Size = UDim2.new(1, -10, 0, 40)
+Unload.Text = "GUI ENTLADEN"
+Unload.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
+Unload.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", Unload)
+Unload.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
+
+-- === SESSION LOGIK ===
+local function UpdateSession()
+    for _, v in pairs(SessionPage:GetChildren()) do if not v:IsA("UIListLayout") then v:Destroy() end end
+    local L = Instance.new("TextLabel", SessionPage); L.Size = UDim2.new(1,0,0,30); L.Text = "Runden: "..roundCount; L.TextColor3 = Color3.new(1,0.8,0); L.BackgroundTransparency = 1
+    for name, amt in pairs(SessionTotals) do
+        local F = Instance.new("Frame", SessionPage); F.Size = UDim2.new(1,-10,0,35); F.BackgroundColor3 = Color3.fromRGB(35,50,40); Instance.new("UICorner", F)
+        local T = Instance.new("TextLabel", F); T.Size = UDim2.new(1,-10,1,0); T.Position = UDim2.new(0,10,0,0); T.Text = name..": "..amt; T.TextColor3 = Color3.new(0,1,0.6); T.BackgroundTransparency = 1; T.TextXAlignment = Enum.TextXAlignment.Left
+    end
+end
+
+-- Reward Listener
+Remote.OnClientEvent:Connect(function(cat, data)
+    if cat == "Rewards - Items" then 
+        roundCount = roundCount + 1
+        for _, item in pairs(data) do
+            if typeof(item) == "Instance" then
+                local n = item.Name
+                local v = item:FindFirstChild("Amount") or item:FindFirstChild("Value")
+                local amt = v and tonumber(v.Value) or 0
+                SessionTotals[n] = (SessionTotals[n] or 0) + amt
             end
         end
-        task.wait(1)
+        UpdateSession()
+        SendWebhook(data)
     end
 end)
+
+-- Startup
+if isfile(lastConfigFile) then
+    local last = readfile(lastConfigFile)
+    if LoadConfig(last) then WebInp.Text = Config.WebhookURL end
+end
+WebPage.Visible = true activePage = WebPage
+UpdateSession()
