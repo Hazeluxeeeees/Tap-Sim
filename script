@@ -1404,6 +1404,6 @@ end)
 task.spawn(function()
     task.wait(1)   -- kurz warten bis _G.HazeShared gesetzt ist
     pcall(function()
-        loadstring(game:HttpGet("DEIN_RAW_GITHUB_LINK_HIER"))()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/autofarm.lua"))()
     end)
 end)
