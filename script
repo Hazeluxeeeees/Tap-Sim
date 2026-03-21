@@ -1,17 +1,19 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB V18 – HAUPTSKRIPT (Loader & Core)
---  Struktur: Haze = {UI={}, Tabs={}, Config={}}
---  Kein 200-Locals-Problem möglich
---  Externes Autofarm-Modul via _G.HazeShared.Container
+--  HazeHUB V19 – Hauptskript (Loader & Core)
+--  Struktur : local Haze = {}  → kein 200-Locals-Limit möglich
+--  Autofarm : extern via GitHub loadstring
+--  _G.HazeShared = Brücke zum externen Modul
 -- ╚══════════════════════════════════════════════════════════╝
 
 -- ============================================================
---  ZENTRALE TABELLE  (alle Daten + UI hier drin)
+--  EINZIGE TOP-LEVEL-VARIABLE  (alle Daten + UI)
 -- ============================================================
 local Haze = {
-    UI     = { Fr={}, Lbl={}, Btn={}, Inp={} },
-    Tabs   = {},   -- { [name] = ScrollingFrame }
-    TBtns  = {},   -- { [name] = TextButton }
+    -- Sub-Tabellen
+    UI  = { Fr={}, Lbl={}, Btn={}, Inp={} },
+    Svc = {},
+    Tabs= {}, TBtns= {},
+    -- Config (persistiert in JSON)
     Config = {
         WebhookURL = "",
         UISize     = "PC",
@@ -19,41 +21,62 @@ local Haze = {
         AutoRetry  = false,
         SavedGoals = {},
     },
-    State = {
-        Goals            = {},
-        GoalsNotified    = {},
-        SessionTotals    = {},
-        InfoTotals       = {},
-        RoundCount       = 0,
-        SessionStart     = os.time(),
-        Running          = true,
-        WebhookEnabled   = true,
-        GuiVisible       = true,
-        ListeningKey     = false,
-        KeyConn          = nil,
-        ActiveTab        = nil,
-        SelectedMode     = "Story",
-        SelectedWorldId  = nil,
-        SelectedChapId   = nil,
-        WorldData        = {},
-        WorldIds         = {},
-        ScanDone         = false,
-        ChapterFolderRef = nil,
-        ChildAddedConn   = nil,
+    -- Laufzeit-State
+    S = {
+        Goals         = {},
+        GoalsNotified = {},
+        SessTotals    = {},
+        InfoTotals    = {},
+        RoundCount    = 0,
+        SessStart     = os.time(),
+        Running       = true,
+        WhEnabled     = true,
+        GuiVisible    = true,
+        KeyListening  = false,
+        KeyConn       = nil,
+        ActiveTab     = nil,
+        SelMode       = "Story",
+        SelWorld      = nil,
+        SelChap       = nil,
+        WorldData     = {},
+        WorldIds      = {},
+        ScanDone      = false,
+        ChapFolderRef = nil,
+        ChildConn     = nil,
     },
+    -- Konstanten
+    K = {
+        INFO = { Exp=true, Gems=true, Gold=true },
+        RARE = { ["Legendary Stone"]=true, ["Mythic Egg"]=true },
+        FOLDER    = "HazeHUB",
+        SAVE_FILE = "HazeHUB/HazeHUB_AutoSave.json",
+        AF_URL    = "https://raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/autofarm.lua",
+    },
+}
+
+-- ============================================================
+--  SHARED ENVIRONMENT  (Brücke zum externen Modul)
+-- ============================================================
+_G.HazeShared = {
+    Container = nil,          -- wird nach UI-Build gesetzt
+    Status    = "Wird geladen...",
+    Version   = "1.0.0",
 }
 
 -- ============================================================
 --  SERVICES
 -- ============================================================
-local Svc = {
-    Http   = game:GetService("HttpService"),
-    Input  = game:GetService("UserInputService"),
-    Vuser  = game:GetService("VirtualUser"),
-    Player = game:GetService("Players").LocalPlayer,
-    RS     = game:GetService("ReplicatedStorage"),
-    Tween  = game:GetService("TweenService"),
-}
+Haze.Svc.Http   = game:GetService("HttpService")
+Haze.Svc.Input  = game:GetService("UserInputService")
+Haze.Svc.Vuser  = game:GetService("VirtualUser")
+Haze.Svc.Player = game:GetService("Players").LocalPlayer
+Haze.Svc.RS     = game:GetService("ReplicatedStorage")
+Haze.Svc.Tween  = game:GetService("TweenService")
+
+local H   = Haze           -- kurzer Alias
+local S   = Haze.S
+local K   = Haze.K
+local Svc = Haze.Svc
 
 -- ============================================================
 --  GUI PARENT
@@ -65,43 +88,38 @@ pcall(function()
     guiParent = cg
 end)
 
--- ============================================================
---  FILES
--- ============================================================
-local FOLDER    = "HazeHUB"
-local SAVE_FILE = FOLDER.."/HazeHUB_AutoSave.json"
-if makefolder then pcall(function() makefolder(FOLDER) end) end
+if makefolder then pcall(function() makefolder(K.FOLDER) end) end
 
 -- ============================================================
 --  SAVE / LOAD
 -- ============================================================
 local function SaveConfig()
-    Haze.Config.SavedGoals = {}
-    for _,g in ipairs(Haze.State.Goals) do
-        table.insert(Haze.Config.SavedGoals,{item=g.item,amount=g.amount})
+    H.Config.SavedGoals = {}
+    for _,g in ipairs(S.Goals) do
+        table.insert(H.Config.SavedGoals, {item=g.item, amount=g.amount})
     end
     if writefile then
         pcall(function()
-            writefile(SAVE_FILE,Svc.Http:JSONEncode(Haze.Config))
+            writefile(K.SAVE_FILE, Svc.Http:JSONEncode(H.Config))
         end)
     end
 end
 
 local function LoadConfig()
-    if not (isfile and isfile(SAVE_FILE)) then return end
+    if not (isfile and isfile(K.SAVE_FILE)) then return end
     local ok,data = pcall(function()
-        return Svc.Http:JSONDecode(readfile(SAVE_FILE))
+        return Svc.Http:JSONDecode(readfile(K.SAVE_FILE))
     end)
     if not ok or not data then return end
-    local C = Haze.Config
-    if data.WebhookURL~=nil then C.WebhookURL=data.WebhookURL end
-    if data.UISize    ~=nil then C.UISize    =data.UISize     end
-    if data.ToggleKey ~=nil then C.ToggleKey =data.ToggleKey  end
-    if data.AutoRetry ~=nil then C.AutoRetry =data.AutoRetry  end
+    local C = H.Config
+    if data.WebhookURL ~= nil then C.WebhookURL = data.WebhookURL end
+    if data.UISize     ~= nil then C.UISize     = data.UISize     end
+    if data.ToggleKey  ~= nil then C.ToggleKey  = data.ToggleKey  end
+    if data.AutoRetry  ~= nil then C.AutoRetry  = data.AutoRetry  end
     if data.SavedGoals and type(data.SavedGoals)=="table" then
         for _,g in ipairs(data.SavedGoals) do
             if g.item and tonumber(g.amount) then
-                table.insert(Haze.State.Goals,{
+                table.insert(S.Goals, {
                     item=g.item, amount=tonumber(g.amount), reached=false
                 })
             end
@@ -112,8 +130,7 @@ end
 -- ============================================================
 --  REMOTES
 -- ============================================================
-local R = {}   -- R.Remote, R.VoteRetry, R.PlayRoom
-
+local R = {}
 pcall(function()
     R.Remote = Svc.RS:WaitForChild("Remote",10)
         :WaitForChild("Client",10):WaitForChild("UI",10)
@@ -131,7 +148,7 @@ pcall(function()
 end)
 
 local function PR(...)
-    if R.PlayRoom then pcall(R.PlayRoom.FireServer,R.PlayRoom,...) end
+    if R.PlayRoom then pcall(R.PlayRoom.FireServer, R.PlayRoom, ...) end
 end
 
 local function FireVoteRetry()
@@ -144,8 +161,7 @@ local function FireVoteRetry()
     end)
 end
 
--- Exakte Remote-Abfolge
-local function FireCreateAndStart(worldId,mode,chapId)
+local function FireCreateAndStart(worldId, mode, chapId)
     task.spawn(function()
         pcall(function()
             PR("Create"); task.wait(0.3)
@@ -160,25 +176,21 @@ local function FireCreateAndStart(worldId,mode,chapId)
 end
 
 -- ============================================================
---  HELPERS
+--  HELPER-FUNKTIONEN
 -- ============================================================
-local INFO_ITEMS = { Exp=true, Gems=true, Gold=true }
-local RARE_ITEMS = { ["Legendary Stone"]=true, ["Mythic Egg"]=true }
-
-local function FmtDur(s)
-    local h=math.floor(s/3600);local m=math.floor((s%3600)/60);local sec=s%60
-    if h>0 then return string.format("%dh %02dm %02ds",h,m,sec)
-    else return string.format("%dm %02ds",m,sec) end
+local function FmtDur(sec)
+    local h=math.floor(sec/3600); local m=math.floor((sec%3600)/60); local s=sec%60
+    if h>0 then return string.format("%dh %02dm %02ds",h,m,s)
+    else return string.format("%dm %02ds",m,s) end
 end
 
 local function GetInvAmt(itemName)
     local n=0
     pcall(function()
-        local f=Svc.RS:WaitForChild("Player_Data",3)
+        local f = Svc.RS:WaitForChild("Player_Data",3)
             :WaitForChild(Svc.Player.Name,3):WaitForChild("Items",3)
-        local item=f:FindFirstChild(itemName)
-        if not item then return end
-        local vc=item:FindFirstChild("Value") or item:FindFirstChild("Amount")
+        local item = f:FindFirstChild(itemName); if not item then return end
+        local vc = item:FindFirstChild("Value") or item:FindFirstChild("Amount")
         if vc then n=tonumber(vc.Value) or 0
         elseif item:IsA("IntValue") or item:IsA("NumberValue") then n=tonumber(item.Value) or 0 end
     end)
@@ -186,13 +198,13 @@ local function GetInvAmt(itemName)
 end
 
 local function IsInLobby()
-    local pr=Svc.Player.PlayerGui:FindFirstChild("PlayRoom")
+    local pr = Svc.Player.PlayerGui:FindFirstChild("PlayRoom")
     return not pr or not pr.Enabled
 end
 
 local function ClickBackToLobby()
     pcall(function()
-        local btn=Svc.Player.PlayerGui
+        local btn = Svc.Player.PlayerGui
             :WaitForChild("Settings",3):WaitForChild("Main",3)
             :WaitForChild("Base",3):WaitForChild("Space",3)
             :WaitForChild("ScrollingFrame",3):WaitForChild("Back To Lobby",3)
@@ -204,35 +216,36 @@ end
 --  WORLD SCAN
 -- ============================================================
 local function ScanChapterFolder(folder)
-    local S = Haze.State
-    S.WorldData={}
+    S.WorldData = {}
     for _,wf in ipairs(folder:GetChildren()) do
-        local wid=wf.Name; local story,ranger={},{}
+        local wid = wf.Name
+        local story, ranger = {}, {}
         for _,btn in ipairs(wf:GetChildren()) do
-            local n=btn.Name
+            local n = btn.Name
             if n:find("_RangerStage") then
-                table.insert(ranger,n)
+                table.insert(ranger, n)
             elseif n:find("_Chapter") and not wid:lower():find("calamity") then
-                table.insert(story,n)
+                table.insert(story, n)
             elseif wid:lower():find("calamity") and n:find("_Chapter") then
-                table.insert(story,n)
+                table.insert(story, n)
             end
         end
-        local function bn(a,b) return (tonumber(a:match("(%d+)$")) or 0)<(tonumber(b:match("(%d+)$")) or 0) end
+        local function bn(a,b)
+            return (tonumber(a:match("(%d+)$")) or 0) < (tonumber(b:match("(%d+)$")) or 0)
+        end
         table.sort(story,bn); table.sort(ranger,bn)
         if #story>0 or #ranger>0 then
-            S.WorldData[wid]={story=story,ranger=ranger}
+            S.WorldData[wid] = {story=story, ranger=ranger}
         end
     end
     local ids={}
     for wid in pairs(S.WorldData) do table.insert(ids,wid) end
-    table.sort(ids,function(a,b) return a:lower()<b:lower() end)
+    table.sort(ids, function(a,b) return a:lower()<b:lower() end)
     S.WorldIds=ids; S.ScanDone=true
 end
 
 local function GetChapterFolder()
-    local S=Haze.State
-    if S.ChapterFolderRef then return S.ChapterFolderRef end
+    if S.ChapFolderRef then return S.ChapFolderRef end
     local f
     pcall(function() f=Svc.Player.PlayerGui.PlayRoom.Main.GameStage.Main.Base.Chapter end)
     if not f then
@@ -243,11 +256,10 @@ local function GetChapterFolder()
                 :WaitForChild("Base",10):WaitForChild("Chapter",10)
         end)
     end
-    S.ChapterFolderRef=f; return f
+    S.ChapFolderRef=f; return f
 end
 
 local function ApplyFallback()
-    local S=Haze.State
     S.WorldData={
         JJK={story={"JJK_Chapter1","JJK_Chapter2","JJK_Chapter3","JJK_Chapter4","JJK_Chapter5"},ranger={"JJK_RangerStage1","JJK_RangerStage2","JJK_RangerStage3","JJK_RangerStage4"}},
         OnePiece={story={"OnePiece_Chapter1","OnePiece_Chapter2","OnePiece_Chapter3","OnePiece_Chapter4","OnePiece_Chapter5"},ranger={"OnePiece_RangerStage1","OnePiece_RangerStage2","OnePiece_RangerStage3"}},
@@ -259,7 +271,7 @@ local function ApplyFallback()
     }
     local ids={}
     for wid in pairs(S.WorldData) do table.insert(ids,wid) end
-    table.sort(ids,function(a,b) return a:lower()<b:lower() end)
+    table.sort(ids, function(a,b) return a:lower()<b:lower() end)
     S.WorldIds=ids; S.ScanDone=true
 end
 
@@ -271,9 +283,9 @@ task.spawn(function()
         task.wait(60)
         pcall(function()
             Svc.Vuser:CaptureController()
-            Svc.Vuser:SetKeyDown(" ");task.wait(0.1);Svc.Vuser:SetKeyUp(" ")
+            Svc.Vuser:SetKeyDown(" "); task.wait(0.1); Svc.Vuser:SetKeyUp(" ")
             task.wait(0.4)
-            Svc.Vuser:SetKeyDown(" ");task.wait(0.1);Svc.Vuser:SetKeyUp(" ")
+            Svc.Vuser:SetKeyDown(" "); task.wait(0.1); Svc.Vuser:SetKeyUp(" ")
         end)
     end
 end)
@@ -283,8 +295,8 @@ task.spawn(function()
     while true do
         task.wait(1)
         pcall(function()
-            if Haze.UI.Lbl.SessionTimer then
-                Haze.UI.Lbl.SessionTimer.Text="⏱  "..FmtDur(os.time()-Haze.State.SessionStart)
+            if H.UI.Lbl.SessionTimer then
+                H.UI.Lbl.SessionTimer.Text = "⏱  "..FmtDur(os.time()-S.SessStart)
             end
         end)
     end
@@ -293,7 +305,7 @@ end)
 -- ============================================================
 --  DESIGN
 -- ============================================================
-local D={
+local D = {
     BG=Color3.fromRGB(13,15,25),        Sidebar=Color3.fromRGB(9,11,20),
     Card=Color3.fromRGB(22,28,48),       CardHover=Color3.fromRGB(30,38,62),
     Input=Color3.fromRGB(16,20,36),      TabActive=Color3.fromRGB(18,26,50),
@@ -308,58 +320,62 @@ local D={
     TextLow=Color3.fromRGB(80,100,148),  Border=Color3.fromRGB(40,55,95),
     BorderCyan=Color3.fromRGB(0,150,200),
 }
-local TF=TweenInfo.new(0.15,Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
-local TM=TweenInfo.new(0.25,Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+local TF = TweenInfo.new(0.15,Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+local TM = TweenInfo.new(0.25,Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
 local function Tw(o,p,ti) Svc.Tween:Create(o,ti or TF,p):Play() end
 
 -- ============================================================
 --  UI FACTORY
 -- ============================================================
-local function Corner(p,r) local c=Instance.new("UICorner",p);c.CornerRadius=UDim.new(0,r or 10);return c end
+local function Corner(p,r)
+    local c=Instance.new("UICorner",p); c.CornerRadius=UDim.new(0,r or 10); return c
+end
 local function Stroke(p,col,th,tr)
-    local o=p:FindFirstChildOfClass("UIStroke");if o then o:Destroy() end
+    local o=p:FindFirstChildOfClass("UIStroke"); if o then o:Destroy() end
     local s=Instance.new("UIStroke",p)
-    s.Color=col or D.Border;s.Thickness=th or 1;s.Transparency=tr or 0;return s
+    s.Color=col or D.Border; s.Thickness=th or 1; s.Transparency=tr or 0; return s
 end
 local function Pad(p,pt,pr,pb,pl)
     local u=Instance.new("UIPadding",p)
-    u.PaddingTop=UDim.new(0,pt or 6);u.PaddingRight=UDim.new(0,pr or 6)
-    u.PaddingBottom=UDim.new(0,pb or 6);u.PaddingLeft=UDim.new(0,pl or 6)
+    u.PaddingTop=UDim.new(0,pt or 6); u.PaddingRight=UDim.new(0,pr or 6)
+    u.PaddingBottom=UDim.new(0,pb or 6); u.PaddingLeft=UDim.new(0,pl or 6)
 end
 local function VList(p,gap)
     local l=Instance.new("UIListLayout",p)
     l.FillDirection=Enum.FillDirection.Vertical
     l.HorizontalAlignment=Enum.HorizontalAlignment.Left
-    l.Padding=UDim.new(0,gap or 6);l.SortOrder=Enum.SortOrder.LayoutOrder;return l
+    l.Padding=UDim.new(0,gap or 6); l.SortOrder=Enum.SortOrder.LayoutOrder; return l
 end
 local function HList(p,gap)
     local l=Instance.new("UIListLayout",p)
     l.FillDirection=Enum.FillDirection.Horizontal
     l.VerticalAlignment=Enum.VerticalAlignment.Center
-    l.Padding=UDim.new(0,gap or 6);l.SortOrder=Enum.SortOrder.LayoutOrder;return l
+    l.Padding=UDim.new(0,gap or 6); l.SortOrder=Enum.SortOrder.LayoutOrder; return l
 end
 local function MkLbl(parent,text,size,color,bold,xa)
     local l=Instance.new("TextLabel",parent)
-    l.BackgroundTransparency=1;l.Text=text or "";l.TextSize=size or 13
+    l.BackgroundTransparency=1; l.Text=text or ""; l.TextSize=size or 13
     l.TextColor3=color or D.TextHi
     l.Font=bold and Enum.Font.GothamBold or Enum.Font.GothamSemibold
     l.TextXAlignment=xa or Enum.TextXAlignment.Left
-    l.TextWrapped=true;l.Size=UDim2.new(1,0,0,(size or 13)+8);return l
+    l.TextWrapped=true; l.Size=UDim2.new(1,0,0,(size or 13)+8); return l
 end
-local function SecLbl(p,t) local l=MkLbl(p,t,10,D.TextLow,true);l.Size=UDim2.new(1,0,0,14);return l end
+local function SecLbl(p,t)
+    local l=MkLbl(p,t,10,D.TextLow,true); l.Size=UDim2.new(1,0,0,14); return l
+end
 local function Card(parent,fh)
     local f=Instance.new("Frame",parent)
-    f.BackgroundColor3=D.Card;f.BackgroundTransparency=0;f.BorderSizePixel=0
+    f.BackgroundColor3=D.Card; f.BackgroundTransparency=0; f.BorderSizePixel=0
     if fh then f.Size=UDim2.new(1,0,0,fh)
-    else f.Size=UDim2.new(1,0,0,0);f.AutomaticSize=Enum.AutomaticSize.Y end
-    Corner(f,9);Stroke(f,D.Border,1,0.3);return f
+    else f.Size=UDim2.new(1,0,0,0); f.AutomaticSize=Enum.AutomaticSize.Y end
+    Corner(f,9); Stroke(f,D.Border,1,0.3); return f
 end
 local function NeonBtn(parent,text,accent,h)
     local acc=accent or D.Cyan
     local b=Instance.new("TextButton",parent)
-    b.Size=UDim2.new(1,0,0,h or 34);b.BackgroundColor3=D.CardHover
-    b.Text=text;b.TextColor3=acc;b.TextSize=13;b.Font=Enum.Font.GothamBold
-    b.AutoButtonColor=false;b.BorderSizePixel=0;Corner(b,8);Stroke(b,acc,1,0.4)
+    b.Size=UDim2.new(1,0,0,h or 34); b.BackgroundColor3=D.CardHover
+    b.Text=text; b.TextColor3=acc; b.TextSize=13; b.Font=Enum.Font.GothamBold
+    b.AutoButtonColor=false; b.BorderSizePixel=0; Corner(b,8); Stroke(b,acc,1,0.4)
     local function ct(f) return Color3.fromRGB(
         math.clamp(math.floor(acc.R*255*f),0,255),
         math.clamp(math.floor(acc.G*255*f),0,255),
@@ -372,14 +388,14 @@ local function NeonBtn(parent,text,accent,h)
 end
 local function MkInput(parent,ph,h)
     local outer=Instance.new("Frame",parent)
-    outer.Size=UDim2.new(1,0,0,h or 30);outer.BackgroundColor3=D.Input
-    outer.BorderSizePixel=0;Corner(outer,7);Stroke(outer,D.Border,1,0.2)
+    outer.Size=UDim2.new(1,0,0,h or 30); outer.BackgroundColor3=D.Input
+    outer.BorderSizePixel=0; Corner(outer,7); Stroke(outer,D.Border,1,0.2)
     local box=Instance.new("TextBox",outer)
-    box.Size=UDim2.new(1,0,1,0);box.BackgroundTransparency=1
-    box.PlaceholderText=ph or "";box.PlaceholderColor3=D.TextLow
-    box.Text="";box.TextColor3=D.TextHi;box.TextSize=11;box.Font=Enum.Font.Gotham
-    box.ClearTextOnFocus=false;Pad(box,0,8,0,8)
-    return outer,box
+    box.Size=UDim2.new(1,0,1,0); box.BackgroundTransparency=1
+    box.PlaceholderText=ph or ""; box.PlaceholderColor3=D.TextLow
+    box.Text=""; box.TextColor3=D.TextHi; box.TextSize=11; box.Font=Enum.Font.Gotham
+    box.ClearTextOnFocus=false; Pad(box,0,8,0,8)
+    return outer, box
 end
 
 -- ============================================================
@@ -390,7 +406,7 @@ local function MakeDraggable(frame,handle)
     handle.InputBegan:Connect(function(inp)
         if inp.UserInputType==Enum.UserInputType.MouseButton1
         or inp.UserInputType==Enum.UserInputType.Touch then
-            dragging=true;dragStart=inp.Position;startPos=frame.Position
+            dragging=true; dragStart=inp.Position; startPos=frame.Position
             inp.Changed:Connect(function()
                 if inp.UserInputState==Enum.UserInputState.End then dragging=false end
             end)
@@ -415,31 +431,32 @@ end
 local function BuildLogo(parent,sz,lx,ly)
     sz=sz or 32
     local root=Instance.new("Frame",parent)
-    root.Size=UDim2.new(0,sz,0,sz);root.AnchorPoint=Vector2.new(0,0)
+    root.Size=UDim2.new(0,sz,0,sz); root.AnchorPoint=Vector2.new(0,0)
     root.Position=UDim2.new(0,lx or 0,0,ly or 0)
-    root.BackgroundTransparency=1;root.BorderSizePixel=0
-    local ring=Instance.new("Frame",root);ring.Size=UDim2.new(1,0,1,0)
-    ring.BackgroundTransparency=1;ring.BorderSizePixel=0;Corner(ring,99);Stroke(ring,D.Cyan,1.5,0.35)
-    local bg=Instance.new("Frame",root);bg.Size=UDim2.new(0.84,0,0.84,0)
-    bg.Position=UDim2.new(0.08,0,0.08,0);bg.BackgroundColor3=Color3.fromRGB(0,15,38)
-    bg.BackgroundTransparency=0.08;bg.BorderSizePixel=0;Corner(bg,99)
+    root.BackgroundTransparency=1; root.BorderSizePixel=0
+    local ring=Instance.new("Frame",root); ring.Size=UDim2.new(1,0,1,0)
+    ring.BackgroundTransparency=1; ring.BorderSizePixel=0; Corner(ring,99); Stroke(ring,D.Cyan,1.5,0.35)
+    local bg=Instance.new("Frame",root); bg.Size=UDim2.new(0.84,0,0.84,0)
+    bg.Position=UDim2.new(0.08,0,0.08,0); bg.BackgroundColor3=Color3.fromRGB(0,15,38)
+    bg.BackgroundTransparency=0.08; bg.BorderSizePixel=0; Corner(bg,99)
     local bgG=Instance.new("UIGradient",bg)
-    bgG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(0,38,85)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,8,28))});bgG.Rotation=135
-    local tk=math.max(2,math.floor(sz*0.18));local bh=math.floor(sz*0.75)
-    local by=math.floor((sz-bh)/2);local bxl=math.floor(sz*0.18);local bxr=sz-bxl-tk
+    bgG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(0,38,85)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,8,28))})
+    bgG.Rotation=135
+    local tk=math.max(2,math.floor(sz*0.18)); local bh=math.floor(sz*0.75)
+    local by=math.floor((sz-bh)/2); local bxl=math.floor(sz*0.18); local bxr=sz-bxl-tk
     local function gs() return ColorSequence.new({ColorSequenceKeypoint.new(0,D.Cyan),ColorSequenceKeypoint.new(0.5,D.Green),ColorSequenceKeypoint.new(1,D.Cyan)}) end
-    local bl=Instance.new("Frame",root);bl.Size=UDim2.new(0,tk,0,bh);bl.Position=UDim2.new(0,bxl,0,by);bl.BackgroundColor3=D.Cyan;bl.BorderSizePixel=0;Corner(bl,2);Instance.new("UIGradient",bl).Color=gs()
-    local br=Instance.new("Frame",root);br.Size=UDim2.new(0,tk,0,bh);br.Position=UDim2.new(0,bxr,0,by);br.BackgroundColor3=D.Cyan;br.BorderSizePixel=0;Corner(br,2);Instance.new("UIGradient",br).Color=gs()
-    local ch=math.max(2,math.floor(sz*0.14));local cw=bxr-bxl-tk;local cy=by+math.floor((bh-ch)/2)
-    local bc=Instance.new("Frame",root);bc.Size=UDim2.new(0,cw,0,ch);bc.Position=UDim2.new(0,bxl+tk,0,cy);bc.BackgroundColor3=D.Cyan;bc.BorderSizePixel=0;Corner(bc,2)
+    local bl=Instance.new("Frame",root); bl.Size=UDim2.new(0,tk,0,bh); bl.Position=UDim2.new(0,bxl,0,by); bl.BackgroundColor3=D.Cyan; bl.BorderSizePixel=0; Corner(bl,2); Instance.new("UIGradient",bl).Color=gs()
+    local br=Instance.new("Frame",root); br.Size=UDim2.new(0,tk,0,bh); br.Position=UDim2.new(0,bxr,0,by); br.BackgroundColor3=D.Cyan; br.BorderSizePixel=0; Corner(br,2); Instance.new("UIGradient",br).Color=gs()
+    local ch=math.max(2,math.floor(sz*0.14)); local cw=bxr-bxl-tk; local cy=by+math.floor((bh-ch)/2)
+    local bc=Instance.new("Frame",root); bc.Size=UDim2.new(0,cw,0,ch); bc.Position=UDim2.new(0,bxl+tk,0,cy); bc.BackgroundColor3=D.Cyan; bc.BorderSizePixel=0; Corner(bc,2)
     Instance.new("UIGradient",bc).Color=ColorSequence.new({ColorSequenceKeypoint.new(0,D.Green),ColorSequenceKeypoint.new(1,D.Cyan)})
-    local ds=ch+2;local dot=Instance.new("Frame",root)
-    dot.Size=UDim2.new(0,ds,0,ds);dot.Position=UDim2.new(0,bxl+tk+math.floor(cw/2)-math.floor(ds/2),0,cy-1)
-    dot.BackgroundColor3=Color3.new(1,1,1);dot.BackgroundTransparency=0.15;dot.BorderSizePixel=0;Corner(dot,99)
+    local ds=ch+2; local dot=Instance.new("Frame",root)
+    dot.Size=UDim2.new(0,ds,0,ds); dot.Position=UDim2.new(0,bxl+tk+math.floor(cw/2)-math.floor(ds/2),0,cy-1)
+    dot.BackgroundColor3=Color3.new(1,1,1); dot.BackgroundTransparency=0.15; dot.BorderSizePixel=0; Corner(dot,99)
     task.spawn(function()
-        while root.Parent and Haze.State.Running do
-            Tw(dot,{BackgroundTransparency=0.7},TM);task.wait(0.85)
-            Tw(dot,{BackgroundTransparency=0.1},TM);task.wait(0.85)
+        while root.Parent and S.Running do
+            Tw(dot,{BackgroundTransparency=0.7},TM); task.wait(0.85)
+            Tw(dot,{BackgroundTransparency=0.1},TM); task.wait(0.85)
         end
     end)
     return root
@@ -448,117 +465,111 @@ end
 -- ============================================================
 --  SCREEN GUI
 -- ============================================================
-local ScreenGui=Instance.new("ScreenGui")
-ScreenGui.Name="HazeHUB_v18";ScreenGui.ResetOnSpawn=false
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name="HazeHUB_v19"; ScreenGui.ResetOnSpawn=false
 ScreenGui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
-ScreenGui.DisplayOrder=999;ScreenGui.IgnoreGuiInset=true
+ScreenGui.DisplayOrder=999; ScreenGui.IgnoreGuiInset=true
 ScreenGui.Parent=guiParent
 
--- Main Frame
-Haze.UI.Fr.Main=Instance.new("Frame",ScreenGui)
-Haze.UI.Fr.Main.Name="Main"
-Haze.UI.Fr.Main.Size=UDim2.new(0,570,0,440)
-Haze.UI.Fr.Main.Position=UDim2.new(0.5,-285,0.5,-220)
-Haze.UI.Fr.Main.BackgroundColor3=D.BG
-Haze.UI.Fr.Main.BackgroundTransparency=0.06
-Haze.UI.Fr.Main.BorderSizePixel=0
-Corner(Haze.UI.Fr.Main,12);Stroke(Haze.UI.Fr.Main,D.BorderCyan,1.5,0.45)
+H.UI.Fr.Main = Instance.new("Frame",ScreenGui)
+H.UI.Fr.Main.Name="Main"
+H.UI.Fr.Main.Size=UDim2.new(0,570,0,440)
+H.UI.Fr.Main.Position=UDim2.new(0.5,-285,0.5,-220)
+H.UI.Fr.Main.BackgroundColor3=D.BG; H.UI.Fr.Main.BackgroundTransparency=0.06
+H.UI.Fr.Main.BorderSizePixel=0; Corner(H.UI.Fr.Main,12); Stroke(H.UI.Fr.Main,D.BorderCyan,1.5,0.45)
 
-local glow=Instance.new("Frame",Haze.UI.Fr.Main)
-glow.Size=UDim2.new(1,0,0.35,0);glow.BackgroundColor3=D.Cyan
-glow.BackgroundTransparency=0.94;glow.BorderSizePixel=0;Corner(glow,12)
+local glow=Instance.new("Frame",H.UI.Fr.Main)
+glow.Size=UDim2.new(1,0,0.35,0); glow.BackgroundColor3=D.Cyan
+glow.BackgroundTransparency=0.94; glow.BorderSizePixel=0; Corner(glow,12)
 local glowG=Instance.new("UIGradient",glow)
-glowG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(0,180,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,0,0))});glowG.Rotation=90
+glowG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(0,180,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,0,0))})
+glowG.Rotation=90
 
 -- Sidebar
-Haze.UI.Fr.Sidebar=Instance.new("Frame",Haze.UI.Fr.Main)
-Haze.UI.Fr.Sidebar.Name="Sidebar"
-Haze.UI.Fr.Sidebar.BackgroundColor3=D.Sidebar
-Haze.UI.Fr.Sidebar.BackgroundTransparency=0.04
-Haze.UI.Fr.Sidebar.BorderSizePixel=0;Corner(Haze.UI.Fr.Sidebar,10)
+H.UI.Fr.Sidebar = Instance.new("Frame",H.UI.Fr.Main)
+H.UI.Fr.Sidebar.Name="Sidebar"; H.UI.Fr.Sidebar.BackgroundColor3=D.Sidebar
+H.UI.Fr.Sidebar.BackgroundTransparency=0.04; H.UI.Fr.Sidebar.BorderSizePixel=0
+Corner(H.UI.Fr.Sidebar,10)
 
-local sideDiv=Instance.new("Frame",Haze.UI.Fr.Sidebar)
-sideDiv.Size=UDim2.new(0,1,1,0);sideDiv.Position=UDim2.new(1,-1,0,0)
-sideDiv.BackgroundColor3=D.BorderCyan;sideDiv.BackgroundTransparency=0.55;sideDiv.BorderSizePixel=0
+local sDiv=Instance.new("Frame",H.UI.Fr.Sidebar); sDiv.Size=UDim2.new(0,1,1,0)
+sDiv.Position=UDim2.new(1,-1,0,0); sDiv.BackgroundColor3=D.BorderCyan
+sDiv.BackgroundTransparency=0.55; sDiv.BorderSizePixel=0
 
-local sideStripe=Instance.new("Frame",Haze.UI.Fr.Sidebar)
-sideStripe.Size=UDim2.new(0,2,0.65,0);sideStripe.Position=UDim2.new(0,0,0.175,0)
-sideStripe.BackgroundColor3=D.Cyan;sideStripe.BorderSizePixel=0;Corner(sideStripe,2)
-Instance.new("UIGradient",sideStripe).Color=ColorSequence.new({
+local sStripe=Instance.new("Frame",H.UI.Fr.Sidebar); sStripe.Size=UDim2.new(0,2,0.65,0)
+sStripe.Position=UDim2.new(0,0,0.175,0); sStripe.BackgroundColor3=D.Cyan
+sStripe.BorderSizePixel=0; Corner(sStripe,2)
+Instance.new("UIGradient",sStripe).Color=ColorSequence.new({
     ColorSequenceKeypoint.new(0,D.Cyan),ColorSequenceKeypoint.new(0.5,D.Green),ColorSequenceKeypoint.new(1,D.Cyan)})
 
-local lf=Instance.new("Frame",Haze.UI.Fr.Sidebar)
-lf.Size=UDim2.new(1,0,0,46);lf.Position=UDim2.new(0,0,0,2);lf.BackgroundTransparency=1
-local sl=BuildLogo(lf,32,0,7);sl.AnchorPoint=Vector2.new(0.5,0);sl.Position=UDim2.new(0.5,0,0,7)
+local lf=Instance.new("Frame",H.UI.Fr.Sidebar); lf.Size=UDim2.new(1,0,0,46)
+lf.Position=UDim2.new(0,0,0,2); lf.BackgroundTransparency=1
+local sl=BuildLogo(lf,32,0,7); sl.AnchorPoint=Vector2.new(0.5,0); sl.Position=UDim2.new(0.5,0,0,7)
 
-Haze.UI.Fr.TabHolder=Instance.new("Frame",Haze.UI.Fr.Sidebar)
-Haze.UI.Fr.TabHolder.Position=UDim2.new(0,0,0,52)
-Haze.UI.Fr.TabHolder.Size=UDim2.new(1,0,1,-56)
-Haze.UI.Fr.TabHolder.BackgroundTransparency=1
-VList(Haze.UI.Fr.TabHolder,3);Pad(Haze.UI.Fr.TabHolder,3,5,3,5)
+H.UI.Fr.TabHolder=Instance.new("Frame",H.UI.Fr.Sidebar)
+H.UI.Fr.TabHolder.Position=UDim2.new(0,0,0,52); H.UI.Fr.TabHolder.Size=UDim2.new(1,0,1,-56)
+H.UI.Fr.TabHolder.BackgroundTransparency=1; VList(H.UI.Fr.TabHolder,3); Pad(H.UI.Fr.TabHolder,3,5,3,5)
 
-Haze.UI.Fr.Content=Instance.new("Frame",Haze.UI.Fr.Main)
-Haze.UI.Fr.Content.Name="Content"
-Haze.UI.Fr.Content.BackgroundTransparency=1
+H.UI.Fr.Content=Instance.new("Frame",H.UI.Fr.Main)
+H.UI.Fr.Content.Name="Content"; H.UI.Fr.Content.BackgroundTransparency=1
 
 -- ============================================================
 --  TAB SYSTEM
 -- ============================================================
 local function SelectTab(name)
-    for n,p in pairs(Haze.Tabs) do p.Visible=(n==name) end
-    for n,b in pairs(Haze.TBtns) do
+    for n,p in pairs(H.Tabs)  do p.Visible=(n==name) end
+    for n,b in pairs(H.TBtns) do
         if n==name then
-            b.BackgroundColor3=D.TabActive;b.TextColor3=D.Cyan
-            local s=b:FindFirstChildOfClass("UIStroke");if s then s.Transparency=0 end
+            b.BackgroundColor3=D.TabActive; b.TextColor3=D.Cyan
+            local s=b:FindFirstChildOfClass("UIStroke"); if s then s.Transparency=0 end
         else
-            b.BackgroundColor3=D.TabInactive;b.TextColor3=D.TextMid
-            local s=b:FindFirstChildOfClass("UIStroke");if s then s.Transparency=1 end
+            b.BackgroundColor3=D.TabInactive; b.TextColor3=D.TextMid
+            local s=b:FindFirstChildOfClass("UIStroke"); if s then s.Transparency=1 end
         end
     end
-    Haze.State.ActiveTab=name
+    S.ActiveTab=name
 end
 
 local function MakeTab(name,icon)
-    local B=Instance.new("TextButton",Haze.UI.Fr.TabHolder)
-    B.Size=UDim2.new(1,0,0,30);B.BackgroundColor3=D.TabInactive
-    B.Text=icon.."  "..name;B.TextColor3=D.TextMid;B.TextSize=10
-    B.Font=Enum.Font.GothamSemibold;B.AutoButtonColor=false;B.BorderSizePixel=0
-    Corner(B,7);Stroke(B,D.Cyan,1,1)
+    local B=Instance.new("TextButton",H.UI.Fr.TabHolder)
+    B.Size=UDim2.new(1,0,0,30); B.BackgroundColor3=D.TabInactive
+    B.Text=icon.."  "..name; B.TextColor3=D.TextMid; B.TextSize=10
+    B.Font=Enum.Font.GothamSemibold; B.AutoButtonColor=false; B.BorderSizePixel=0
+    Corner(B,7); Stroke(B,D.Cyan,1,1)
     B.MouseEnter:Connect(function()
-        if Haze.State.ActiveTab~=name then Tw(B,{BackgroundColor3=D.CardHover}) end
+        if S.ActiveTab~=name then Tw(B,{BackgroundColor3=D.CardHover}) end
     end)
     B.MouseLeave:Connect(function()
-        if Haze.State.ActiveTab~=name then Tw(B,{BackgroundColor3=D.TabInactive}) end
+        if S.ActiveTab~=name then Tw(B,{BackgroundColor3=D.TabInactive}) end
     end)
-    local P=Instance.new("ScrollingFrame",Haze.UI.Fr.Content)
-    P.Name=name;P.Size=UDim2.new(1,0,1,0);P.Visible=false
-    P.BackgroundTransparency=1;P.ScrollBarThickness=3
-    P.ScrollBarImageColor3=D.CyanDim;P.AutomaticCanvasSize=Enum.AutomaticSize.Y
-    P.BorderSizePixel=0;VList(P,8);Pad(P,10,10,10,10)
-    Haze.Tabs[name]=P;Haze.TBtns[name]=B
+    local P=Instance.new("ScrollingFrame",H.UI.Fr.Content)
+    P.Name=name; P.Size=UDim2.new(1,0,1,0); P.Visible=false
+    P.BackgroundTransparency=1; P.ScrollBarThickness=3
+    P.ScrollBarImageColor3=D.CyanDim; P.AutomaticCanvasSize=Enum.AutomaticSize.Y
+    P.BorderSizePixel=0; VList(P,8); Pad(P,10,10,10,10)
+    H.Tabs[name]=P; H.TBtns[name]=B
     B.MouseButton1Click:Connect(function() SelectTab(name) end)
     return P
 end
 
-local GamePage  = MakeTab("Game",      "🎮")
-local MiscPage  = MakeTab("Misc",      "🔧")
-local SessPage  = MakeTab("Session",   "📊")
-local InvPage   = MakeTab("Inventory", "🎒")
-local SettPage  = MakeTab("Settings",  "⚙")
+local GamePage = MakeTab("Game",      "🎮")
+local MiscPage = MakeTab("Misc",      "🔧")
+local SessPage = MakeTab("Session",   "📊")
+local InvPage  = MakeTab("Inventory", "🎒")
+local SettPage = MakeTab("Settings",  "⚙")
 
 -- ============================================================
 --  GUI RESIZE
 -- ============================================================
 local function SetGUISize(mode)
-    Haze.Config.UISize=mode;SaveConfig()
+    H.Config.UISize=mode; SaveConfig()
     if mode=="Mobile" then
-        Haze.UI.Fr.Main.Size=UDim2.new(0,370,0,340)
-        Haze.UI.Fr.Sidebar.Size=UDim2.new(0,92,1,0);Haze.UI.Fr.Sidebar.Position=UDim2.new(0,0,0,0)
-        Haze.UI.Fr.Content.Position=UDim2.new(0,100,0,8);Haze.UI.Fr.Content.Size=UDim2.new(1,-108,1,-16)
+        H.UI.Fr.Main.Size=UDim2.new(0,370,0,340)
+        H.UI.Fr.Sidebar.Size=UDim2.new(0,92,1,0); H.UI.Fr.Sidebar.Position=UDim2.new(0,0,0,0)
+        H.UI.Fr.Content.Position=UDim2.new(0,100,0,8); H.UI.Fr.Content.Size=UDim2.new(1,-108,1,-16)
     else
-        Haze.UI.Fr.Main.Size=UDim2.new(0,570,0,440)
-        Haze.UI.Fr.Sidebar.Size=UDim2.new(0,130,1,0);Haze.UI.Fr.Sidebar.Position=UDim2.new(0,0,0,0)
-        Haze.UI.Fr.Content.Position=UDim2.new(0,138,0,10);Haze.UI.Fr.Content.Size=UDim2.new(1,-148,1,-20)
+        H.UI.Fr.Main.Size=UDim2.new(0,570,0,440)
+        H.UI.Fr.Sidebar.Size=UDim2.new(0,130,1,0); H.UI.Fr.Sidebar.Position=UDim2.new(0,0,0,0)
+        H.UI.Fr.Content.Position=UDim2.new(0,138,0,10); H.UI.Fr.Content.Size=UDim2.new(1,-148,1,-20)
     end
 end
 
@@ -573,47 +584,47 @@ local RebuildWorldList
 --  WEBHOOK
 -- ============================================================
 local function SendWebhook(rewardTable,goalItem,goalAmt)
-    local S=Haze.State;local C=Haze.Config
-    if not S.WebhookEnabled then return end
-    if not C.WebhookURL or C.WebhookURL=="" or not C.WebhookURL:find("discord.com") then return end
-    local rReal,rInfo={},{};local rTotal=0
+    if not S.WhEnabled then return end
+    if not H.Config.WebhookURL or H.Config.WebhookURL==""
+    or not H.Config.WebhookURL:find("discord.com") then return end
+    local rReal,rInfo={},{}; local rTotal=0
     for _,item in pairs(rewardTable or {}) do
         if typeof(item)=="Instance" then
             local v=item:FindFirstChild("Amount") or item:FindFirstChild("Value")
             local a=v and tonumber(v.Value) or 1
-            if INFO_ITEMS[item.Name] then table.insert(rInfo,{name=item.Name,amt=a})
-            else rTotal=rTotal+a;table.insert(rReal,{name=item.Name,amt=a,rare=RARE_ITEMS[item.Name]==true}) end
+            if K.INFO[item.Name] then table.insert(rInfo,{name=item.Name,amt=a})
+            else rTotal=rTotal+a; table.insert(rReal,{name=item.Name,amt=a,rare=K.RARE[item.Name]==true}) end
         end
     end
     local sItems,sTotal={},0
-    for name,t in pairs(S.SessionTotals) do sTotal=sTotal+t;table.insert(sItems,{name=name,total=t}) end
+    for name,t in pairs(S.SessTotals) do sTotal=sTotal+t; table.insert(sItems,{name=name,total=t}) end
     table.sort(sItems,function(a,b) return a.total>b.total end)
     local rTxt=#rReal==0 and "> *Kein Loot*" or ""
     for _,i in ipairs(rReal) do rTxt=rTxt..string.format("%s**%s** `×%d`\n",i.rare and "💎 " or "› ",i.name,i.amt) end
     local sTxt=""
     for i,it in ipairs(sItems) do
-        if i>8 then sTxt=sTxt..string.format("\n*+%d weitere*",#sItems-8);break end
+        if i>8 then sTxt=sTxt..string.format("\n*+%d weitere*",#sItems-8); break end
         local fill=math.min(8,math.ceil(it.total/math.max(1,sTotal/40)))
         sTxt=sTxt..string.format("`%s%s`  **%s** %d\n",("█"):rep(fill),("░"):rep(8-fill),it.name,it.total)
     end
     if sTxt=="" then sTxt="> *–*" end
-    local dur=FmtDur(os.time()-S.SessionStart)
+    local dur=FmtDur(os.time()-S.SessStart)
     local ava="https://www.roblox.com/headshot-thumbnail/image?userId="..tostring(Svc.Player.UserId).."&width=150&height=150&format=png"
     local isGoal=goalItem~=nil
     local embed={
         color=isGoal and 0x00FF7A or 0x00C8FF,
-        author={name="⚡  HazeHUB V18",icon_url="https://www.roblox.com/favicon.ico"},
+        author={name="⚡  HazeHUB V19",icon_url="https://www.roblox.com/favicon.ico"},
         title=(isGoal and "🎯  ZIEL ERREICHT!  " or "🏆  ")..string.format("%s · Runde #%d",Svc.Player.Name,S.RoundCount),
         url="https://www.roblox.com/users/"..tostring(Svc.Player.UserId).."/profile",
         thumbnail={url=ava},
         fields={
             {name="👤 Spieler",value="```"..Svc.Player.Name.."```",inline=true},
-            {name="🔢 Runde",value="```#"..S.RoundCount.."```",inline=true},
-            {name="⏱ Session",value="`"..dur.."`",inline=true},
-            {name="🎁 Loot",value=rTxt,inline=false},
-            {name="📊 Gesamt",value=sTxt,inline=false},
+            {name="🔢 Runde",  value="```#"..S.RoundCount.."```",  inline=true},
+            {name="⏱ Session",value="`"..dur.."`",                  inline=true},
+            {name="🎁 Loot",  value=rTxt,                           inline=false},
+            {name="📊 Gesamt",value=sTxt,                           inline=false},
         },
-        footer={text="HazeHUB V18 · "..dur,icon_url="https://www.roblox.com/favicon.ico"},
+        footer={text="HazeHUB V19 · "..dur, icon_url="https://www.roblox.com/favicon.ico"},
         timestamp=os.date("!%Y-%m-%dT%H:%M:%SZ"),
     }
     if isGoal then
@@ -624,11 +635,9 @@ local function SendWebhook(rewardTable,goalItem,goalAmt)
         })
     end
     task.spawn(function() pcall(function()
-        local fn=request or http_request or (syn and syn.request)
-        if not fn then return end
-        fn({Url=C.WebhookURL:gsub("discord%.com","webhook.lewisakura.moe"),
-            Method="POST",
-            Headers={["Content-Type"]="application/json"},
+        local fn=request or http_request or (syn and syn.request); if not fn then return end
+        fn({Url=H.Config.WebhookURL:gsub("discord%.com","webhook.lewisakura.moe"),
+            Method="POST", Headers={["Content-Type"]="application/json"},
             Body=Svc.Http:JSONEncode({embeds={embed}})})
     end) end)
 end
@@ -637,12 +646,11 @@ end
 --  GOAL LOGIC
 -- ============================================================
 local function CheckAllGoals()
-    local S=Haze.State
     for _,g in ipairs(S.Goals) do
         if not g.reached and not S.GoalsNotified[g.item] then
-            local cur=math.max(S.SessionTotals[g.item] or 0, GetInvAmt(g.item))
+            local cur=math.max(S.SessTotals[g.item] or 0, GetInvAmt(g.item))
             if cur>=g.amount then
-                g.reached=true;S.GoalsNotified[g.item]=true
+                g.reached=true; S.GoalsNotified[g.item]=true
                 task.spawn(function() SendWebhook({},g.item,cur) end)
                 SaveConfig()
             end
@@ -656,64 +664,61 @@ end
 -- ============================================================
 MkLbl(GamePage,"🎮  Game",14,D.Cyan,true)
 
--- Scan status
-local scanCard=Card(GamePage,30);Pad(scanCard,4,10,4,10)
-Haze.UI.Lbl.ScanStatus=Instance.new("TextLabel",scanCard)
-Haze.UI.Lbl.ScanStatus.Size=UDim2.new(1,0,1,0)
-Haze.UI.Lbl.ScanStatus.BackgroundTransparency=1
-Haze.UI.Lbl.ScanStatus.Text="⏳  Scanne Welten..."
-Haze.UI.Lbl.ScanStatus.TextColor3=D.Yellow
-Haze.UI.Lbl.ScanStatus.TextSize=10;Haze.UI.Lbl.ScanStatus.Font=Enum.Font.GothamSemibold
-Haze.UI.Lbl.ScanStatus.TextXAlignment=Enum.TextXAlignment.Left
+-- Scan-Status
+local scanCard=Card(GamePage,30); Pad(scanCard,4,10,4,10)
+H.UI.Lbl.ScanStatus=Instance.new("TextLabel",scanCard)
+H.UI.Lbl.ScanStatus.Size=UDim2.new(1,0,1,0); H.UI.Lbl.ScanStatus.BackgroundTransparency=1
+H.UI.Lbl.ScanStatus.Text="⏳  Scanne Welten..."; H.UI.Lbl.ScanStatus.TextColor3=D.Yellow
+H.UI.Lbl.ScanStatus.TextSize=10; H.UI.Lbl.ScanStatus.Font=Enum.Font.GothamSemibold
+H.UI.Lbl.ScanStatus.TextXAlignment=Enum.TextXAlignment.Left
 
--- Auto-Retry
-local arCard=Card(GamePage);Pad(arCard,10,12,10,12);VList(arCard,8);SecLbl(arCard,"AUTO-RETRY")
-local arRow=Instance.new("Frame",arCard);arRow.Size=UDim2.new(1,0,0,32);arRow.BackgroundTransparency=1;HList(arRow,10)
-Haze.UI.Lbl.ARStatus=Instance.new("TextLabel",arRow)
-Haze.UI.Lbl.ARStatus.Size=UDim2.new(0.55,0,1,0);Haze.UI.Lbl.ARStatus.BackgroundTransparency=1
-Haze.UI.Lbl.ARStatus.Text="Auto Retry: AUS";Haze.UI.Lbl.ARStatus.TextColor3=D.TextMid
-Haze.UI.Lbl.ARStatus.TextSize=12;Haze.UI.Lbl.ARStatus.Font=Enum.Font.GothamBold
-Haze.UI.Lbl.ARStatus.TextXAlignment=Enum.TextXAlignment.Left
-Haze.UI.Btn.ARToggle=Instance.new("TextButton",arRow)
-Haze.UI.Btn.ARToggle.Size=UDim2.new(0.42,0,0,30);Haze.UI.Btn.ARToggle.BackgroundColor3=D.CardHover
-Haze.UI.Btn.ARToggle.Text="⬜ AUS";Haze.UI.Btn.ARToggle.TextColor3=D.TextLow
-Haze.UI.Btn.ARToggle.TextSize=12;Haze.UI.Btn.ARToggle.Font=Enum.Font.GothamBold
-Haze.UI.Btn.ARToggle.AutoButtonColor=false;Haze.UI.Btn.ARToggle.BorderSizePixel=0
-Corner(Haze.UI.Btn.ARToggle,8);Stroke(Haze.UI.Btn.ARToggle,D.TextLow,1,0.4)
+-- Auto-Retry Card
+local arCard=Card(GamePage); Pad(arCard,10,12,10,12); VList(arCard,8); SecLbl(arCard,"AUTO-RETRY")
+local arRow=Instance.new("Frame",arCard); arRow.Size=UDim2.new(1,0,0,32); arRow.BackgroundTransparency=1; HList(arRow,10)
+H.UI.Lbl.ARStatus=Instance.new("TextLabel",arRow)
+H.UI.Lbl.ARStatus.Size=UDim2.new(0.55,0,1,0); H.UI.Lbl.ARStatus.BackgroundTransparency=1
+H.UI.Lbl.ARStatus.Text="Auto Retry: AUS"; H.UI.Lbl.ARStatus.TextColor3=D.TextMid
+H.UI.Lbl.ARStatus.TextSize=12; H.UI.Lbl.ARStatus.Font=Enum.Font.GothamBold
+H.UI.Lbl.ARStatus.TextXAlignment=Enum.TextXAlignment.Left
+H.UI.Btn.ARToggle=Instance.new("TextButton",arRow)
+H.UI.Btn.ARToggle.Size=UDim2.new(0.42,0,0,30); H.UI.Btn.ARToggle.BackgroundColor3=D.CardHover
+H.UI.Btn.ARToggle.Text="⬜ AUS"; H.UI.Btn.ARToggle.TextColor3=D.TextLow
+H.UI.Btn.ARToggle.TextSize=12; H.UI.Btn.ARToggle.Font=Enum.Font.GothamBold
+H.UI.Btn.ARToggle.AutoButtonColor=false; H.UI.Btn.ARToggle.BorderSizePixel=0
+Corner(H.UI.Btn.ARToggle,8); Stroke(H.UI.Btn.ARToggle,D.TextLow,1,0.4)
 
 local function UpdateAutoRetryUI()
-    if Haze.Config.AutoRetry then
-        Haze.UI.Btn.ARToggle.Text="✅ AN";Haze.UI.Btn.ARToggle.TextColor3=D.Green
-        Haze.UI.Lbl.ARStatus.Text="Auto Retry: AN";Haze.UI.Lbl.ARStatus.TextColor3=D.Green
-        Stroke(Haze.UI.Btn.ARToggle,D.Green,1.5,0);Tw(Haze.UI.Btn.ARToggle,{BackgroundColor3=D.GreenDark})
+    if H.Config.AutoRetry then
+        H.UI.Btn.ARToggle.Text="✅ AN"; H.UI.Btn.ARToggle.TextColor3=D.Green
+        H.UI.Lbl.ARStatus.Text="Auto Retry: AN"; H.UI.Lbl.ARStatus.TextColor3=D.Green
+        Stroke(H.UI.Btn.ARToggle,D.Green,1.5,0); Tw(H.UI.Btn.ARToggle,{BackgroundColor3=D.GreenDark})
     else
-        Haze.UI.Btn.ARToggle.Text="⬜ AUS";Haze.UI.Btn.ARToggle.TextColor3=D.TextLow
-        Haze.UI.Lbl.ARStatus.Text="Auto Retry: AUS";Haze.UI.Lbl.ARStatus.TextColor3=D.TextMid
-        Stroke(Haze.UI.Btn.ARToggle,D.TextLow,1,0.4);Tw(Haze.UI.Btn.ARToggle,{BackgroundColor3=D.CardHover})
+        H.UI.Btn.ARToggle.Text="⬜ AUS"; H.UI.Btn.ARToggle.TextColor3=D.TextLow
+        H.UI.Lbl.ARStatus.Text="Auto Retry: AUS"; H.UI.Lbl.ARStatus.TextColor3=D.TextMid
+        Stroke(H.UI.Btn.ARToggle,D.TextLow,1,0.4); Tw(H.UI.Btn.ARToggle,{BackgroundColor3=D.CardHover})
     end
 end
-Haze.UI.Btn.ARToggle.MouseButton1Click:Connect(function()
-    Haze.Config.AutoRetry=not Haze.Config.AutoRetry;SaveConfig();UpdateAutoRetryUI()
+H.UI.Btn.ARToggle.MouseButton1Click:Connect(function()
+    H.Config.AutoRetry=not H.Config.AutoRetry; SaveConfig(); UpdateAutoRetryUI()
 end)
 
 -- Welt-Auswahl
-local wCard=Card(GamePage);Pad(wCard,10,10,10,10);VList(wCard,8)
+local wCard=Card(GamePage); Pad(wCard,10,10,10,10); VList(wCard,8)
 SecLbl(wCard,"WELT & KAPITEL AUSWAHL")
-Haze.UI.Lbl.WorldStatus=Instance.new("TextLabel",wCard)
-Haze.UI.Lbl.WorldStatus.Size=UDim2.new(1,0,0,16);Haze.UI.Lbl.WorldStatus.BackgroundTransparency=1
-Haze.UI.Lbl.WorldStatus.Text="Modus → Welt → Kapitel";Haze.UI.Lbl.WorldStatus.TextColor3=D.TextLow
-Haze.UI.Lbl.WorldStatus.TextSize=11;Haze.UI.Lbl.WorldStatus.Font=Enum.Font.GothamSemibold
-Haze.UI.Lbl.WorldStatus.TextXAlignment=Enum.TextXAlignment.Left
+H.UI.Lbl.WorldStatus=Instance.new("TextLabel",wCard)
+H.UI.Lbl.WorldStatus.Size=UDim2.new(1,0,0,16); H.UI.Lbl.WorldStatus.BackgroundTransparency=1
+H.UI.Lbl.WorldStatus.Text="Modus → Welt → Kapitel"; H.UI.Lbl.WorldStatus.TextColor3=D.TextLow
+H.UI.Lbl.WorldStatus.TextSize=11; H.UI.Lbl.WorldStatus.Font=Enum.Font.GothamSemibold
+H.UI.Lbl.WorldStatus.TextXAlignment=Enum.TextXAlignment.Left
 
--- Modus-Buttons
 SecLbl(wCard,"SPIELMODUS")
-local modeRow=Instance.new("Frame",wCard);modeRow.Size=UDim2.new(1,0,0,28);modeRow.BackgroundTransparency=1;HList(modeRow,6)
+local modeRow=Instance.new("Frame",wCard); modeRow.Size=UDim2.new(1,0,0,28); modeRow.BackgroundTransparency=1; HList(modeRow,6)
 local MODI={{id="Story",label="📖 Story",color=D.Cyan},{id="Ranger",label="🏹 Ranger",color=D.Green},{id="Calamity",label="⚡ Calamity",color=D.Orange}}
-Haze.UI.Btn.ModeBtns={}
+H.UI.Btn.ModeBtns={}
 
 local function HighlightMode(activeId)
     for _,def in ipairs(MODI) do
-        local mb=Haze.UI.Btn.ModeBtns[def.id]; if not mb then continue end
+        local mb=H.UI.Btn.ModeBtns[def.id]; if not mb then continue end
         if def.id==activeId then
             local c=def.color
             Tw(mb,{BackgroundColor3=Color3.fromRGB(
@@ -721,109 +726,108 @@ local function HighlightMode(activeId)
                 math.clamp(math.floor(c.G*255*0.22),0,255),
                 math.clamp(math.floor(c.B*255*0.22),0,255))})
             Stroke(mb,c,1.5,0)
-        else Tw(mb,{BackgroundColor3=D.CardHover});Stroke(mb,D.Border,1,0.5) end
+        else Tw(mb,{BackgroundColor3=D.CardHover}); Stroke(mb,D.Border,1,0.5) end
     end
 end
 
 -- Schwierigkeit
-Haze.UI.Fr.DiffCard=Card(wCard);Pad(Haze.UI.Fr.DiffCard,8,8,8,8);VList(Haze.UI.Fr.DiffCard,5)
-Haze.UI.Fr.DiffCard.Visible=true;SecLbl(Haze.UI.Fr.DiffCard,"SCHWIERIGKEIT")
-local diffRow=Instance.new("Frame",Haze.UI.Fr.DiffCard)
-diffRow.Size=UDim2.new(1,0,0,26);diffRow.BackgroundTransparency=1;HList(diffRow,6)
-local DC={Normal=D.Green,Hard=D.Orange,Nightmare=D.Red};local diffBtns={}
+H.UI.Fr.DiffCard=Card(wCard); Pad(H.UI.Fr.DiffCard,8,8,8,8); VList(H.UI.Fr.DiffCard,5)
+H.UI.Fr.DiffCard.Visible=true; SecLbl(H.UI.Fr.DiffCard,"SCHWIERIGKEIT")
+local diffRow=Instance.new("Frame",H.UI.Fr.DiffCard)
+diffRow.Size=UDim2.new(1,0,0,26); diffRow.BackgroundTransparency=1; HList(diffRow,6)
+local DC={Normal=D.Green,Hard=D.Orange,Nightmare=D.Red}; local diffBtns={}
 for _,diff in ipairs({"Normal","Hard","Nightmare"}) do
     local db=Instance.new("TextButton",diffRow)
-    db.Size=UDim2.new(0.32,0,0,24);db.BackgroundColor3=D.CardHover
-    db.Text=diff;db.TextColor3=DC[diff];db.TextSize=10;db.Font=Enum.Font.GothamBold
-    db.AutoButtonColor=false;db.BorderSizePixel=0;Corner(db,7);Stroke(db,DC[diff],1,0.4)
+    db.Size=UDim2.new(0.32,0,0,24); db.BackgroundColor3=D.CardHover
+    db.Text=diff; db.TextColor3=DC[diff]; db.TextSize=10; db.Font=Enum.Font.GothamBold
+    db.AutoButtonColor=false; db.BorderSizePixel=0; Corner(db,7); Stroke(db,DC[diff],1,0.4)
     db.MouseButton1Click:Connect(function()
         PR("Change-Difficulty",{Difficulty=diff})
-        for _,b in pairs(diffBtns) do Tw(b,{BackgroundColor3=D.CardHover});local s=b:FindFirstChildOfClass("UIStroke");if s then s.Transparency=0.4 end end
+        for _,b in pairs(diffBtns) do Tw(b,{BackgroundColor3=D.CardHover}); local s=b:FindFirstChildOfClass("UIStroke"); if s then s.Transparency=0.4 end end
         Tw(db,{BackgroundColor3=Color3.fromRGB(
             math.clamp(math.floor(DC[diff].R*255*0.25),0,255),
             math.clamp(math.floor(DC[diff].G*255*0.25),0,255),
             math.clamp(math.floor(DC[diff].B*255*0.25),0,255))})
-        local s=db:FindFirstChildOfClass("UIStroke");if s then s.Transparency=0 end
+        local s=db:FindFirstChildOfClass("UIStroke"); if s then s.Transparency=0 end
     end)
     diffBtns[diff]=db
 end
 
--- Kapitel-Buttons
-local chapCard=Card(wCard);Pad(chapCard,8,8,8,8);VList(chapCard,5);SecLbl(chapCard,"KAPITEL / STAGE")
-Haze.UI.Fr.ChapRow=Instance.new("Frame",chapCard)
-Haze.UI.Fr.ChapRow.Size=UDim2.new(1,0,0,0);Haze.UI.Fr.ChapRow.AutomaticSize=Enum.AutomaticSize.Y
-Haze.UI.Fr.ChapRow.BackgroundTransparency=1;HList(Haze.UI.Fr.ChapRow,4)
-Haze.UI.Fr.ChapBtns={}
+-- Kapitel
+local chapCard=Card(wCard); Pad(chapCard,8,8,8,8); VList(chapCard,5); SecLbl(chapCard,"KAPITEL / STAGE")
+H.UI.Fr.ChapRow=Instance.new("Frame",chapCard)
+H.UI.Fr.ChapRow.Size=UDim2.new(1,0,0,0); H.UI.Fr.ChapRow.AutomaticSize=Enum.AutomaticSize.Y
+H.UI.Fr.ChapRow.BackgroundTransparency=1; HList(H.UI.Fr.ChapRow,4)
+H.UI.Fr.ChapBtns={}
 
 local function RebuildChapBtns(chapList)
-    for _,v in pairs(Haze.UI.Fr.ChapRow:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
-    Haze.UI.Fr.ChapBtns={}
+    for _,v in pairs(H.UI.Fr.ChapRow:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
+    H.UI.Fr.ChapBtns={}
     if not chapList or #chapList==0 then return end
-    Haze.State.SelectedChapId=chapList[1]
+    S.SelChap=chapList[1]
     for i,cid in ipairs(chapList) do
         local num=cid:match("(%d+)$") or tostring(i)
-        local cb=Instance.new("TextButton",Haze.UI.Fr.ChapRow)
-        cb.Size=UDim2.new(0,34,0,26);cb.BackgroundColor3=D.CardHover
-        cb.Text=num;cb.TextColor3=D.TextHi;cb.TextSize=12;cb.Font=Enum.Font.GothamBold
-        cb.AutoButtonColor=false;cb.BorderSizePixel=0;Corner(cb,7);Stroke(cb,D.Border,1,0.4)
+        local cb=Instance.new("TextButton",H.UI.Fr.ChapRow)
+        cb.Size=UDim2.new(0,34,0,26); cb.BackgroundColor3=D.CardHover
+        cb.Text=num; cb.TextColor3=D.TextHi; cb.TextSize=12; cb.Font=Enum.Font.GothamBold
+        cb.AutoButtonColor=false; cb.BorderSizePixel=0; Corner(cb,7); Stroke(cb,D.Border,1,0.4)
         local capCid=cid
         cb.MouseButton1Click:Connect(function()
-            Haze.State.SelectedChapId=capCid
-            for _,b in pairs(Haze.UI.Fr.ChapBtns) do Tw(b,{BackgroundColor3=D.CardHover});local s=b:FindFirstChildOfClass("UIStroke");if s then s.Color=D.Border;s.Transparency=0.4 end end
-            Tw(cb,{BackgroundColor3=Color3.fromRGB(0,28,52)});Stroke(cb,D.Cyan,1.5,0)
-            Haze.UI.Lbl.WorldStatus.Text=string.format("⚙ %s [%s] → %s",Haze.State.SelectedWorldId or "?",Haze.State.SelectedMode,capCid)
-            Haze.UI.Lbl.WorldStatus.TextColor3=D.Cyan
+            S.SelChap=capCid
+            for _,b in pairs(H.UI.Fr.ChapBtns) do Tw(b,{BackgroundColor3=D.CardHover}); local s=b:FindFirstChildOfClass("UIStroke"); if s then s.Color=D.Border; s.Transparency=0.4 end end
+            Tw(cb,{BackgroundColor3=Color3.fromRGB(0,28,52)}); Stroke(cb,D.Cyan,1.5,0)
+            H.UI.Lbl.WorldStatus.Text=string.format("⚙ %s [%s] → %s",S.SelWorld or "?",S.SelMode,capCid)
+            H.UI.Lbl.WorldStatus.TextColor3=D.Cyan
         end)
-        Haze.UI.Fr.ChapBtns[i]=cb
+        H.UI.Fr.ChapBtns[i]=cb
     end
-    if Haze.UI.Fr.ChapBtns[1] then
-        Tw(Haze.UI.Fr.ChapBtns[1],{BackgroundColor3=Color3.fromRGB(0,28,52)})
-        Stroke(Haze.UI.Fr.ChapBtns[1],D.Cyan,1.5,0)
+    if H.UI.Fr.ChapBtns[1] then
+        Tw(H.UI.Fr.ChapBtns[1],{BackgroundColor3=Color3.fromRGB(0,28,52)})
+        Stroke(H.UI.Fr.ChapBtns[1],D.Cyan,1.5,0)
     end
 end
 
 -- Welt-Buttons
 SecLbl(wCard,"WELTEN")
-Haze.UI.Fr.WorldBtns=Instance.new("Frame",wCard)
-Haze.UI.Fr.WorldBtns.Size=UDim2.new(1,0,0,0);Haze.UI.Fr.WorldBtns.AutomaticSize=Enum.AutomaticSize.Y
-Haze.UI.Fr.WorldBtns.BackgroundTransparency=1;VList(Haze.UI.Fr.WorldBtns,4)
+H.UI.Fr.WorldBtns=Instance.new("Frame",wCard)
+H.UI.Fr.WorldBtns.Size=UDim2.new(1,0,0,0); H.UI.Fr.WorldBtns.AutomaticSize=Enum.AutomaticSize.Y
+H.UI.Fr.WorldBtns.BackgroundTransparency=1; VList(H.UI.Fr.WorldBtns,4)
 
 local function CreateWorldBtn(wid)
-    local wb=Instance.new("TextButton",Haze.UI.Fr.WorldBtns)
-    wb.Size=UDim2.new(1,0,0,30);wb.BackgroundColor3=D.CardHover
-    wb.Text="🌍  "..wid;wb.TextColor3=D.TextHi;wb.TextSize=11;wb.Font=Enum.Font.GothamSemibold
-    wb.AutoButtonColor=false;wb.BorderSizePixel=0;Corner(wb,7);Stroke(wb,D.Border,1,0.4)
-    wb.MouseEnter:Connect(function() if Haze.State.SelectedWorldId~=wid then Tw(wb,{BackgroundColor3=Color3.fromRGB(36,46,74)}) end end)
-    wb.MouseLeave:Connect(function() if Haze.State.SelectedWorldId~=wid then Tw(wb,{BackgroundColor3=D.CardHover}) end end)
+    local wb=Instance.new("TextButton",H.UI.Fr.WorldBtns)
+    wb.Size=UDim2.new(1,0,0,30); wb.BackgroundColor3=D.CardHover
+    wb.Text="🌍  "..wid; wb.TextColor3=D.TextHi; wb.TextSize=11; wb.Font=Enum.Font.GothamSemibold
+    wb.AutoButtonColor=false; wb.BorderSizePixel=0; Corner(wb,7); Stroke(wb,D.Border,1,0.4)
+    wb.MouseEnter:Connect(function() if S.SelWorld~=wid then Tw(wb,{BackgroundColor3=Color3.fromRGB(36,46,74)}) end end)
+    wb.MouseLeave:Connect(function() if S.SelWorld~=wid then Tw(wb,{BackgroundColor3=D.CardHover}) end end)
     wb.MouseButton1Click:Connect(function()
-        Haze.State.SelectedWorldId=wid
-        for _,b in pairs(Haze.UI.Fr.WorldBtns:GetChildren()) do
-            if b:IsA("TextButton") then Tw(b,{BackgroundColor3=D.CardHover});local s=b:FindFirstChildOfClass("UIStroke");if s then s.Color=D.Border;s.Transparency=0.4 end end
+        S.SelWorld=wid
+        for _,b in pairs(H.UI.Fr.WorldBtns:GetChildren()) do
+            if b:IsA("TextButton") then Tw(b,{BackgroundColor3=D.CardHover}); local s=b:FindFirstChildOfClass("UIStroke"); if s then s.Color=D.Border; s.Transparency=0.4 end end
         end
-        Tw(wb,{BackgroundColor3=Color3.fromRGB(0,28,52)});Stroke(wb,D.Cyan,1.5,0)
-        Haze.UI.Lbl.WorldStatus.Text="🌍 "..wid.." ["..Haze.State.SelectedMode.."] → Kapitel wählen"
-        Haze.UI.Lbl.WorldStatus.TextColor3=D.Yellow
-        local wd=Haze.State.WorldData[wid] or {}
-        local cl=(Haze.State.SelectedMode=="Story" or Haze.State.SelectedMode=="Calamity") and wd.story or wd.ranger
+        Tw(wb,{BackgroundColor3=Color3.fromRGB(0,28,52)}); Stroke(wb,D.Cyan,1.5,0)
+        H.UI.Lbl.WorldStatus.Text="🌍 "..wid.." ["..S.SelMode.."] → Kapitel wählen"
+        H.UI.Lbl.WorldStatus.TextColor3=D.Yellow
+        local wd=S.WorldData[wid] or {}
+        local cl=(S.SelMode=="Story" or S.SelMode=="Calamity") and wd.story or wd.ranger
         RebuildChapBtns(cl or {})
     end)
 end
 
 RebuildWorldList=function()
-    local S=Haze.State
-    for _,v in pairs(Haze.UI.Fr.WorldBtns:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
-    for _,v in pairs(Haze.UI.Fr.ChapRow:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
-    Haze.UI.Fr.ChapBtns={};S.SelectedWorldId=nil;S.SelectedChapId=nil
+    for _,v in pairs(H.UI.Fr.WorldBtns:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
+    for _,v in pairs(H.UI.Fr.ChapRow:GetChildren())  do if v:IsA("TextButton") then v:Destroy() end end
+    H.UI.Fr.ChapBtns={}; S.SelWorld=nil; S.SelChap=nil
 
-    if S.SelectedMode=="Calamity" then
+    if S.SelMode=="Calamity" then
         local cd=S.WorldData["Calamity"]
         if cd and #cd.story>0 then
-            S.SelectedWorldId="Calamity";RebuildChapBtns(cd.story)
-            Haze.UI.Lbl.WorldStatus.Text="⚡ Calamity → Kapitel wählen"
-            Haze.UI.Lbl.WorldStatus.TextColor3=D.Orange
+            S.SelWorld="Calamity"; RebuildChapBtns(cd.story)
+            H.UI.Lbl.WorldStatus.Text="⚡ Calamity → Kapitel wählen"
+            H.UI.Lbl.WorldStatus.TextColor3=D.Orange
         else
-            Haze.UI.Lbl.WorldStatus.Text="⏳ Calamity lädt..."
-            Haze.UI.Lbl.WorldStatus.TextColor3=D.Yellow
+            H.UI.Lbl.WorldStatus.Text="⏳ Calamity lädt..."
+            H.UI.Lbl.WorldStatus.TextColor3=D.Yellow
         end
         return
     end
@@ -832,245 +836,233 @@ RebuildWorldList=function()
     for _,wid in ipairs(S.WorldIds) do
         if wid:lower():find("calamity") then continue end
         local wd=S.WorldData[wid] or {}
-        local list=(S.SelectedMode=="Story") and wd.story or wd.ranger
+        local list=(S.SelMode=="Story") and wd.story or wd.ranger
         if list and #list>0 then table.insert(avail,wid) end
     end
-
-    if #avail==0 then
-        Haze.UI.Lbl.WorldStatus.Text="⏳ Welten laden..."
-        Haze.UI.Lbl.WorldStatus.TextColor3=D.Yellow
-        return
-    end
+    if #avail==0 then H.UI.Lbl.WorldStatus.Text="⏳ Welten laden..."; H.UI.Lbl.WorldStatus.TextColor3=D.Yellow; return end
     for _,wid in ipairs(avail) do CreateWorldBtn(wid) end
-    Haze.UI.Lbl.WorldStatus.Text="✅ "..#avail.." Welten verfügbar"
-    Haze.UI.Lbl.WorldStatus.TextColor3=D.Green
+    H.UI.Lbl.WorldStatus.Text="✅ "..#avail.." Welten verfügbar"; H.UI.Lbl.WorldStatus.TextColor3=D.Green
 end
 
--- Modus erstellen
+-- Modus-Buttons
 for _,def in ipairs(MODI) do
     local mb=Instance.new("TextButton",modeRow)
-    mb.Size=UDim2.new(0.32,0,0,26);mb.BackgroundColor3=D.CardHover
-    mb.Text=def.label;mb.TextColor3=def.color;mb.TextSize=10;mb.Font=Enum.Font.GothamBold
-    mb.AutoButtonColor=false;mb.BorderSizePixel=0;Corner(mb,7);Stroke(mb,D.Border,1,0.5)
+    mb.Size=UDim2.new(0.32,0,0,26); mb.BackgroundColor3=D.CardHover
+    mb.Text=def.label; mb.TextColor3=def.color; mb.TextSize=10; mb.Font=Enum.Font.GothamBold
+    mb.AutoButtonColor=false; mb.BorderSizePixel=0; Corner(mb,7); Stroke(mb,D.Border,1,0.5)
     local capId=def.id
     mb.MouseButton1Click:Connect(function()
-        Haze.State.SelectedMode=capId;HighlightMode(capId)
-        Haze.UI.Fr.DiffCard.Visible=(capId=="Story")
+        S.SelMode=capId; HighlightMode(capId)
+        H.UI.Fr.DiffCard.Visible=(capId=="Story")
         RebuildWorldList()
     end)
-    Haze.UI.Btn.ModeBtns[def.id]=mb
+    H.UI.Btn.ModeBtns[def.id]=mb
 end
 HighlightMode("Story")
 
 -- Create & Start
-Haze.UI.Btn.CreateStart=NeonBtn(wCard,"🚀  Create & Start Room",D.Green,36)
-Haze.UI.Btn.CreateStart.MouseButton1Click:Connect(function()
-    local S=Haze.State
-    if not S.SelectedChapId then
-        Haze.UI.Lbl.WorldStatus.Text="⚠ Welt & Kapitel wählen!"
-        Haze.UI.Lbl.WorldStatus.TextColor3=D.Red;return
-    end
-    Haze.UI.Lbl.WorldStatus.Text="⚙ Erstelle: "..S.SelectedChapId
-    Haze.UI.Lbl.WorldStatus.TextColor3=D.Yellow
-    Haze.UI.Btn.CreateStart.Text="⏳ Wird gestartet..."
-    FireCreateAndStart(S.SelectedWorldId or "Unknown",S.SelectedMode,S.SelectedChapId)
+H.UI.Btn.CreateStart=NeonBtn(wCard,"🚀  Create & Start Room",D.Green,36)
+H.UI.Btn.CreateStart.MouseButton1Click:Connect(function()
+    if not S.SelChap then H.UI.Lbl.WorldStatus.Text="⚠ Welt & Kapitel wählen!"; H.UI.Lbl.WorldStatus.TextColor3=D.Red; return end
+    H.UI.Lbl.WorldStatus.Text="⚙ Erstelle: "..S.SelChap; H.UI.Lbl.WorldStatus.TextColor3=D.Yellow
+    H.UI.Btn.CreateStart.Text="⏳ Gestartet..."
+    FireCreateAndStart(S.SelWorld or "Unknown",S.SelMode,S.SelChap)
     task.delay(2.5,function() pcall(function()
-        Haze.UI.Btn.CreateStart.Text="🚀  Create & Start Room"
-        Haze.UI.Lbl.WorldStatus.Text="✅ "..S.SelectedChapId
-        Haze.UI.Lbl.WorldStatus.TextColor3=D.Green
+        H.UI.Btn.CreateStart.Text="🚀  Create & Start Room"
+        H.UI.Lbl.WorldStatus.Text="✅ "..S.SelChap; H.UI.Lbl.WorldStatus.TextColor3=D.Green
     end) end)
 end)
 
 local refreshBtn=NeonBtn(wCard,"🔄  Welten neu laden",D.CyanDim,26)
 refreshBtn.MouseButton1Click:Connect(function()
-    Haze.UI.Lbl.WorldStatus.Text="⏳ Scanne...";Haze.UI.Lbl.WorldStatus.TextColor3=D.Yellow
-    Haze.State.ChapterFolderRef=nil
+    H.UI.Lbl.WorldStatus.Text="⏳ Scanne..."; H.UI.Lbl.WorldStatus.TextColor3=D.Yellow
+    S.ChapFolderRef=nil
     task.spawn(function()
         local f=GetChapterFolder()
         if f then
             ScanChapterFolder(f)
-            pcall(function()
-                Haze.UI.Lbl.ScanStatus.Text="✅ "..#Haze.State.WorldIds.." Welten"
-                Haze.UI.Lbl.ScanStatus.TextColor3=D.Green
-            end)
+            pcall(function() H.UI.Lbl.ScanStatus.Text="✅ "..#S.WorldIds.." Welten"; H.UI.Lbl.ScanStatus.TextColor3=D.Green end)
         else ApplyFallback() end
         pcall(RebuildWorldList)
     end)
 end)
 
--- ── AUTOFARM INJECTION CONTAINER ─────────────────────────────
--- Hier injiziert das externe Modul seinen UI-Inhalt
-local injSep=Card(GamePage,2);injSep.BackgroundColor3=D.BorderCyan
+-- ── MODUL-STATUS + INJECTION-CONTAINER ───────────────────────
+-- Trennlinie
+local sepLine=Instance.new("Frame",GamePage)
+sepLine.Size=UDim2.new(1,0,0,1); sepLine.BackgroundColor3=D.BorderCyan; sepLine.BackgroundTransparency=0.4; sepLine.BorderSizePixel=0
 
-Haze.UI.Fr.AutofarmInjection=Instance.new("Frame",GamePage)
-Haze.UI.Fr.AutofarmInjection.Name="AutofarmInjection"
-Haze.UI.Fr.AutofarmInjection.Size=UDim2.new(1,0,0,0)
-Haze.UI.Fr.AutofarmInjection.AutomaticSize=Enum.AutomaticSize.Y
-Haze.UI.Fr.AutofarmInjection.BackgroundTransparency=1
-Haze.UI.Fr.AutofarmInjection.BorderSizePixel=0
+-- ModulStatus Label (startet ROT)
+local modulStatusCard=Card(GamePage,34); Pad(modulStatusCard,4,12,4,12)
+H.UI.Lbl.ModulStatus=Instance.new("TextLabel",modulStatusCard)
+H.UI.Lbl.ModulStatus.Size=UDim2.new(1,0,1,0); H.UI.Lbl.ModulStatus.BackgroundTransparency=1
+H.UI.Lbl.ModulStatus.Text="🔴  Autofarm-Modul nicht geladen"
+H.UI.Lbl.ModulStatus.TextColor3=D.Red
+H.UI.Lbl.ModulStatus.TextSize=11; H.UI.Lbl.ModulStatus.Font=Enum.Font.GothamBold
+H.UI.Lbl.ModulStatus.TextXAlignment=Enum.TextXAlignment.Left
 
--- Platzhalter während das Modul lädt
-local loadingLbl=MkLbl(Haze.UI.Fr.AutofarmInjection,"⏳  Auto-Farm Modul wird geladen...",11,D.TextLow)
-loadingLbl.Name="AutofarmLoadingHint"
-loadingLbl.Size=UDim2.new(1,0,0,28)
+-- Leerer Container → wird von autofarm.lua befüllt
+H.UI.Fr.AutofarmInjection=Instance.new("Frame",GamePage)
+H.UI.Fr.AutofarmInjection.Name="AutofarmInjection"
+H.UI.Fr.AutofarmInjection.Size=UDim2.new(1,0,0,0)
+H.UI.Fr.AutofarmInjection.AutomaticSize=Enum.AutomaticSize.Y
+H.UI.Fr.AutofarmInjection.BackgroundTransparency=1
+H.UI.Fr.AutofarmInjection.BorderSizePixel=0
+
+-- _G.HazeShared.Container setzen
+_G.HazeShared.Container = H.UI.Fr.AutofarmInjection
 
 -- ============================================================
 --  ===  MISC TAB  ===
 -- ============================================================
 MkLbl(MiscPage,"🔧  Misc",14,D.Cyan,true)
-local afkCard=Card(MiscPage,50);Pad(afkCard,0,14,0,14)
-local afkRow=Instance.new("Frame",afkCard);afkRow.Size=UDim2.new(1,0,1,0);afkRow.BackgroundTransparency=1
-local afkDot=Instance.new("Frame",afkRow);afkDot.Size=UDim2.new(0,10,0,10);afkDot.Position=UDim2.new(0,0,0.5,-5);afkDot.BackgroundColor3=D.Green;afkDot.BorderSizePixel=0;Corner(afkDot,99)
-local afkTxt=Instance.new("TextLabel",afkRow);afkTxt.Position=UDim2.new(0,18,0,0);afkTxt.Size=UDim2.new(1,-18,1,0);afkTxt.BackgroundTransparency=1;afkTxt.Text="Anti-AFK  —  Aktiv (alle 60s)";afkTxt.TextColor3=D.Green;afkTxt.TextSize=13;afkTxt.Font=Enum.Font.GothamBold;afkTxt.TextXAlignment=Enum.TextXAlignment.Left
+local afkCard=Card(MiscPage,50); Pad(afkCard,0,14,0,14)
+local afkRow=Instance.new("Frame",afkCard); afkRow.Size=UDim2.new(1,0,1,0); afkRow.BackgroundTransparency=1
+local afkDot=Instance.new("Frame",afkRow); afkDot.Size=UDim2.new(0,10,0,10); afkDot.Position=UDim2.new(0,0,0.5,-5); afkDot.BackgroundColor3=D.Green; afkDot.BorderSizePixel=0; Corner(afkDot,99)
+local afkTxt=Instance.new("TextLabel",afkRow); afkTxt.Position=UDim2.new(0,18,0,0); afkTxt.Size=UDim2.new(1,-18,1,0); afkTxt.BackgroundTransparency=1; afkTxt.Text="Anti-AFK  —  Aktiv (alle 60s)"; afkTxt.TextColor3=D.Green; afkTxt.TextSize=13; afkTxt.Font=Enum.Font.GothamBold; afkTxt.TextXAlignment=Enum.TextXAlignment.Left
 task.spawn(function()
-    while Haze.State.Running and ScreenGui.Parent do
-        Tw(afkDot,{BackgroundTransparency=0.65},TM);task.wait(1.1)
-        Tw(afkDot,{BackgroundTransparency=0},TM);task.wait(1.1)
+    while S.Running and ScreenGui.Parent do
+        Tw(afkDot,{BackgroundTransparency=0.65},TM); task.wait(1.1)
+        Tw(afkDot,{BackgroundTransparency=0},TM); task.wait(1.1)
     end
 end)
 
 -- ============================================================
 --  ===  SESSION TAB  ===
 -- ============================================================
-local sHCard=Card(SessPage,65);Pad(sHCard,6,12,4,12)
-local sHRow=Instance.new("Frame",sHCard);sHRow.Size=UDim2.new(1,0,0,30);sHRow.BackgroundTransparency=1
-Haze.UI.Lbl.Rounds=Instance.new("TextLabel",sHRow)
-Haze.UI.Lbl.Rounds.Size=UDim2.new(0.55,0,1,0);Haze.UI.Lbl.Rounds.BackgroundTransparency=1
-Haze.UI.Lbl.Rounds.Text="Runden: 0";Haze.UI.Lbl.Rounds.TextColor3=D.Green
-Haze.UI.Lbl.Rounds.TextSize=14;Haze.UI.Lbl.Rounds.Font=Enum.Font.GothamBold
-Haze.UI.Lbl.Rounds.TextXAlignment=Enum.TextXAlignment.Left
-Haze.UI.Lbl.ItemCount=Instance.new("TextLabel",sHRow)
-Haze.UI.Lbl.ItemCount.Position=UDim2.new(0.55,0,0,0);Haze.UI.Lbl.ItemCount.Size=UDim2.new(0.45,0,1,0)
-Haze.UI.Lbl.ItemCount.BackgroundTransparency=1;Haze.UI.Lbl.ItemCount.Text="0 Items"
-Haze.UI.Lbl.ItemCount.TextColor3=D.TextMid;Haze.UI.Lbl.ItemCount.TextSize=12
-Haze.UI.Lbl.ItemCount.Font=Enum.Font.GothamSemibold;Haze.UI.Lbl.ItemCount.TextXAlignment=Enum.TextXAlignment.Right
-local sTRow=Instance.new("Frame",sHCard);sTRow.Size=UDim2.new(1,0,0,22);sTRow.BackgroundTransparency=1
-Haze.UI.Lbl.SessionTimer=Instance.new("TextLabel",sTRow)
-Haze.UI.Lbl.SessionTimer.Size=UDim2.new(1,0,1,0);Haze.UI.Lbl.SessionTimer.BackgroundTransparency=1
-Haze.UI.Lbl.SessionTimer.Text="⏱  0m 00s";Haze.UI.Lbl.SessionTimer.TextColor3=D.TextLow
-Haze.UI.Lbl.SessionTimer.TextSize=11;Haze.UI.Lbl.SessionTimer.Font=Enum.Font.Gotham
-Haze.UI.Lbl.SessionTimer.TextXAlignment=Enum.TextXAlignment.Left
+local sHCard=Card(SessPage,65); Pad(sHCard,6,12,4,12)
+local sHRow=Instance.new("Frame",sHCard); sHRow.Size=UDim2.new(1,0,0,30); sHRow.BackgroundTransparency=1
+H.UI.Lbl.Rounds=Instance.new("TextLabel",sHRow)
+H.UI.Lbl.Rounds.Size=UDim2.new(0.55,0,1,0); H.UI.Lbl.Rounds.BackgroundTransparency=1
+H.UI.Lbl.Rounds.Text="Runden: 0"; H.UI.Lbl.Rounds.TextColor3=D.Green
+H.UI.Lbl.Rounds.TextSize=14; H.UI.Lbl.Rounds.Font=Enum.Font.GothamBold
+H.UI.Lbl.Rounds.TextXAlignment=Enum.TextXAlignment.Left
+H.UI.Lbl.ItemCount=Instance.new("TextLabel",sHRow)
+H.UI.Lbl.ItemCount.Position=UDim2.new(0.55,0,0,0); H.UI.Lbl.ItemCount.Size=UDim2.new(0.45,0,1,0)
+H.UI.Lbl.ItemCount.BackgroundTransparency=1; H.UI.Lbl.ItemCount.Text="0 Items"
+H.UI.Lbl.ItemCount.TextColor3=D.TextMid; H.UI.Lbl.ItemCount.TextSize=12
+H.UI.Lbl.ItemCount.Font=Enum.Font.GothamSemibold; H.UI.Lbl.ItemCount.TextXAlignment=Enum.TextXAlignment.Right
+local sTRow=Instance.new("Frame",sHCard); sTRow.Size=UDim2.new(1,0,0,22); sTRow.BackgroundTransparency=1
+H.UI.Lbl.SessionTimer=Instance.new("TextLabel",sTRow)
+H.UI.Lbl.SessionTimer.Size=UDim2.new(1,0,1,0); H.UI.Lbl.SessionTimer.BackgroundTransparency=1
+H.UI.Lbl.SessionTimer.Text="⏱  0m 00s"; H.UI.Lbl.SessionTimer.TextColor3=D.TextLow
+H.UI.Lbl.SessionTimer.TextSize=11; H.UI.Lbl.SessionTimer.Font=Enum.Font.Gotham
+H.UI.Lbl.SessionTimer.TextXAlignment=Enum.TextXAlignment.Left
 
--- Info-Items
-local infoCard=Card(SessPage);Pad(infoCard,8,10,8,10);VList(infoCard,5);SecLbl(infoCard,"ℹ  INFO-ITEMS")
-local infoRow=Instance.new("Frame",infoCard);infoRow.Size=UDim2.new(1,0,0,0);infoRow.AutomaticSize=Enum.AutomaticSize.Y;infoRow.BackgroundTransparency=1;HList(infoRow,8)
-Haze.UI.Lbl.InfoVals={}
+-- Info-Items (Exp/Gems/Gold)
+local infoCard=Card(SessPage); Pad(infoCard,8,10,8,10); VList(infoCard,5); SecLbl(infoCard,"ℹ  INFO-ITEMS")
+local infoRow=Instance.new("Frame",infoCard); infoRow.Size=UDim2.new(1,0,0,0); infoRow.AutomaticSize=Enum.AutomaticSize.Y; infoRow.BackgroundTransparency=1; HList(infoRow,8)
+H.UI.Lbl.InfoVals={}
 for _,iname in ipairs({"Exp","Gems","Gold"}) do
-    local iF=Instance.new("Frame",infoRow);iF.Size=UDim2.new(0.31,0,0,44);iF.BackgroundColor3=Color3.fromRGB(12,22,40);iF.BorderSizePixel=0;Corner(iF,8);Stroke(iF,D.Orange,1,0.5)
-    local iN=Instance.new("TextLabel",iF);iN.Size=UDim2.new(1,0,0.45,0);iN.BackgroundTransparency=1;iN.Text=iname;iN.TextColor3=D.Orange;iN.TextSize=10;iN.Font=Enum.Font.GothamSemibold;iN.TextXAlignment=Enum.TextXAlignment.Center
-    local iV=Instance.new("TextLabel",iF);iV.Size=UDim2.new(1,0,0.55,0);iV.Position=UDim2.new(0,0,0.45,0);iV.BackgroundTransparency=1;iV.Text="0";iV.TextColor3=D.TextHi;iV.TextSize=14;iV.Font=Enum.Font.GothamBold;iV.TextXAlignment=Enum.TextXAlignment.Center
-    Haze.UI.Lbl.InfoVals[iname]=iV
+    local iF=Instance.new("Frame",infoRow); iF.Size=UDim2.new(0.31,0,0,44); iF.BackgroundColor3=Color3.fromRGB(12,22,40); iF.BorderSizePixel=0; Corner(iF,8); Stroke(iF,D.Orange,1,0.5)
+    local iN=Instance.new("TextLabel",iF); iN.Size=UDim2.new(1,0,0.45,0); iN.BackgroundTransparency=1; iN.Text=iname; iN.TextColor3=D.Orange; iN.TextSize=10; iN.Font=Enum.Font.GothamSemibold; iN.TextXAlignment=Enum.TextXAlignment.Center
+    local iV=Instance.new("TextLabel",iF); iV.Size=UDim2.new(1,0,0.55,0); iV.Position=UDim2.new(0,0,0.45,0); iV.BackgroundTransparency=1; iV.Text="0"; iV.TextColor3=D.TextHi; iV.TextSize=14; iV.Font=Enum.Font.GothamBold; iV.TextXAlignment=Enum.TextXAlignment.Center
+    H.UI.Lbl.InfoVals[iname]=iV
 end
 
 -- Multi-Targeting
-local goalsCard=Card(SessPage);Pad(goalsCard,10,10,10,10);VList(goalsCard,8);SecLbl(goalsCard,"🎯  ZIELE  (AutoSave)")
-local gInputRow=Instance.new("Frame",goalsCard);gInputRow.Size=UDim2.new(1,0,0,30);gInputRow.BackgroundTransparency=1;HList(gInputRow,5)
-local gItemOuter,gItemBox=MkInput(gInputRow,"Item-Name...");gItemOuter.Size=UDim2.new(0.50,0,0,30)
-Haze.UI.Inp.GoalItem=gItemBox
-local gAmtOuter,gAmtBox=MkInput(gInputRow,"Anzahl");gAmtOuter.Size=UDim2.new(0.28,0,0,30)
-Haze.UI.Inp.GoalAmt=gAmtBox
+local goalsCard=Card(SessPage); Pad(goalsCard,10,10,10,10); VList(goalsCard,8); SecLbl(goalsCard,"🎯  ZIELE  (AutoSave)")
+local gInputRow=Instance.new("Frame",goalsCard); gInputRow.Size=UDim2.new(1,0,0,30); gInputRow.BackgroundTransparency=1; HList(gInputRow,5)
+local gItemOuter,gItemBox=MkInput(gInputRow,"Item-Name..."); gItemOuter.Size=UDim2.new(0.50,0,0,30)
+H.UI.Inp.GoalItem=gItemBox
+local gAmtOuter,gAmtBox=MkInput(gInputRow,"Anzahl"); gAmtOuter.Size=UDim2.new(0.28,0,0,30)
+H.UI.Inp.GoalAmt=gAmtBox
 local gAddBtn=Instance.new("TextButton",gInputRow)
-gAddBtn.Size=UDim2.new(0.19,0,0,30);gAddBtn.BackgroundColor3=D.Purple;gAddBtn.Text="+ Ziel"
-gAddBtn.TextColor3=Color3.new(1,1,1);gAddBtn.TextSize=11;gAddBtn.Font=Enum.Font.GothamBold
-gAddBtn.AutoButtonColor=false;gAddBtn.BorderSizePixel=0;Corner(gAddBtn,7);Stroke(gAddBtn,D.Purple,1,0.2)
+gAddBtn.Size=UDim2.new(0.19,0,0,30); gAddBtn.BackgroundColor3=D.Purple; gAddBtn.Text="+ Ziel"
+gAddBtn.TextColor3=Color3.new(1,1,1); gAddBtn.TextSize=11; gAddBtn.Font=Enum.Font.GothamBold
+gAddBtn.AutoButtonColor=false; gAddBtn.BorderSizePixel=0; Corner(gAddBtn,7); Stroke(gAddBtn,D.Purple,1,0.2)
 gAddBtn.MouseEnter:Connect(function() Tw(gAddBtn,{BackgroundColor3=Color3.fromRGB(150,60,220)}) end)
 gAddBtn.MouseLeave:Connect(function() Tw(gAddBtn,{BackgroundColor3=D.Purple}) end)
 
-Haze.UI.Fr.GoalsList=Instance.new("Frame",goalsCard)
-Haze.UI.Fr.GoalsList.Size=UDim2.new(1,0,0,0);Haze.UI.Fr.GoalsList.AutomaticSize=Enum.AutomaticSize.Y
-Haze.UI.Fr.GoalsList.BackgroundTransparency=1;VList(Haze.UI.Fr.GoalsList,4)
-Haze.UI.Lbl.GoalsEmpty=MkLbl(Haze.UI.Fr.GoalsList,"Keine Ziele. Inventar-Item anklicken oder hier eintragen.",11,D.TextLow)
-Haze.UI.Lbl.GoalsEmpty.Size=UDim2.new(1,0,0,28);Haze.UI.Lbl.GoalsEmpty.TextWrapped=true
+H.UI.Fr.GoalsList=Instance.new("Frame",goalsCard)
+H.UI.Fr.GoalsList.Size=UDim2.new(1,0,0,0); H.UI.Fr.GoalsList.AutomaticSize=Enum.AutomaticSize.Y
+H.UI.Fr.GoalsList.BackgroundTransparency=1; VList(H.UI.Fr.GoalsList,4)
+H.UI.Lbl.GoalsEmpty=MkLbl(H.UI.Fr.GoalsList,"Keine Ziele. Inventar-Item anklicken oder hier eintragen.",11,D.TextLow)
+H.UI.Lbl.GoalsEmpty.Size=UDim2.new(1,0,0,28); H.UI.Lbl.GoalsEmpty.TextWrapped=true
 
 UpdateGoalsUI=function()
-    local S=Haze.State
-    for _,v in pairs(Haze.UI.Fr.GoalsList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
-    Haze.UI.Lbl.GoalsEmpty.Visible=(#S.Goals==0)
+    for _,v in pairs(H.UI.Fr.GoalsList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
+    H.UI.Lbl.GoalsEmpty.Visible=(#S.Goals==0)
     for _,goal in ipairs(S.Goals) do
-        local cur=math.max(S.SessionTotals[goal.item] or 0, GetInvAmt(goal.item))
-        local reached=cur>=goal.amount;goal.reached=reached
+        local cur=math.max(S.SessTotals[goal.item] or 0, GetInvAmt(goal.item))
+        local reached=cur>=goal.amount; goal.reached=reached
         local pct=math.min(1,cur/math.max(1,goal.amount))
-        local row=Instance.new("Frame",Haze.UI.Fr.GoalsList)
-        row.Size=UDim2.new(1,0,0,44);row.BorderSizePixel=0;Corner(row,8)
-        if reached then row.BackgroundColor3=D.GreenDark;Stroke(row,D.GreenBright,1.5,0)
-        else row.BackgroundColor3=D.Card;Stroke(row,D.Border,1,0.4) end
-        local bar=Instance.new("Frame",row);bar.Size=UDim2.new(0,3,0.65,0);bar.Position=UDim2.new(0,0,0.175,0);bar.BackgroundColor3=reached and D.GreenBright or D.Purple;bar.BorderSizePixel=0;Corner(bar,2)
-        local pgBg=Instance.new("Frame",row);pgBg.Size=UDim2.new(1,-52,0,3);pgBg.Position=UDim2.new(0,8,1,-6);pgBg.BackgroundColor3=Color3.fromRGB(28,38,62);pgBg.BorderSizePixel=0;Corner(pgBg,2)
-        local pgF=Instance.new("Frame",pgBg);pgF.Size=UDim2.new(pct,0,1,0);pgF.BackgroundColor3=reached and D.GreenBright or D.Purple;pgF.BorderSizePixel=0;Corner(pgF,2)
-        local nL=Instance.new("TextLabel",row);nL.Position=UDim2.new(0,12,0,5);nL.Size=UDim2.new(1,-52,0.5,-3);nL.BackgroundTransparency=1;nL.Text=goal.item;nL.TextColor3=reached and D.GreenBright or D.TextHi;nL.TextSize=11;nL.Font=Enum.Font.GothamBold;nL.TextXAlignment=Enum.TextXAlignment.Left;nL.TextTruncate=Enum.TextTruncate.AtEnd
-        local pL=Instance.new("TextLabel",row);pL.Position=UDim2.new(0,12,0.5,1);pL.Size=UDim2.new(1,-52,0.5,-5);pL.BackgroundTransparency=1
-        if reached then pL.Text="✅ "..cur.." / "..goal.amount.."  ERREICHT!";pL.TextColor3=D.GreenBright
-        else pL.Text=cur.." / "..goal.amount.."  ("..math.floor(pct*100).."%)";pL.TextColor3=D.TextMid end
-        pL.TextSize=10;pL.Font=Enum.Font.GothamSemibold;pL.TextXAlignment=Enum.TextXAlignment.Left
+        local row=Instance.new("Frame",H.UI.Fr.GoalsList); row.Size=UDim2.new(1,0,0,44); row.BorderSizePixel=0; Corner(row,8)
+        if reached then row.BackgroundColor3=D.GreenDark; Stroke(row,D.GreenBright,1.5,0)
+        else row.BackgroundColor3=D.Card; Stroke(row,D.Border,1,0.4) end
+        local bar=Instance.new("Frame",row); bar.Size=UDim2.new(0,3,0.65,0); bar.Position=UDim2.new(0,0,0.175,0); bar.BackgroundColor3=reached and D.GreenBright or D.Purple; bar.BorderSizePixel=0; Corner(bar,2)
+        local pgBg=Instance.new("Frame",row); pgBg.Size=UDim2.new(1,-52,0,3); pgBg.Position=UDim2.new(0,8,1,-6); pgBg.BackgroundColor3=Color3.fromRGB(28,38,62); pgBg.BorderSizePixel=0; Corner(pgBg,2)
+        local pgF=Instance.new("Frame",pgBg); pgF.Size=UDim2.new(pct,0,1,0); pgF.BackgroundColor3=reached and D.GreenBright or D.Purple; pgF.BorderSizePixel=0; Corner(pgF,2)
+        local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,12,0,5); nL.Size=UDim2.new(1,-52,0.5,-3); nL.BackgroundTransparency=1; nL.Text=goal.item; nL.TextColor3=reached and D.GreenBright or D.TextHi; nL.TextSize=11; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
+        local pL=Instance.new("TextLabel",row); pL.Position=UDim2.new(0,12,0.5,1); pL.Size=UDim2.new(1,-52,0.5,-5); pL.BackgroundTransparency=1
+        if reached then pL.Text="✅ "..cur.." / "..goal.amount.."  ERREICHT!"; pL.TextColor3=D.GreenBright
+        else pL.Text=cur.." / "..goal.amount.."  ("..math.floor(pct*100).."%)"; pL.TextColor3=D.TextMid end
+        pL.TextSize=10; pL.Font=Enum.Font.GothamSemibold; pL.TextXAlignment=Enum.TextXAlignment.Left
         local capItem=goal.item
-        local xBtn=Instance.new("TextButton",row);xBtn.Size=UDim2.new(0,34,0,34);xBtn.Position=UDim2.new(1,-38,0.5,-17);xBtn.BackgroundColor3=Color3.fromRGB(50,12,12);xBtn.Text="✕";xBtn.TextColor3=D.Red;xBtn.TextSize=13;xBtn.Font=Enum.Font.GothamBold;xBtn.AutoButtonColor=false;xBtn.BorderSizePixel=0;Corner(xBtn,7);Stroke(xBtn,D.Red,1,0.4)
+        local xBtn=Instance.new("TextButton",row); xBtn.Size=UDim2.new(0,34,0,34); xBtn.Position=UDim2.new(1,-38,0.5,-17); xBtn.BackgroundColor3=Color3.fromRGB(50,12,12); xBtn.Text="✕"; xBtn.TextColor3=D.Red; xBtn.TextSize=13; xBtn.Font=Enum.Font.GothamBold; xBtn.AutoButtonColor=false; xBtn.BorderSizePixel=0; Corner(xBtn,7); Stroke(xBtn,D.Red,1,0.4)
         xBtn.MouseEnter:Connect(function() Tw(xBtn,{BackgroundColor3=D.RedDark}) end)
         xBtn.MouseLeave:Connect(function() Tw(xBtn,{BackgroundColor3=Color3.fromRGB(50,12,12)}) end)
         xBtn.MouseButton1Click:Connect(function()
-            for i,g in ipairs(S.Goals) do if g.item==capItem then table.remove(S.Goals,i);break end end
-            S.GoalsNotified[capItem]=nil;SaveConfig();UpdateGoalsUI()
+            for i,g in ipairs(S.Goals) do if g.item==capItem then table.remove(S.Goals,i); break end end
+            S.GoalsNotified[capItem]=nil; SaveConfig(); UpdateGoalsUI()
         end)
-        if reached then task.spawn(function() while row.Parent do Tw(row,{BackgroundColor3=Color3.fromRGB(0,75,38)},TM);task.wait(0.65);if not row.Parent then break end;Tw(row,{BackgroundColor3=D.GreenDark},TM);task.wait(0.65) end end) end
+        if reached then task.spawn(function() while row.Parent do Tw(row,{BackgroundColor3=Color3.fromRGB(0,75,38)},TM); task.wait(0.65); if not row.Parent then break end; Tw(row,{BackgroundColor3=D.GreenDark},TM); task.wait(0.65) end end) end
     end
 end
 
 gAddBtn.MouseButton1Click:Connect(function()
-    local iname=(Haze.UI.Inp.GoalItem.Text or ""):match("^%s*(.-)%s*$")
-    local iamt=tonumber(Haze.UI.Inp.GoalAmt.Text)
+    local iname=(H.UI.Inp.GoalItem.Text or ""):match("^%s*(.-)%s*$")
+    local iamt=tonumber(H.UI.Inp.GoalAmt.Text)
     if iname=="" or not iamt or iamt<=0 then return end
     local found=false
-    for _,g in ipairs(Haze.State.Goals) do if g.item==iname then found=true;break end end
-    if not found then table.insert(Haze.State.Goals,{item=iname,amount=iamt,reached=false}) end
-    Haze.State.GoalsNotified[iname]=nil;SaveConfig();UpdateGoalsUI()
-    Haze.UI.Inp.GoalItem.Text="";Haze.UI.Inp.GoalAmt.Text=""
+    for _,g in ipairs(S.Goals) do if g.item==iname then found=true; break end end
+    if not found then table.insert(S.Goals,{item=iname,amount=iamt,reached=false}) end
+    S.GoalsNotified[iname]=nil; SaveConfig(); UpdateGoalsUI()
+    H.UI.Inp.GoalItem.Text=""; H.UI.Inp.GoalAmt.Text=""
 end)
 
--- SetGoalFromInventory (für Inventory-Tab)
 local function SetGoalFromInventory(itemName)
     SelectTab("Session")
-    Haze.UI.Inp.GoalItem.Text=itemName;Haze.UI.Inp.GoalAmt.Text=""
-    task.defer(function() pcall(function() Haze.UI.Inp.GoalAmt:CaptureFocus() end) end)
-    Stroke(gItemOuter,D.Purple,1.5,0);Stroke(gAmtOuter,D.Purple,1.5,0)
-    task.delay(2.5,function() Stroke(gItemOuter,D.Border,1,0.2);Stroke(gAmtOuter,D.Border,1,0.2) end)
+    H.UI.Inp.GoalItem.Text=itemName; H.UI.Inp.GoalAmt.Text=""
+    task.defer(function() pcall(function() H.UI.Inp.GoalAmt:CaptureFocus() end) end)
+    Stroke(gItemOuter,D.Purple,1.5,0); Stroke(gAmtOuter,D.Purple,1.5,0)
+    task.delay(2.5,function() Stroke(gItemOuter,D.Border,1,0.2); Stroke(gAmtOuter,D.Border,1,0.2) end)
 end
 
--- Session-Liste
-Haze.UI.Fr.SessList=Card(SessPage);Pad(Haze.UI.Fr.SessList,6,8,6,8);VList(Haze.UI.Fr.SessList,4)
-Haze.UI.Lbl.SessEmpty=MkLbl(Haze.UI.Fr.SessList,"Noch keine Items...",12,D.TextLow)
-Haze.UI.Lbl.SessEmpty.Size=UDim2.new(1,0,0,30);Haze.UI.Lbl.SessEmpty.TextXAlignment=Enum.TextXAlignment.Center
-local sTotCard=Card(SessPage,34);Pad(sTotCard,0,12,0,12)
-local sTotRow=Instance.new("Frame",sTotCard);sTotRow.Size=UDim2.new(1,0,1,0);sTotRow.BackgroundTransparency=1
-Haze.UI.Lbl.SessTotal=MkLbl(sTotRow,"Gesamt: 0 Items",12,D.TextMid)
-Haze.UI.Lbl.SessTotal.Size=UDim2.new(1,0,1,0);Haze.UI.Lbl.SessTotal.TextXAlignment=Enum.TextXAlignment.Right
+H.UI.Fr.SessList=Card(SessPage); Pad(H.UI.Fr.SessList,6,8,6,8); VList(H.UI.Fr.SessList,4)
+H.UI.Lbl.SessEmpty=MkLbl(H.UI.Fr.SessList,"Noch keine Items...",12,D.TextLow)
+H.UI.Lbl.SessEmpty.Size=UDim2.new(1,0,0,30); H.UI.Lbl.SessEmpty.TextXAlignment=Enum.TextXAlignment.Center
+local sTotCard=Card(SessPage,34); Pad(sTotCard,0,12,0,12)
+local sTotRow=Instance.new("Frame",sTotCard); sTotRow.Size=UDim2.new(1,0,1,0); sTotRow.BackgroundTransparency=1
+H.UI.Lbl.SessTotal=MkLbl(sTotRow,"Gesamt: 0 Items",12,D.TextMid)
+H.UI.Lbl.SessTotal.Size=UDim2.new(1,0,1,0); H.UI.Lbl.SessTotal.TextXAlignment=Enum.TextXAlignment.Right
 
 UpdateSessionUI=function()
-    local S=Haze.State
-    Haze.UI.Lbl.Rounds.Text="Runden: "..S.RoundCount
-    for k,v in pairs(Haze.UI.Lbl.InfoVals) do v.Text=tostring(S.InfoTotals[k] or 0) end
-    for _,v in pairs(Haze.UI.Fr.SessList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
+    H.UI.Lbl.Rounds.Text="Runden: "..S.RoundCount
+    for k,v in pairs(H.UI.Lbl.InfoVals) do v.Text=tostring(S.InfoTotals[k] or 0) end
+    for _,v in pairs(H.UI.Fr.SessList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
     local total,count=0,0
-    for name,amt in pairs(S.SessionTotals) do
-        total=total+amt;count=count+1
-        local isRare=RARE_ITEMS[name]==true
-        local row=Instance.new("Frame",Haze.UI.Fr.SessList);row.Size=UDim2.new(1,0,0,34);row.BorderSizePixel=0;Corner(row,7)
-        if isRare then row.BackgroundColor3=D.RedDark;Stroke(row,D.Red,1.5,0)
-        else row.BackgroundColor3=D.CardHover;Stroke(row,D.Border,1,0.5) end
-        local bar=Instance.new("Frame",row);bar.Size=UDim2.new(0,3,0.55,0);bar.Position=UDim2.new(0,0,0.225,0);bar.BackgroundColor3=isRare and D.Red or D.Cyan;bar.BorderSizePixel=0;Corner(bar,2)
-        local nL=Instance.new("TextLabel",row);nL.Position=UDim2.new(0,12,0,0);nL.Size=UDim2.new(1,-70,1,0);nL.BackgroundTransparency=1;nL.Text=name;nL.TextColor3=isRare and D.Red or D.TextHi;nL.TextSize=12;nL.Font=Enum.Font.GothamBold;nL.TextXAlignment=Enum.TextXAlignment.Left;nL.TextTruncate=Enum.TextTruncate.AtEnd
-        local aL=Instance.new("TextLabel",row);aL.Position=UDim2.new(1,-62,0,0);aL.Size=UDim2.new(0,56,1,0);aL.BackgroundTransparency=1;aL.Text="×"..tostring(amt);aL.TextColor3=isRare and D.Red or D.Cyan;aL.TextSize=13;aL.Font=Enum.Font.GothamBold;aL.TextXAlignment=Enum.TextXAlignment.Right
+    for name,amt in pairs(S.SessTotals) do
+        total=total+amt; count=count+1
+        local isRare=K.RARE[name]==true
+        local row=Instance.new("Frame",H.UI.Fr.SessList); row.Size=UDim2.new(1,0,0,34); row.BorderSizePixel=0; Corner(row,7)
+        if isRare then row.BackgroundColor3=D.RedDark; Stroke(row,D.Red,1.5,0)
+        else row.BackgroundColor3=D.CardHover; Stroke(row,D.Border,1,0.5) end
+        local bar=Instance.new("Frame",row); bar.Size=UDim2.new(0,3,0.55,0); bar.Position=UDim2.new(0,0,0.225,0); bar.BackgroundColor3=isRare and D.Red or D.Cyan; bar.BorderSizePixel=0; Corner(bar,2)
+        local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,12,0,0); nL.Size=UDim2.new(1,-70,1,0); nL.BackgroundTransparency=1; nL.Text=name; nL.TextColor3=isRare and D.Red or D.TextHi; nL.TextSize=12; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
+        local aL=Instance.new("TextLabel",row); aL.Position=UDim2.new(1,-62,0,0); aL.Size=UDim2.new(0,56,1,0); aL.BackgroundTransparency=1; aL.Text="×"..tostring(amt); aL.TextColor3=isRare and D.Red or D.Cyan; aL.TextSize=13; aL.Font=Enum.Font.GothamBold; aL.TextXAlignment=Enum.TextXAlignment.Right
     end
-    Haze.UI.Lbl.SessEmpty.Visible=(count==0)
-    Haze.UI.Lbl.SessTotal.Text="Gesamt: "..tostring(total).." Items"
-    Haze.UI.Lbl.ItemCount.Text=tostring(total).." Items"
+    H.UI.Lbl.SessEmpty.Visible=(count==0)
+    H.UI.Lbl.SessTotal.Text="Gesamt: "..tostring(total).." Items"
+    H.UI.Lbl.ItemCount.Text=tostring(total).." Items"
     if UpdateGoalsUI then pcall(UpdateGoalsUI) end
 end
 
 local sResetBtn=NeonBtn(SessPage,"🗑  Session zurücksetzen",D.Red,34)
 sResetBtn.MouseButton1Click:Connect(function()
-    local S=Haze.State
-    S.SessionTotals={};S.InfoTotals={};S.RoundCount=0;S.SessionStart=os.time()
+    S.SessTotals={}; S.InfoTotals={}; S.RoundCount=0; S.SessStart=os.time()
     for _,g in ipairs(S.Goals) do g.reached=false end
-    S.GoalsNotified={};UpdateSessionUI()
+    S.GoalsNotified={}; UpdateSessionUI()
 end)
 
 -- ============================================================
@@ -1078,48 +1070,47 @@ end)
 -- ============================================================
 MkLbl(InvPage,"🎒  Inventar",14,D.Cyan,true)
 MkLbl(InvPage,"Alphabetisch  ·  Klick = Ziel setzen",11,D.TextLow).Size=UDim2.new(1,0,0,20)
-Haze.UI.Fr.InvList=Card(InvPage);Pad(Haze.UI.Fr.InvList,6,8,6,8);VList(Haze.UI.Fr.InvList,4)
-Haze.UI.Lbl.InvEmpty=MkLbl(Haze.UI.Fr.InvList,"Lädt...",12,D.TextLow)
-Haze.UI.Lbl.InvEmpty.Size=UDim2.new(1,0,0,30);Haze.UI.Lbl.InvEmpty.TextXAlignment=Enum.TextXAlignment.Center
+H.UI.Fr.InvList=Card(InvPage); Pad(H.UI.Fr.InvList,6,8,6,8); VList(H.UI.Fr.InvList,4)
+H.UI.Lbl.InvEmpty=MkLbl(H.UI.Fr.InvList,"Inventar wird geladen...",12,D.TextLow)
+H.UI.Lbl.InvEmpty.Size=UDim2.new(1,0,0,30); H.UI.Lbl.InvEmpty.TextXAlignment=Enum.TextXAlignment.Center
 
 local function RebuildInventory()
-    for _,v in pairs(Haze.UI.Fr.InvList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
+    for _,v in pairs(H.UI.Fr.InvList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
     local folder
     pcall(function()
         folder=Svc.RS:WaitForChild("Player_Data",5)
             :WaitForChild(Svc.Player.Name,5):WaitForChild("Items",5)
     end)
     if not folder then
-        Haze.UI.Lbl.InvEmpty.Visible=true
-        Haze.UI.Lbl.InvEmpty.Text="Pfad nicht gefunden"
-        Haze.UI.Lbl.InvEmpty.TextColor3=D.Orange;return
+        H.UI.Lbl.InvEmpty.Visible=true; H.UI.Lbl.InvEmpty.Text="Pfad nicht gefunden"
+        H.UI.Lbl.InvEmpty.TextColor3=D.Orange; return
     end
     local children=folder:GetChildren()
     if #children==0 then
-        Haze.UI.Lbl.InvEmpty.Visible=true
-        Haze.UI.Lbl.InvEmpty.Text="Inventar leer"
-        Haze.UI.Lbl.InvEmpty.TextColor3=D.TextLow;return
+        H.UI.Lbl.InvEmpty.Visible=true; H.UI.Lbl.InvEmpty.Text="Inventar leer"
+        H.UI.Lbl.InvEmpty.TextColor3=D.TextLow; return
     end
-    Haze.UI.Lbl.InvEmpty.Visible=false
-    -- Alphabetisch A → Z
+    H.UI.Lbl.InvEmpty.Visible=false
+    -- ► Alphabetisch A → Z
     table.sort(children,function(a,b) return a.Name:lower()<b.Name:lower() end)
     for _,item in ipairs(children) do
         local iname,ival="",""
         pcall(function()
             iname=item.Name
             if item:IsA("StringValue") then ival=tostring(item.Value)
-            else local vc=item:FindFirstChild("Value") or item:FindFirstChild("Amount");if vc then ival=tostring(vc.Value) end end
+            else local vc=item:FindFirstChild("Value") or item:FindFirstChild("Amount"); if vc then ival=tostring(vc.Value) end end
         end)
         if iname~="" then
-            local isRare=RARE_ITEMS[iname]==true
-            local row=Instance.new("Frame",Haze.UI.Fr.InvList)
-            row.Size=UDim2.new(1,0,0,36);row.BorderSizePixel=0;Corner(row,7)
+            local isRare=K.RARE[iname]==true
+            local row=Instance.new("Frame",H.UI.Fr.InvList)
+            row.Size=UDim2.new(1,0,0,36); row.BorderSizePixel=0; Corner(row,7)
             row.BackgroundColor3=isRare and D.RedDark or D.CardHover
             Stroke(row,isRare and D.Red or D.Border,1,isRare and 0 or 0.5)
             local clickBtn=Instance.new("TextButton",row)
-            clickBtn.Size=UDim2.new(1,0,1,0);clickBtn.BackgroundTransparency=1
-            clickBtn.Text="";clickBtn.BorderSizePixel=0
+            clickBtn.Size=UDim2.new(1,0,1,0); clickBtn.BackgroundTransparency=1
+            clickBtn.Text=""; clickBtn.BorderSizePixel=0
             local cap=iname
+            -- ► Klick = Ziel in Session-Tab setzen
             clickBtn.MouseButton1Click:Connect(function()
                 SetGoalFromInventory(cap)
                 Tw(row,{BackgroundColor3=Color3.fromRGB(35,20,65)})
@@ -1127,18 +1118,18 @@ local function RebuildInventory()
             end)
             clickBtn.MouseEnter:Connect(function() Tw(row,{BackgroundColor3=isRare and Color3.fromRGB(80,18,18) or Color3.fromRGB(40,52,82)}) end)
             clickBtn.MouseLeave:Connect(function() Tw(row,{BackgroundColor3=isRare and D.RedDark or D.CardHover}) end)
-            local bar=Instance.new("Frame",row);bar.Size=UDim2.new(0,3,0.55,0);bar.Position=UDim2.new(0,0,0.225,0);bar.BackgroundColor3=isRare and D.Red or D.Purple;bar.BorderSizePixel=0;Corner(bar,2)
-            local nL=Instance.new("TextLabel",row);nL.Position=UDim2.new(0,12,0,0);nL.Size=UDim2.new(1,-90,1,0);nL.BackgroundTransparency=1;nL.Text=iname;nL.TextColor3=isRare and D.Red or D.TextHi;nL.TextSize=12;nL.Font=Enum.Font.GothamSemibold;nL.TextXAlignment=Enum.TextXAlignment.Left;nL.TextTruncate=Enum.TextTruncate.AtEnd
-            local hL=Instance.new("TextLabel",row);hL.Position=UDim2.new(1,-84,0,0);hL.Size=UDim2.new(0,78,1,0);hL.BackgroundTransparency=1;hL.TextXAlignment=Enum.TextXAlignment.Right
-            if ival~="" then hL.Text=ival.."  →";hL.TextColor3=D.Purple;hL.TextSize=11;hL.Font=Enum.Font.GothamBold
-            else hL.Text="→ Ziel";hL.TextColor3=D.TextLow;hL.TextSize=10;hL.Font=Enum.Font.Gotham end
+            local bar=Instance.new("Frame",row); bar.Size=UDim2.new(0,3,0.55,0); bar.Position=UDim2.new(0,0,0.225,0); bar.BackgroundColor3=isRare and D.Red or D.Purple; bar.BorderSizePixel=0; Corner(bar,2)
+            local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,12,0,0); nL.Size=UDim2.new(1,-90,1,0); nL.BackgroundTransparency=1; nL.Text=iname; nL.TextColor3=isRare and D.Red or D.TextHi; nL.TextSize=12; nL.Font=Enum.Font.GothamSemibold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
+            local hL=Instance.new("TextLabel",row); hL.Position=UDim2.new(1,-84,0,0); hL.Size=UDim2.new(0,78,1,0); hL.BackgroundTransparency=1; hL.TextXAlignment=Enum.TextXAlignment.Right
+            if ival~="" then hL.Text=ival.."  →"; hL.TextColor3=D.Purple; hL.TextSize=11; hL.Font=Enum.Font.GothamBold
+            else hL.Text="→ Ziel"; hL.TextColor3=D.TextLow; hL.TextSize=10; hL.Font=Enum.Font.Gotham end
         end
     end
 end
 
 local invRefBtn=NeonBtn(InvPage,"🔄  Inventar neu laden",D.CyanDim,30)
 invRefBtn.MouseButton1Click:Connect(function()
-    Haze.UI.Lbl.InvEmpty.Text="⏳ Lädt...";Haze.UI.Lbl.InvEmpty.TextColor3=D.Yellow;Haze.UI.Lbl.InvEmpty.Visible=true
+    H.UI.Lbl.InvEmpty.Text="⏳ Lädt..."; H.UI.Lbl.InvEmpty.TextColor3=D.Yellow; H.UI.Lbl.InvEmpty.Visible=true
     task.spawn(function() pcall(RebuildInventory) end)
 end)
 
@@ -1148,124 +1139,107 @@ end)
 MkLbl(SettPage,"⚙  Einstellungen",14,D.Cyan,true)
 
 -- Fenstergröße
-local szCard=Card(SettPage);Pad(szCard,10,10,10,10);VList(szCard,8);SecLbl(szCard,"FENSTERGRÖSSE")
-local szRow=Instance.new("Frame",szCard);szRow.Size=UDim2.new(1,0,0,34);szRow.BackgroundTransparency=1;HList(szRow,8)
-Haze.UI.Btn.PCBtn=Instance.new("TextButton",szRow);Haze.UI.Btn.PCBtn.Size=UDim2.new(0.48,0,0,34);Haze.UI.Btn.PCBtn.BackgroundColor3=D.CardHover;Haze.UI.Btn.PCBtn.Text="🖥  PC";Haze.UI.Btn.PCBtn.TextColor3=D.TextHi;Haze.UI.Btn.PCBtn.TextSize=12;Haze.UI.Btn.PCBtn.Font=Enum.Font.GothamBold;Haze.UI.Btn.PCBtn.AutoButtonColor=false;Haze.UI.Btn.PCBtn.BorderSizePixel=0;Corner(Haze.UI.Btn.PCBtn,7);Stroke(Haze.UI.Btn.PCBtn,D.Cyan,1,0.3)
-Haze.UI.Btn.MobBtn=Instance.new("TextButton",szRow);Haze.UI.Btn.MobBtn.Size=UDim2.new(0.48,0,0,34);Haze.UI.Btn.MobBtn.BackgroundColor3=D.CardHover;Haze.UI.Btn.MobBtn.Text="📱  Mobile";Haze.UI.Btn.MobBtn.TextColor3=D.TextHi;Haze.UI.Btn.MobBtn.TextSize=12;Haze.UI.Btn.MobBtn.Font=Enum.Font.GothamBold;Haze.UI.Btn.MobBtn.AutoButtonColor=false;Haze.UI.Btn.MobBtn.BorderSizePixel=0;Corner(Haze.UI.Btn.MobBtn,7);Stroke(Haze.UI.Btn.MobBtn,D.Border,1,0.3)
-Haze.UI.Btn.PCBtn.MouseButton1Click:Connect(function() SetGUISize("PC");Stroke(Haze.UI.Btn.PCBtn,D.Cyan,1,0.3);Stroke(Haze.UI.Btn.MobBtn,D.Border,1,0.3) end)
-Haze.UI.Btn.MobBtn.MouseButton1Click:Connect(function() SetGUISize("Mobile");Stroke(Haze.UI.Btn.MobBtn,D.Cyan,1,0.3);Stroke(Haze.UI.Btn.PCBtn,D.Border,1,0.3) end)
+local szCard=Card(SettPage); Pad(szCard,10,10,10,10); VList(szCard,8); SecLbl(szCard,"FENSTERGRÖSSE")
+local szRow=Instance.new("Frame",szCard); szRow.Size=UDim2.new(1,0,0,34); szRow.BackgroundTransparency=1; HList(szRow,8)
+H.UI.Btn.PCBtn=Instance.new("TextButton",szRow); H.UI.Btn.PCBtn.Size=UDim2.new(0.48,0,0,34); H.UI.Btn.PCBtn.BackgroundColor3=D.CardHover; H.UI.Btn.PCBtn.Text="🖥  PC"; H.UI.Btn.PCBtn.TextColor3=D.TextHi; H.UI.Btn.PCBtn.TextSize=12; H.UI.Btn.PCBtn.Font=Enum.Font.GothamBold; H.UI.Btn.PCBtn.AutoButtonColor=false; H.UI.Btn.PCBtn.BorderSizePixel=0; Corner(H.UI.Btn.PCBtn,7); Stroke(H.UI.Btn.PCBtn,D.Cyan,1,0.3)
+H.UI.Btn.MobBtn=Instance.new("TextButton",szRow); H.UI.Btn.MobBtn.Size=UDim2.new(0.48,0,0,34); H.UI.Btn.MobBtn.BackgroundColor3=D.CardHover; H.UI.Btn.MobBtn.Text="📱  Mobile"; H.UI.Btn.MobBtn.TextColor3=D.TextHi; H.UI.Btn.MobBtn.TextSize=12; H.UI.Btn.MobBtn.Font=Enum.Font.GothamBold; H.UI.Btn.MobBtn.AutoButtonColor=false; H.UI.Btn.MobBtn.BorderSizePixel=0; Corner(H.UI.Btn.MobBtn,7); Stroke(H.UI.Btn.MobBtn,D.Border,1,0.3)
+H.UI.Btn.PCBtn.MouseButton1Click:Connect(function() SetGUISize("PC"); Stroke(H.UI.Btn.PCBtn,D.Cyan,1,0.3); Stroke(H.UI.Btn.MobBtn,D.Border,1,0.3) end)
+H.UI.Btn.MobBtn.MouseButton1Click:Connect(function() SetGUISize("Mobile"); Stroke(H.UI.Btn.MobBtn,D.Cyan,1,0.3); Stroke(H.UI.Btn.PCBtn,D.Border,1,0.3) end)
 
--- Back to Lobby Button
-local lobbyCard=Card(SettPage);Pad(lobbyCard,10,10,10,10);VList(lobbyCard,8);SecLbl(lobbyCard,"LOBBY")
-local backBtn=NeonBtn(lobbyCard,"🏠  Back To Lobby",D.Orange,34)
+-- Back to Lobby
+local lobCard=Card(SettPage); Pad(lobCard,10,10,10,10); VList(lobCard,8); SecLbl(lobCard,"LOBBY")
+local backBtn=NeonBtn(lobCard,"🏠  Back To Lobby",D.Orange,34)
 backBtn.MouseButton1Click:Connect(function()
     ClickBackToLobby()
-    local lbl=MkLbl(lobbyCard,"⏳ Verbinde mit Lobby...",11,D.Yellow)
-    lbl.Size=UDim2.new(1,0,0,20)
-    task.delay(3,function() pcall(function() lbl:Destroy() end) end)
+    local fl=MkLbl(lobCard,"⏳ Verbinde mit Lobby...",11,D.Yellow); fl.Size=UDim2.new(1,0,0,20)
+    task.delay(3,function() pcall(function() fl:Destroy() end) end)
 end)
 
 -- Keybind
-local kbCard=Card(SettPage);Pad(kbCard,10,10,10,10);VList(kbCard,8);SecLbl(kbCard,"GUI KEYBIND")
-local kbRow2=Instance.new("Frame",kbCard);kbRow2.Size=UDim2.new(1,0,0,34);kbRow2.BackgroundTransparency=1;HList(kbRow2,8)
-MkLbl(kbRow2,"Toggle-Taste:",12,D.TextMid).Size=UDim2.new(0.52,0,1,0)
-Haze.UI.Btn.KeyBtn=Instance.new("TextButton",kbRow2)
-Haze.UI.Btn.KeyBtn.Size=UDim2.new(0.46,0,0,34);Haze.UI.Btn.KeyBtn.BackgroundColor3=D.CardHover
-Haze.UI.Btn.KeyBtn.Text="[ F4 ]";Haze.UI.Btn.KeyBtn.TextColor3=D.Cyan
-Haze.UI.Btn.KeyBtn.TextSize=13;Haze.UI.Btn.KeyBtn.Font=Enum.Font.GothamBold
-Haze.UI.Btn.KeyBtn.AutoButtonColor=false;Haze.UI.Btn.KeyBtn.BorderSizePixel=0
-Corner(Haze.UI.Btn.KeyBtn,8);Stroke(Haze.UI.Btn.KeyBtn,D.Cyan,1,0.3)
+local kbCard=Card(SettPage); Pad(kbCard,10,10,10,10); VList(kbCard,8); SecLbl(kbCard,"GUI KEYBIND")
+local kbRow=Instance.new("Frame",kbCard); kbRow.Size=UDim2.new(1,0,0,34); kbRow.BackgroundTransparency=1; HList(kbRow,8)
+MkLbl(kbRow,"Toggle-Taste:",12,D.TextMid).Size=UDim2.new(0.52,0,1,0)
+H.UI.Btn.KeyBtn=Instance.new("TextButton",kbRow)
+H.UI.Btn.KeyBtn.Size=UDim2.new(0.46,0,0,34); H.UI.Btn.KeyBtn.BackgroundColor3=D.CardHover
+H.UI.Btn.KeyBtn.Text="[ F4 ]"; H.UI.Btn.KeyBtn.TextColor3=D.Cyan; H.UI.Btn.KeyBtn.TextSize=13
+H.UI.Btn.KeyBtn.Font=Enum.Font.GothamBold; H.UI.Btn.KeyBtn.AutoButtonColor=false; H.UI.Btn.KeyBtn.BorderSizePixel=0
+Corner(H.UI.Btn.KeyBtn,8); Stroke(H.UI.Btn.KeyBtn,D.Cyan,1,0.3)
 
 local function SetKeyDisplay(k)
-    Haze.UI.Btn.KeyBtn.Text="[ "..(k or "F4").." ]"
-    Haze.UI.Btn.KeyBtn.TextColor3=D.Cyan;Stroke(Haze.UI.Btn.KeyBtn,D.Cyan,1,0.3)
+    H.UI.Btn.KeyBtn.Text="[ "..(k or "F4").." ]"; H.UI.Btn.KeyBtn.TextColor3=D.Cyan
+    Stroke(H.UI.Btn.KeyBtn,D.Cyan,1,0.3)
 end
-
-Haze.UI.Btn.KeyBtn.MouseButton1Click:Connect(function()
-    local S=Haze.State
-    if S.ListeningKey then return end
-    S.ListeningKey=true
-    Haze.UI.Btn.KeyBtn.Text="⌨ Taste drücken...";Haze.UI.Btn.KeyBtn.TextColor3=D.Yellow
-    Stroke(Haze.UI.Btn.KeyBtn,D.Yellow,1.5,0)
-    task.spawn(function()
-        while S.ListeningKey do
-            Tw(Haze.UI.Btn.KeyBtn,{BackgroundColor3=Color3.fromRGB(58,52,8)});task.wait(0.4)
-            if S.ListeningKey then Tw(Haze.UI.Btn.KeyBtn,{BackgroundColor3=D.CardHover});task.wait(0.4) end
-        end
-    end)
+H.UI.Btn.KeyBtn.MouseButton1Click:Connect(function()
+    if S.KeyListening then return end
+    S.KeyListening=true
+    H.UI.Btn.KeyBtn.Text="⌨ Taste drücken..."; H.UI.Btn.KeyBtn.TextColor3=D.Yellow; Stroke(H.UI.Btn.KeyBtn,D.Yellow,1.5,0)
+    task.spawn(function() while S.KeyListening do Tw(H.UI.Btn.KeyBtn,{BackgroundColor3=Color3.fromRGB(58,52,8)}); task.wait(0.4); if S.KeyListening then Tw(H.UI.Btn.KeyBtn,{BackgroundColor3=D.CardHover}); task.wait(0.4) end end end)
     S.KeyConn=Svc.Input.InputBegan:Connect(function(inp,_)
         if inp.UserInputType~=Enum.UserInputType.Keyboard then return end
         for _,k in ipairs({Enum.KeyCode.LeftShift,Enum.KeyCode.RightShift,Enum.KeyCode.LeftControl,Enum.KeyCode.RightControl,Enum.KeyCode.LeftAlt,Enum.KeyCode.RightAlt}) do
             if inp.KeyCode==k then return end
         end
-        S.ListeningKey=false
-        if S.KeyConn then S.KeyConn:Disconnect() end;S.KeyConn=nil
-        Haze.Config.ToggleKey=inp.KeyCode.Name;SaveConfig();SetKeyDisplay(Haze.Config.ToggleKey)
-        Tw(Haze.UI.Btn.KeyBtn,{BackgroundColor3=D.CardHover});Stroke(Haze.UI.Btn.KeyBtn,D.Green,2,0)
-        task.delay(0.8,function() Stroke(Haze.UI.Btn.KeyBtn,D.Cyan,1,0.3) end)
+        S.KeyListening=false; if S.KeyConn then S.KeyConn:Disconnect() end; S.KeyConn=nil
+        H.Config.ToggleKey=inp.KeyCode.Name; SaveConfig(); SetKeyDisplay(H.Config.ToggleKey)
+        Tw(H.UI.Btn.KeyBtn,{BackgroundColor3=D.CardHover}); Stroke(H.UI.Btn.KeyBtn,D.Green,2,0)
+        task.delay(0.8,function() Stroke(H.UI.Btn.KeyBtn,D.Cyan,1,0.3) end)
     end)
 end)
 MkLbl(kbCard,"Klicke, dann drücke die gewünschte Taste.",10,D.TextLow).Size=UDim2.new(1,0,0,14)
 
 -- Webhook
-local whCard=Card(SettPage);Pad(whCard,12,12,12,12);VList(whCard,8);SecLbl(whCard,"DISCORD WEBHOOK")
-local whOuter,whBox=MkInput(whCard,"https://discord.com/api/webhooks/...")
-whOuter.Size=UDim2.new(1,0,0,36);Haze.UI.Inp.Webhook=whBox
-local wLine=Instance.new("Frame",whOuter);wLine.Size=UDim2.new(0,0,0,2);wLine.Position=UDim2.new(0,0,1,-2);wLine.BackgroundColor3=D.Cyan;wLine.BorderSizePixel=0;Corner(wLine,2)
-whBox.Focused:Connect(function() Stroke(whOuter,D.Cyan,1,0.2);Tw(wLine,{Size=UDim2.new(1,0,0,2)},TM) end)
-whBox.FocusLost:Connect(function() Haze.Config.WebhookURL=whBox.Text;SaveConfig();Stroke(whOuter,D.Border,1,0.2);Tw(wLine,{Size=UDim2.new(0,0,0,2)},TM) end)
+local whCard=Card(SettPage); Pad(whCard,12,12,12,12); VList(whCard,8); SecLbl(whCard,"DISCORD WEBHOOK")
+local whOuter,whBox=MkInput(whCard,"https://discord.com/api/webhooks/..."); whOuter.Size=UDim2.new(1,0,0,36)
+H.UI.Inp.Webhook=whBox
+local wLine=Instance.new("Frame",whOuter); wLine.Size=UDim2.new(0,0,0,2); wLine.Position=UDim2.new(0,0,1,-2); wLine.BackgroundColor3=D.Cyan; wLine.BorderSizePixel=0; Corner(wLine,2)
+whBox.Focused:Connect(function() Stroke(whOuter,D.Cyan,1,0.2); Tw(wLine,{Size=UDim2.new(1,0,0,2)},TM) end)
+whBox.FocusLost:Connect(function() H.Config.WebhookURL=whBox.Text; SaveConfig(); Stroke(whOuter,D.Border,1,0.2); Tw(wLine,{Size=UDim2.new(0,0,0,2)},TM) end)
 local wTestBtn=NeonBtn(whCard,"📤  Test senden",D.CyanDim,34)
 wTestBtn.MouseButton1Click:Connect(function() SendWebhook({},nil,nil) end)
 
 -- Unload
 local unloadBtn=NeonBtn(SettPage,"⏏  GUI vollständig entladen",D.Red,34)
 unloadBtn.MouseButton1Click:Connect(function()
-    Haze.State.Running=false;Haze.State.WebhookEnabled=false
-    if Haze.State.ChildAddedConn then pcall(function() Haze.State.ChildAddedConn:Disconnect() end) end
+    S.Running=false; S.WhEnabled=false
+    if S.ChildConn then pcall(function() S.ChildConn:Disconnect() end) end
+    if _G.HazeShared and _G.HazeShared.StopFarm then pcall(_G.HazeShared.StopFarm) end
     pcall(function() ScreenGui:Destroy() end)
-    pcall(function() Haze.UI.Fr.MiniBtn:Destroy() end)
-    -- Externes Modul stoppen
-    if _G.HazeShared and _G.HazeShared.StopFarm then
-        pcall(_G.HazeShared.StopFarm)
-    end
+    pcall(function() H.UI.Fr.MiniBtn:Destroy() end)
 end)
 
 -- ============================================================
---  MOBILE BUTTON  (links-mitte: 0,10,0.5,-25)
+--  MOBILE BUTTON  (Position: links-mitte 0,10,0.5,-25)
 -- ============================================================
-Haze.UI.Fr.MiniBtn=Instance.new("TextButton",ScreenGui)
-Haze.UI.Fr.MiniBtn.Name="MiniBtn"
-Haze.UI.Fr.MiniBtn.Size=UDim2.new(0,50,0,50)
-Haze.UI.Fr.MiniBtn.Position=UDim2.new(0,10,0.5,-25)
-Haze.UI.Fr.MiniBtn.AnchorPoint=Vector2.new(0,0)
-Haze.UI.Fr.MiniBtn.BackgroundColor3=Color3.fromRGB(0,26,50)
-Haze.UI.Fr.MiniBtn.BackgroundTransparency=0.10
-Haze.UI.Fr.MiniBtn.Text="";Haze.UI.Fr.MiniBtn.AutoButtonColor=false;Haze.UI.Fr.MiniBtn.BorderSizePixel=0
-Corner(Haze.UI.Fr.MiniBtn,99)
-local MBRing=Instance.new("Frame",Haze.UI.Fr.MiniBtn)
-MBRing.Size=UDim2.new(1,8,1,8);MBRing.Position=UDim2.new(0,-4,0,-4)
-MBRing.BackgroundTransparency=1;MBRing.BorderSizePixel=0;Corner(MBRing,99);Stroke(MBRing,D.Cyan,1.5,0.4)
-local MBGrad=Instance.new("UIGradient",Haze.UI.Fr.MiniBtn)
-MBGrad.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(0,52,105)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,16,44))});MBGrad.Rotation=135
-BuildLogo(Haze.UI.Fr.MiniBtn,22,14,14)
-Haze.UI.Fr.MiniBtn.MouseEnter:Connect(function() Tw(Haze.UI.Fr.MiniBtn,{BackgroundTransparency=0},TM);Stroke(MBRing,D.Cyan,2,0) end)
-Haze.UI.Fr.MiniBtn.MouseLeave:Connect(function() Tw(Haze.UI.Fr.MiniBtn,{BackgroundTransparency=0.10},TM);Stroke(MBRing,D.Cyan,1.5,0.4) end)
-Haze.UI.Fr.MiniBtn.MouseButton1Down:Connect(function() Tw(Haze.UI.Fr.MiniBtn,{Size=UDim2.new(0,44,0,44)},TF) end)
-Haze.UI.Fr.MiniBtn.MouseButton1Up:Connect(function() Tw(Haze.UI.Fr.MiniBtn,{Size=UDim2.new(0,50,0,50)},TF) end)
-Haze.UI.Fr.MiniBtn.MouseButton1Click:Connect(function()
-    Haze.State.GuiVisible=not Haze.State.GuiVisible
-    Haze.UI.Fr.Main.Visible=Haze.State.GuiVisible
+H.UI.Fr.MiniBtn=Instance.new("TextButton",ScreenGui)
+H.UI.Fr.MiniBtn.Name="MiniBtn"
+H.UI.Fr.MiniBtn.Size=UDim2.new(0,50,0,50)
+H.UI.Fr.MiniBtn.Position=UDim2.new(0,10,0.5,-25)
+H.UI.Fr.MiniBtn.AnchorPoint=Vector2.new(0,0)
+H.UI.Fr.MiniBtn.BackgroundColor3=Color3.fromRGB(0,26,50)
+H.UI.Fr.MiniBtn.BackgroundTransparency=0.10
+H.UI.Fr.MiniBtn.Text=""; H.UI.Fr.MiniBtn.AutoButtonColor=false; H.UI.Fr.MiniBtn.BorderSizePixel=0
+Corner(H.UI.Fr.MiniBtn,99)
+local MBRing=Instance.new("Frame",H.UI.Fr.MiniBtn)
+MBRing.Size=UDim2.new(1,8,1,8); MBRing.Position=UDim2.new(0,-4,0,-4)
+MBRing.BackgroundTransparency=1; MBRing.BorderSizePixel=0; Corner(MBRing,99); Stroke(MBRing,D.Cyan,1.5,0.4)
+local MBGrad=Instance.new("UIGradient",H.UI.Fr.MiniBtn)
+MBGrad.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(0,52,105)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,16,44))}); MBGrad.Rotation=135
+BuildLogo(H.UI.Fr.MiniBtn,22,14,14)
+H.UI.Fr.MiniBtn.MouseEnter:Connect(function() Tw(H.UI.Fr.MiniBtn,{BackgroundTransparency=0},TM); Stroke(MBRing,D.Cyan,2,0) end)
+H.UI.Fr.MiniBtn.MouseLeave:Connect(function() Tw(H.UI.Fr.MiniBtn,{BackgroundTransparency=0.10},TM); Stroke(MBRing,D.Cyan,1.5,0.4) end)
+H.UI.Fr.MiniBtn.MouseButton1Down:Connect(function() Tw(H.UI.Fr.MiniBtn,{Size=UDim2.new(0,44,0,44)},TF) end)
+H.UI.Fr.MiniBtn.MouseButton1Up:Connect(function() Tw(H.UI.Fr.MiniBtn,{Size=UDim2.new(0,50,0,50)},TF) end)
+H.UI.Fr.MiniBtn.MouseButton1Click:Connect(function()
+    S.GuiVisible=not S.GuiVisible; H.UI.Fr.Main.Visible=S.GuiVisible
 end)
-MakeDraggable(Haze.UI.Fr.MiniBtn,Haze.UI.Fr.MiniBtn)
-MakeDraggable(Haze.UI.Fr.Main,Haze.UI.Fr.Main)
+MakeDraggable(H.UI.Fr.MiniBtn,H.UI.Fr.MiniBtn)
+MakeDraggable(H.UI.Fr.Main,H.UI.Fr.Main)
 
 Svc.Input.InputBegan:Connect(function(inp,processed)
-    if processed then return end
-    if Haze.State.ListeningKey then return end
+    if processed then return end; if S.KeyListening then return end
     if inp.UserInputType==Enum.UserInputType.Keyboard then
-        if inp.KeyCode.Name==Haze.Config.ToggleKey then
-            Haze.State.GuiVisible=not Haze.State.GuiVisible
-            Haze.UI.Fr.Main.Visible=Haze.State.GuiVisible
+        if inp.KeyCode.Name==H.Config.ToggleKey then
+            S.GuiVisible=not S.GuiVisible; H.UI.Fr.Main.Visible=S.GuiVisible
         end
     end
 end)
@@ -1275,9 +1249,8 @@ end)
 -- ============================================================
 if R.Remote then
     R.Remote.OnClientEvent:Connect(function(cat,data)
-        local S=Haze.State
         if cat=="GameEnded_TextAnimation" and data=="Won" then
-            if Haze.Config.AutoRetry then FireVoteRetry() end;return
+            if H.Config.AutoRetry then FireVoteRetry() end; return
         end
         if cat=="Rewards - Items" then
             S.RoundCount=S.RoundCount+1
@@ -1285,84 +1258,71 @@ if R.Remote then
                 if typeof(item)=="Instance" then
                     local v=item:FindFirstChild("Amount") or item:FindFirstChild("Value")
                     local amt=v and tonumber(v.Value) or 1
-                    if INFO_ITEMS[item.Name] then S.InfoTotals[item.Name]=(S.InfoTotals[item.Name] or 0)+amt
-                    else S.SessionTotals[item.Name]=(S.SessionTotals[item.Name] or 0)+amt end
+                    if K.INFO[item.Name] then S.InfoTotals[item.Name]=(S.InfoTotals[item.Name] or 0)+amt
+                    else S.SessTotals[item.Name]=(S.SessTotals[item.Name] or 0)+amt end
                 end
             end
-            UpdateSessionUI();CheckAllGoals();SendWebhook(data,nil,nil)
+            UpdateSessionUI(); CheckAllGoals(); SendWebhook(data,nil,nil)
         end
     end)
 end
 
 ScreenGui.AncestryChanged:Connect(function()
-    if not ScreenGui.Parent then Haze.State.WebhookEnabled=false end
+    if not ScreenGui.Parent then S.WhEnabled=false end
 end)
 
 -- ============================================================
---  _G.HazeShared  –  Brücke zum externen Modul
+--  _G.HazeShared vollständig befüllen
+--  (Externes Modul greift hier drauf zu)
 -- ============================================================
-_G.HazeShared = {
-    -- UI-Referenzen
-    Main        = Haze.UI.Fr.Main,
-    Container   = Haze.UI.Fr.AutofarmInjection,
+_G.HazeShared.Config             = H.Config
+_G.HazeShared.State              = S
+_G.HazeShared.PR                 = PR
+_G.HazeShared.FireCreateAndStart = FireCreateAndStart
+_G.HazeShared.FireVoteRetry      = FireVoteRetry
+_G.HazeShared.GetInvAmt          = GetInvAmt
+_G.HazeShared.IsInLobby          = IsInLobby
+_G.HazeShared.ClickBackToLobby   = ClickBackToLobby
+_G.HazeShared.SaveConfig         = SaveConfig
+_G.HazeShared.SendWebhook        = SendWebhook
+_G.HazeShared.UpdateSessionUI    = function() if UpdateSessionUI then pcall(UpdateSessionUI) end end
+_G.HazeShared.UpdateGoalsUI      = function() if UpdateGoalsUI   then pcall(UpdateGoalsUI)   end end
+_G.HazeShared.GetWorldData       = function() return S.WorldData end
+_G.HazeShared.GetWorldIds        = function() return S.WorldIds  end
+_G.HazeShared.IsScanDone         = function() return S.ScanDone  end
+_G.HazeShared.D                  = D
+_G.HazeShared.TF                 = TF; _G.HazeShared.TM=TM; _G.HazeShared.Tw=Tw
+_G.HazeShared.Svc                = Svc
+_G.HazeShared.Card               = Card;    _G.HazeShared.NeonBtn=NeonBtn
+_G.HazeShared.MkLbl              = MkLbl;   _G.HazeShared.SecLbl=SecLbl
+_G.HazeShared.MkInput            = MkInput; _G.HazeShared.VList=VList
+_G.HazeShared.HList              = HList;   _G.HazeShared.Pad=Pad
+_G.HazeShared.Corner             = Corner;  _G.HazeShared.Stroke=Stroke
+_G.HazeShared.StopFarm           = nil    -- externes Modul setzt seine Stop-Fn ein
 
-    -- Daten-Referenzen (live – externe Änderungen wirken sofort)
-    Config      = Haze.Config,
-    State       = Haze.State,
-
-    -- Remotes & Hilfsfunktionen für das externe Modul
-    PR                  = PR,
-    FireCreateAndStart  = FireCreateAndStart,
-    FireVoteRetry       = FireVoteRetry,
-    GetInvAmt           = GetInvAmt,
-    IsInLobby           = IsInLobby,
-    ClickBackToLobby    = ClickBackToLobby,
-    SaveConfig          = SaveConfig,
-    SendWebhook         = SendWebhook,
-    UpdateSessionUI     = function() if UpdateSessionUI then pcall(UpdateSessionUI) end end,
-    UpdateGoalsUI       = function() if UpdateGoalsUI then pcall(UpdateGoalsUI) end end,
-
-    -- World-Scan-Daten (read-only)
-    GetWorldData  = function() return Haze.State.WorldData end,
-    GetWorldIds   = function() return Haze.State.WorldIds  end,
-    IsScanDone    = function() return Haze.State.ScanDone  end,
-
-    -- Design-Tokens (damit das externe Modul gleich aussieht)
-    D   = D,
-    TF  = TF,
-    TM  = TM,
-    Tw  = Tw,
-    Svc = Svc,
-
-    -- UI-Factory-Funktionen
-    Card    = Card,
-    NeonBtn = NeonBtn,
-    MkLbl   = MkLbl,
-    SecLbl  = SecLbl,
-    MkInput = MkInput,
-    VList   = VList,
-    HList   = HList,
-    Pad     = Pad,
-    Corner  = Corner,
-    Stroke  = Stroke,
-
-    -- Callback: Externes Modul setzt dies auf seine Stop-Funktion
-    StopFarm = nil,
-}
+-- ModulStatus Callback (wird von autofarm.lua aufgerufen)
+_G.HazeShared.SetModuleLoaded = function(version)
+    pcall(function()
+        _G.HazeShared.Version = version or "1.0.0"
+        _G.HazeShared.Status  = "Geladen"
+        H.UI.Lbl.ModulStatus.Text="🟢  Autofarm-Modul v".._G.HazeShared.Version.." erfolgreich geladen!"
+        H.UI.Lbl.ModulStatus.TextColor3=D.Green
+    end)
+end
 
 -- ============================================================
 --  STARTUP
 -- ============================================================
 LoadConfig()
-if not Haze.Config.ToggleKey  then Haze.Config.ToggleKey="F4"   end
-if Haze.Config.AutoRetry==nil then Haze.Config.AutoRetry=false   end
-if not Haze.Config.WebhookURL then Haze.Config.WebhookURL=""     end
-if not Haze.Config.UISize     then Haze.Config.UISize="PC"       end
+if not H.Config.ToggleKey  then H.Config.ToggleKey="F4"   end
+if H.Config.AutoRetry==nil then H.Config.AutoRetry=false   end
+if not H.Config.WebhookURL then H.Config.WebhookURL=""     end
+if not H.Config.UISize     then H.Config.UISize="PC"       end
 
-SetKeyDisplay(Haze.Config.ToggleKey)
+SetKeyDisplay(H.Config.ToggleKey)
 UpdateAutoRetryUI()
-SetGUISize(Haze.Config.UISize)
-Haze.UI.Inp.Webhook.Text=Haze.Config.WebhookURL
+SetGUISize(H.Config.UISize)
+H.UI.Inp.Webhook.Text=H.Config.WebhookURL
 
 SelectTab("Game")
 UpdateSessionUI()
@@ -1377,33 +1337,42 @@ task.spawn(function()
     if f then
         ScanChapterFolder(f)
         pcall(function()
-            Haze.UI.Lbl.ScanStatus.Text="✅ "..#Haze.State.WorldIds.." Welten"
-            Haze.UI.Lbl.ScanStatus.TextColor3=D.Green
+            H.UI.Lbl.ScanStatus.Text="✅ "..#S.WorldIds.." Welten"
+            H.UI.Lbl.ScanStatus.TextColor3=D.Green
         end)
-        Haze.State.ChildAddedConn=f.ChildAdded:Connect(function()
-            task.wait(0.5);ScanChapterFolder(f)
+        S.ChildConn=f.ChildAdded:Connect(function()
+            task.wait(0.5); ScanChapterFolder(f)
             pcall(function()
-                Haze.UI.Lbl.ScanStatus.Text="✅ "..#Haze.State.WorldIds.." Welten"
-                Haze.UI.Lbl.ScanStatus.TextColor3=D.Green
+                H.UI.Lbl.ScanStatus.Text="✅ "..#S.WorldIds.." Welten"
+                H.UI.Lbl.ScanStatus.TextColor3=D.Green
             end)
             pcall(RebuildWorldList)
         end)
     else
         ApplyFallback()
         pcall(function()
-            Haze.UI.Lbl.ScanStatus.Text="⚠ Fallback-Daten"
-            Haze.UI.Lbl.ScanStatus.TextColor3=D.Orange
+            H.UI.Lbl.ScanStatus.Text="⚠ Fallback-Daten"
+            H.UI.Lbl.ScanStatus.TextColor3=D.Orange
         end)
     end
     pcall(RebuildWorldList)
 end)
 
 -- ============================================================
---  EXTERNES MODUL LADEN  (trage deinen GitHub Raw-Link ein)
+--  EXTERNES MODUL LADEN  (sicherer Loader mit Status-Update)
 -- ============================================================
 task.spawn(function()
-    task.wait(1)   -- kurz warten bis _G.HazeShared gesetzt ist
-    pcall(function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/autofarm.lua"))()
+    task.wait(1)  -- sicherstellen dass _G.HazeShared vollständig gesetzt ist
+    local ok, err = pcall(function()
+        loadstring(game:HttpGet(
+            "https://raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/autofarm.lua"
+        ))()
     end)
+    if not ok then
+        pcall(function()
+            H.UI.Lbl.ModulStatus.Text="🔴  Modul-Fehler: "..(tostring(err):sub(1,60))
+            H.UI.Lbl.ModulStatus.TextColor3=D.Red
+        end)
+        warn("[HazeHUB] Autofarm-Modul Fehler:", err)
+    end
 end)
