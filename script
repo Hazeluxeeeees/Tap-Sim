@@ -1,203 +1,888 @@
-local HttpService = game:GetService("HttpService")
-local UserInputService = game:GetService("UserInputService")
-local VirtualUser = game:GetService("VirtualUser")
-local Player = game:GetService("Players").LocalPlayer
+-- ╔══════════════════════════════════════════════════════════╗
+--  HazeHUB V9
+--  FIX: Dynamische Welten (WaitForChild, Modus-Kategorien)
+--  FIX: Inventory-Tab mit Klick-zu-Ziel
+--  FIX: Mobile Button links-mitte
+--  FIX: Auto-Retry 1s Delay
+--  NEU: Session-Timer im Header
+--  NEU: Schwierigkeit NUR bei Story sichtbar
+-- ╚══════════════════════════════════════════════════════════╝
+
+local HttpService       = game:GetService("HttpService")
+local UserInputService  = game:GetService("UserInputService")
+local VirtualUser       = game:GetService("VirtualUser")
+local Player            = game:GetService("Players").LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
 
--- === CONFIG & DATA ===
+-- ============================================================
+--  GUI PARENT – Volt-sicherer Fallback
+-- ============================================================
+local guiParent = Player.PlayerGui
+pcall(function()
+    local cg = game:GetService("CoreGui")
+    local tf = Instance.new("Frame", cg); tf:Destroy()
+    guiParent = cg
+end)
+
+-- ============================================================
+--  CONFIG & DATA
+-- ============================================================
 local folderName = "HazeHUB"
-local saveFile = folderName .. "/HazeHUB_AutoSave.json"
-local Config = { 
-    WebhookURL = "", 
-    UISize = "PC"
+local saveFile   = folderName .. "/HazeHUB_AutoSave.json"
+local Config = {
+    WebhookURL = "",
+    UISize     = "PC",
+    ToggleKey  = "F4",
+    AutoRetry  = false,
+    GoalItem   = "",
+    GoalAmount = 0,
 }
-local SessionTotals = {} 
-local roundCount = 0
+local SessionTotals = {}
+local InfoTotals    = {}
+local roundCount    = 0
+local goalReached   = false
+local sessionStart  = os.time()   -- Session-Timer
 
-local Remote = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Client"):WaitForChild("UI"):WaitForChild("GameEndedUI")
+local INFO_ITEMS = { Exp = true, Gems = true, Gold = true }
+local RARE_ITEMS = { ["Legendary Stone"] = true, ["Mythic Egg"] = true }
+
+-- Modus-Namen → wie der Remote-Wert aufgebaut ist
+-- Der Ordner in Chapter heißt z.B. "OnePiece", "JJK", "Naruto"
+-- Wir hängen den Modus als Suffix an: "OnePiece_Story_Chapter1" usw.
+-- Diese Tabelle mappt Anzeige-Namen auf interne Basis-IDs
+local WORLD_DISPLAY = {
+    ["OnePiece"]    = "Voocha Village",
+    ["Namek"]       = "Green Planet",
+    ["Naruto"]      = "Leaf Village",
+    ["TokyoGhoul"]  = "Ghoul City",
+    ["SAO"]         = "Virtual Sword",
+    ["JJK"]         = "Tokyo City",
+}
+
+-- Modus-Definitionen mit ihren Remote-Werten
+-- Format: { label, suffix, color }
+local MODES = {
+    { id = "Story",    label = "📖 Story",    color = Color3.fromRGB(0,200,255),  suffix = "_Chapter1" },
+    { id = "Ranger",   label = "🏹 Ranger",   color = Color3.fromRGB(0,220,120),  suffix = "_Ranger1"  },
+    { id = "Calamity", label = "⚡ Calamity", color = Color3.fromRGB(255,145,30), suffix = "_Calamity1"},
+    { id = "Raid",     label = "💀 Raid",     color = Color3.fromRGB(215,50,50),  suffix = "_Raid1"    },
+}
+
+local selectedMode   = "Story"   -- aktuell gewählter Modus
+
+-- ============================================================
+--  VERBINDUNGS-TRACKING
+-- ============================================================
+local Connections = {}
+local function Track(c) table.insert(Connections, c); return c end
+local function DisconnectAll()
+    for _, c in ipairs(Connections) do pcall(function() c:Disconnect() end) end
+    Connections = {}
+end
+
+-- ============================================================
+--  REMOTES
+-- ============================================================
+local Remote = nil
+pcall(function()
+    Remote = ReplicatedStorage
+        :WaitForChild("Remote", 10):WaitForChild("Client", 10)
+        :WaitForChild("UI", 10):WaitForChild("GameEndedUI", 10)
+end)
+
+local VoteRetryRemote = nil
+pcall(function()
+    VoteRetryRemote = ReplicatedStorage
+        :WaitForChild("Remote",10):WaitForChild("Server",10)
+        :WaitForChild("OnGame",10):WaitForChild("Voting",10)
+        :WaitForChild("VoteRetry",10)
+end)
+
+local PlayRoomRemote = nil
+pcall(function()
+    PlayRoomRemote = ReplicatedStorage
+        :WaitForChild("Remote",10):WaitForChild("Server",10)
+        :WaitForChild("PlayRoom",10):WaitForChild("Event",10)
+end)
 
 if makefolder then pcall(function() makefolder(folderName) end) end
 
--- === SPEICHER FUNKTION ===
 local function SaveConfig()
-    if writefile then
-        pcall(function()
-            writefile(saveFile, HttpService:JSONEncode(Config))
-        end)
-    end
+    if writefile then pcall(function() writefile(saveFile, HttpService:JSONEncode(Config)) end) end
 end
 
--- === ANTI-AFK (SIMULIERTER LEERTASTEN-DRUCK) ===
+-- FIX: 1 Sekunde warten bevor VoteRetry gefeuert wird
+local function FireVoteRetry()
+    task.spawn(function()
+        task.wait(1)
+        pcall(function()
+            if VoteRetryRemote then VoteRetryRemote:FireServer()
+            else ReplicatedStorage.Remote.Server.OnGame.Voting.VoteRetry:FireServer() end
+        end)
+    end)
+end
+
+local function FireChangeChapter(chapterId)
+    pcall(function()
+        if PlayRoomRemote then
+            PlayRoomRemote:FireServer(table.unpack({ [1]="Change-Chapter", [2]={["Chapter"]=chapterId} }))
+        end
+    end)
+end
+
+local function FireChangeDifficulty(diff)
+    pcall(function()
+        if PlayRoomRemote then
+            PlayRoomRemote:FireServer(table.unpack({ [1]="Change-Difficulty", [2]={["Difficulty"]=diff} }))
+        end
+    end)
+end
+
+-- ============================================================
+--  ANTI-AFK
+-- ============================================================
 task.spawn(function()
     while true do
         task.wait(60)
         pcall(function()
-            -- Simuliert den Druck der Leertaste über VirtualUser
             VirtualUser:CaptureController()
-            
-            -- Erster Sprung
-            VirtualUser:SetKeyDown(" ")
-            task.wait(0.1)
-            VirtualUser:SetKeyUp(" ")
-            
-            task.wait(0.4) -- Kurze Pause für den Doppelsprung
-            
-            -- Zweiter Sprung
-            VirtualUser:SetKeyDown(" ")
-            task.wait(0.1)
-            VirtualUser:SetKeyUp(" ")
+            VirtualUser:SetKeyDown(" "); task.wait(0.1); VirtualUser:SetKeyUp(" ")
+            task.wait(0.4)
+            VirtualUser:SetKeyDown(" "); task.wait(0.1); VirtualUser:SetKeyUp(" ")
         end)
     end
 end)
 
--- === DRAG FUNKTION ===
-local function MakeDraggable(frame, handle)
-    local dragging, dragInput, dragStart, startPos
-    handle.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true; dragStart = input.Position; startPos = frame.Position
-            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
-        end
-    end)
-    handle.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end end)
-    UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging then
-            local delta = input.Position - dragStart
-            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-        end
-    end)
+-- ============================================================
+--  SESSION TIMER (läuft im Hintergrund, aktualisiert Label)
+-- ============================================================
+local sessionTimerLbl = nil   -- wird nach UI-Build gesetzt
+local function FormatDuration(secs)
+    local h = math.floor(secs / 3600)
+    local m = math.floor((secs % 3600) / 60)
+    local s = secs % 60
+    if h > 0 then return string.format("%dh %02dm %02ds", h, m, s)
+    else return string.format("%dm %02ds", m, s) end
 end
-
--- === WEBHOOK LOGIK ===
-local function SendWebhook(rewardTable)
-    if not Config.WebhookURL or Config.WebhookURL == "" or not Config.WebhookURL:find("discord.com") then return end
-    
-    local fields = {}
-    table.insert(fields, {["name"] = "👤 Spieler", ["value"] = "```" .. Player.Name .. "```", ["inline"] = true})
-    table.insert(fields, {["name"] = "🎮 Modus", ["value"] = "```" .. Config.UISize .. "```", ["inline"] = true})
-
-    local roundLoot = ""
-    for _, item in pairs(rewardTable) do
-        if typeof(item) == "Instance" then
-            local v = item:FindFirstChild("Amount") or item:FindFirstChild("Value")
-            roundLoot = roundLoot .. string.format("🎁 **%s**: %d\n", item.Name, v and tonumber(v.Value) or 1)
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if sessionTimerLbl then
+            pcall(function()
+                sessionTimerLbl.Text = "⏱  " .. FormatDuration(os.time() - sessionStart)
+            end)
         end
     end
-    table.insert(fields, {["name"] = "─── Runde #"..roundCount.." ───", ["value"] = roundLoot ~= "" and roundLoot or "Kein Loot", ["inline"] = false})
-    
-    local totalLoot = ""
-    for name, total in pairs(SessionTotals) do
-        totalLoot = totalLoot .. string.format("📊 **%s**: %d\n", name, total)
-    end
-    table.insert(fields, {["name"] = "─── Session Gesamt ───", ["value"] = totalLoot ~= "" and totalLoot or "Nichts", ["inline"] = false})
+end)
 
-    task.spawn(function()
-        pcall(function()
-            (request or http_request or syn.request)({
-                Url = Config.WebhookURL:gsub("discord.com", "webhook.lewisakura.moe"),
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = HttpService:JSONEncode({
-                    embeds = {{
-                        title = "🏆 Hazeluxe Bericht: " .. Player.Name,
-                        color = 65535,
-                        fields = fields,
-                        footer = {text = "V15 • Anti AFK • " .. os.date("%X")}
-                    }}
-                })
-            })
-        end)
+-- ============================================================
+--  DESIGN TOKENS
+-- ============================================================
+local D = {
+    BG          = Color3.fromRGB(13,  15,  25),
+    Sidebar     = Color3.fromRGB(9,   11,  20),
+    Card        = Color3.fromRGB(22,  28,  48),
+    CardHover   = Color3.fromRGB(30,  38,  62),
+    Input       = Color3.fromRGB(16,  20,  36),
+    TabActive   = Color3.fromRGB(18,  26,  50),
+    TabInactive = Color3.fromRGB(14,  18,  34),
+    Cyan        = Color3.fromRGB(0,   200, 255),
+    CyanDim     = Color3.fromRGB(0,   110, 160),
+    Green       = Color3.fromRGB(0,   220, 120),
+    GreenDark   = Color3.fromRGB(0,    55,  28),
+    Red         = Color3.fromRGB(215,  50,  50),
+    RedDark     = Color3.fromRGB(60,   10,  10),
+    Yellow      = Color3.fromRGB(255, 210,   0),
+    Orange      = Color3.fromRGB(255, 145,  30),
+    Purple      = Color3.fromRGB(180,  80, 255),
+    TextHi      = Color3.fromRGB(235, 245, 255),
+    TextMid     = Color3.fromRGB(155, 175, 215),
+    TextLow     = Color3.fromRGB(80,  100, 148),
+    Border      = Color3.fromRGB(40,   55,  95),
+    BorderCyan  = Color3.fromRGB(0,   150, 200),
+}
+
+-- ============================================================
+--  UTILITIES
+-- ============================================================
+local function Corner(p,r) local c=Instance.new("UICorner",p); c.CornerRadius=UDim.new(0,r or 10); return c end
+local function Stroke(p,color,thick,trans)
+    local old=p:FindFirstChildOfClass("UIStroke"); if old then old:Destroy() end
+    local s=Instance.new("UIStroke",p); s.Color=color or D.Border; s.Thickness=thick or 1; s.Transparency=trans or 0; return s
+end
+local function Pad(p,pt,pr,pb,pl)
+    local u=Instance.new("UIPadding",p)
+    u.PaddingTop=UDim.new(0,pt or 6); u.PaddingRight=UDim.new(0,pr or 6)
+    u.PaddingBottom=UDim.new(0,pb or 6); u.PaddingLeft=UDim.new(0,pl or 6)
+end
+local function VList(p,pad)
+    local l=Instance.new("UIListLayout",p); l.FillDirection=Enum.FillDirection.Vertical
+    l.HorizontalAlignment=Enum.HorizontalAlignment.Left; l.Padding=UDim.new(0,pad or 6); l.SortOrder=Enum.SortOrder.LayoutOrder; return l
+end
+local function HList(p,pad)
+    local l=Instance.new("UIListLayout",p); l.FillDirection=Enum.FillDirection.Horizontal
+    l.VerticalAlignment=Enum.VerticalAlignment.Center; l.Padding=UDim.new(0,pad or 6); l.SortOrder=Enum.SortOrder.LayoutOrder; return l
+end
+local function MkLabel(parent,text,size,color,bold,xalign)
+    local l=Instance.new("TextLabel",parent); l.BackgroundTransparency=1; l.Text=text or ""; l.TextSize=size or 13
+    l.TextColor3=color or D.TextHi; l.Font=bold and Enum.Font.GothamBold or Enum.Font.GothamSemibold
+    l.TextXAlignment=xalign or Enum.TextXAlignment.Left; l.TextWrapped=true; l.Size=UDim2.new(1,0,0,(size or 13)+8); return l
+end
+local function SectionLabel(parent,text) local l=MkLabel(parent,text,10,D.TextLow,true); l.Size=UDim2.new(1,0,0,14); return l end
+local function Card(parent,fixedHeight)
+    local f=Instance.new("Frame",parent); f.BackgroundColor3=D.Card; f.BackgroundTransparency=0; f.BorderSizePixel=0
+    if fixedHeight then f.Size=UDim2.new(1,0,0,fixedHeight) else f.Size=UDim2.new(1,0,0,0); f.AutomaticSize=Enum.AutomaticSize.Y end
+    Corner(f,9); Stroke(f,D.Border,1,0.3); return f
+end
+local TI_fast=TweenInfo.new(0.15,Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+local TI_mid =TweenInfo.new(0.25,Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+local function Tween(obj,props,ti) TweenService:Create(obj,ti or TI_fast,props):Play() end
+local function NeonBtn(parent,text,accent,height)
+    local acc=accent or D.Cyan; local b=Instance.new("TextButton",parent)
+    b.Size=UDim2.new(1,0,0,height or 34); b.BackgroundColor3=D.CardHover; b.BackgroundTransparency=0
+    b.Text=text; b.TextColor3=acc; b.TextSize=13; b.Font=Enum.Font.GothamBold; b.AutoButtonColor=false; b.BorderSizePixel=0
+    Corner(b,8); Stroke(b,acc,1,0.4)
+    local function ct(f) return Color3.fromRGB(math.clamp(math.floor(acc.R*255*f),0,255),math.clamp(math.floor(acc.G*255*f),0,255),math.clamp(math.floor(acc.B*255*f),0,255)) end
+    Track(b.MouseEnter:Connect(function() Tween(b,{BackgroundColor3=ct(0.25)}) end))
+    Track(b.MouseLeave:Connect(function() Tween(b,{BackgroundColor3=D.CardHover}) end))
+    Track(b.MouseButton1Down:Connect(function() Tween(b,{BackgroundColor3=ct(0.40)}) end))
+    Track(b.MouseButton1Up:Connect(function() Tween(b,{BackgroundColor3=ct(0.25)}) end))
+    return b
+end
+
+-- ============================================================
+--  DRAG
+-- ============================================================
+local function MakeDraggable(frame,handle)
+    local dragging,dragInput,dragStart,startPos
+    Track(handle.InputBegan:Connect(function(input)
+        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+            dragging=true; dragStart=input.Position; startPos=frame.Position
+            input.Changed:Connect(function() if input.UserInputState==Enum.UserInputState.End then dragging=false end end)
+        end
+    end))
+    Track(handle.InputChanged:Connect(function(input)
+        if input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch then dragInput=input end
+    end))
+    Track(UserInputService.InputChanged:Connect(function(input)
+        if input==dragInput and dragging then
+            local d=input.Position-dragStart
+            frame.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y)
+        end
+    end))
+end
+
+-- ============================================================
+--  LOGO
+-- ============================================================
+local function BuildLogo(parent,lgSize,lgX,lgY)
+    lgSize=lgSize or 32
+    local lgRoot=Instance.new("Frame",parent); lgRoot.Size=UDim2.new(0,lgSize,0,lgSize); lgRoot.AnchorPoint=Vector2.new(0,0); lgRoot.Position=UDim2.new(0,lgX or 0,0,lgY or 0); lgRoot.BackgroundTransparency=1; lgRoot.BorderSizePixel=0
+    local lgRing=Instance.new("Frame",lgRoot); lgRing.Size=UDim2.new(1,0,1,0); lgRing.BackgroundTransparency=1; lgRing.BorderSizePixel=0; Corner(lgRing,99); Stroke(lgRing,D.Cyan,1.5,0.35)
+    local lgBg=Instance.new("Frame",lgRoot); lgBg.Size=UDim2.new(0.84,0,0.84,0); lgBg.Position=UDim2.new(0.08,0,0.08,0); lgBg.BackgroundColor3=Color3.fromRGB(0,15,38); lgBg.BackgroundTransparency=0.08; lgBg.BorderSizePixel=0; Corner(lgBg,99)
+    local lgBgG=Instance.new("UIGradient",lgBg); lgBgG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(0,38,85)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,8,28))}); lgBgG.Rotation=135
+    local lgTk=math.max(2,math.floor(lgSize*0.18)); local lgBH=math.floor(lgSize*0.75); local lgBY=math.floor((lgSize-lgBH)/2); local lgBXL=math.floor(lgSize*0.18); local lgBXR=lgSize-lgBXL-lgTk
+    local function lgGS() return ColorSequence.new({ColorSequenceKeypoint.new(0,D.Cyan),ColorSequenceKeypoint.new(0.5,D.Green),ColorSequenceKeypoint.new(1,D.Cyan)}) end
+    local lgBL=Instance.new("Frame",lgRoot); lgBL.Size=UDim2.new(0,lgTk,0,lgBH); lgBL.Position=UDim2.new(0,lgBXL,0,lgBY); lgBL.BackgroundColor3=D.Cyan; lgBL.BorderSizePixel=0; Corner(lgBL,2); local lgGGL=Instance.new("UIGradient",lgBL); lgGGL.Color=lgGS(); lgGGL.Rotation=90
+    local lgBR=Instance.new("Frame",lgRoot); lgBR.Size=UDim2.new(0,lgTk,0,lgBH); lgBR.Position=UDim2.new(0,lgBXR,0,lgBY); lgBR.BackgroundColor3=D.Cyan; lgBR.BorderSizePixel=0; Corner(lgBR,2); local lgGGR=Instance.new("UIGradient",lgBR); lgGGR.Color=lgGS(); lgGGR.Rotation=90
+    local lgCH=math.max(2,math.floor(lgSize*0.14)); local lgCW=lgBXR-lgBXL-lgTk; local lgCY=lgBY+math.floor((lgBH-lgCH)/2)
+    local lgBC=Instance.new("Frame",lgRoot); lgBC.Size=UDim2.new(0,lgCW,0,lgCH); lgBC.Position=UDim2.new(0,lgBXL+lgTk,0,lgCY); lgBC.BackgroundColor3=D.Cyan; lgBC.BorderSizePixel=0; Corner(lgBC,2); local lgGGC=Instance.new("UIGradient",lgBC); lgGGC.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,D.Green),ColorSequenceKeypoint.new(1,D.Cyan)})
+    local lgDS=lgCH+2; local lgDot=Instance.new("Frame",lgRoot); lgDot.Size=UDim2.new(0,lgDS,0,lgDS); lgDot.Position=UDim2.new(0,lgBXL+lgTk+math.floor(lgCW/2)-math.floor(lgDS/2),0,lgCY-1); lgDot.BackgroundColor3=Color3.new(1,1,1); lgDot.BackgroundTransparency=0.15; lgDot.BorderSizePixel=0; Corner(lgDot,99)
+    task.spawn(function() while lgRoot.Parent do Tween(lgDot,{BackgroundTransparency=0.7},TI_mid); task.wait(0.85); Tween(lgDot,{BackgroundTransparency=0.1},TI_mid); task.wait(0.85) end end)
+    return lgRoot
+end
+
+-- ============================================================
+--  SCREEN GUI
+-- ============================================================
+local ScreenGui=Instance.new("ScreenGui"); ScreenGui.Name="HazeHUB_v9"; ScreenGui.ResetOnSpawn=false; ScreenGui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; ScreenGui.DisplayOrder=999; ScreenGui.IgnoreGuiInset=true; ScreenGui.Parent=guiParent
+
+-- ============================================================
+--  MAIN FRAME
+-- ============================================================
+local Main=Instance.new("Frame",ScreenGui); Main.Name="Main"; Main.Size=UDim2.new(0,540,0,380); Main.Position=UDim2.new(0.5,-270,0.5,-190); Main.BackgroundColor3=D.BG; Main.BackgroundTransparency=0.06; Main.BorderSizePixel=0; Corner(Main,12); Stroke(Main,D.BorderCyan,1.5,0.45)
+local GlowOvr=Instance.new("Frame",Main); GlowOvr.Size=UDim2.new(1,0,0.45,0); GlowOvr.BackgroundColor3=D.Cyan; GlowOvr.BackgroundTransparency=0.94; GlowOvr.BorderSizePixel=0; Corner(GlowOvr,12); local goG=Instance.new("UIGradient",GlowOvr); goG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(0,180,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,0,0))}); goG.Rotation=90
+
+-- ============================================================
+--  SIDEBAR
+-- ============================================================
+local Sidebar=Instance.new("Frame",Main); Sidebar.Name="Sidebar"; Sidebar.BackgroundColor3=D.Sidebar; Sidebar.BackgroundTransparency=0.04; Sidebar.BorderSizePixel=0; Corner(Sidebar,10)
+local SideDiv=Instance.new("Frame",Sidebar); SideDiv.Size=UDim2.new(0,1,1,0); SideDiv.Position=UDim2.new(1,-1,0,0); SideDiv.BackgroundColor3=D.BorderCyan; SideDiv.BackgroundTransparency=0.55; SideDiv.BorderSizePixel=0
+local SideStripe=Instance.new("Frame",Sidebar); SideStripe.Size=UDim2.new(0,2,0.65,0); SideStripe.Position=UDim2.new(0,0,0.175,0); SideStripe.BackgroundColor3=D.Cyan; SideStripe.BorderSizePixel=0; Corner(SideStripe,2); local sgG=Instance.new("UIGradient",SideStripe); sgG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,D.Cyan),ColorSequenceKeypoint.new(0.5,D.Green),ColorSequenceKeypoint.new(1,D.Cyan)}); sgG.Rotation=90
+local SideLogoFrame=Instance.new("Frame",Sidebar); SideLogoFrame.Size=UDim2.new(1,0,0,46); SideLogoFrame.Position=UDim2.new(0,0,0,2); SideLogoFrame.BackgroundTransparency=1
+local sLogo=BuildLogo(SideLogoFrame,32,0,7); sLogo.AnchorPoint=Vector2.new(0.5,0); sLogo.Position=UDim2.new(0.5,0,0,7)
+local TabHolder=Instance.new("Frame",Sidebar); TabHolder.Position=UDim2.new(0,0,0,52); TabHolder.Size=UDim2.new(1,0,1,-56); TabHolder.BackgroundTransparency=1; VList(TabHolder,3); Pad(TabHolder,3,5,3,5)
+
+-- ============================================================
+--  CONTENT
+-- ============================================================
+local Content=Instance.new("Frame",Main); Content.Name="Content"; Content.BackgroundTransparency=1
+
+-- ============================================================
+--  TAB SYSTEM  (5 Tabs: Game, Misc, Session, Inventory, Settings)
+-- ============================================================
+local Pages={}; local TabBtns={}; local activePage=nil
+local function SelectTab(page,btn)
+    for _,p in pairs(Pages) do p.Visible=false end
+    for _,b in pairs(TabBtns) do b.BackgroundColor3=D.TabInactive; b.TextColor3=D.TextMid; local s=b:FindFirstChildOfClass("UIStroke"); if s then s.Transparency=1 end end
+    page.Visible=true; activePage=page; btn.BackgroundColor3=D.TabActive; btn.TextColor3=D.Cyan
+    local s=btn:FindFirstChildOfClass("UIStroke"); if s then s.Transparency=0 end
+end
+local TAB_LIST={
+    {name="Game",      icon="🎮"},
+    {name="Misc",      icon="🔧"},
+    {name="Session",   icon="📊"},
+    {name="Inventory", icon="🎒"},
+    {name="Settings",  icon="⚙"},
+}
+local function CreateTab(def)
+    local B=Instance.new("TextButton",TabHolder); B.Size=UDim2.new(1,0,0,30); B.BackgroundColor3=D.TabInactive; B.BackgroundTransparency=0; B.Text=def.icon.."  "..def.name; B.TextColor3=D.TextMid; B.TextSize=10; B.Font=Enum.Font.GothamSemibold; B.AutoButtonColor=false; B.BorderSizePixel=0; Corner(B,7); Stroke(B,D.Cyan,1,1)
+    Track(B.MouseEnter:Connect(function() if activePage~=Pages[def.name] then Tween(B,{BackgroundColor3=D.CardHover}) end end))
+    Track(B.MouseLeave:Connect(function() if activePage~=Pages[def.name] then Tween(B,{BackgroundColor3=D.TabInactive}) end end))
+    local P=Instance.new("ScrollingFrame",Content); P.Name=def.name; P.Size=UDim2.new(1,0,1,0); P.Visible=false; P.BackgroundTransparency=1; P.ScrollBarThickness=3; P.ScrollBarImageColor3=D.CyanDim; P.AutomaticCanvasSize=Enum.AutomaticSize.Y; P.BorderSizePixel=0; VList(P,8); Pad(P,10,10,10,10)
+    Pages[def.name]=P; table.insert(TabBtns,B); Track(B.MouseButton1Click:Connect(function() SelectTab(P,B) end)); return P,B
+end
+local GamePage,      GameBtn  = CreateTab(TAB_LIST[1])
+local MiscPage,      MiscBtn  = CreateTab(TAB_LIST[2])
+local SessPage,      SessBtn  = CreateTab(TAB_LIST[3])
+local InvPage,       InvBtn   = CreateTab(TAB_LIST[4])
+local SettPage,      SettBtn  = CreateTab(TAB_LIST[5])
+
+-- ============================================================
+--  ===  GAME TAB  ===
+-- ============================================================
+MkLabel(GamePage,"🎮  Game",14,D.Cyan,true)
+
+-- Auto-Retry
+local arCard=Card(GamePage); Pad(arCard,12,12,12,12); VList(arCard,10); SectionLabel(arCard,"AUTO-RETRY")
+local arDesc=MkLabel(arCard,"Feuert 'VoteRetry' 1 Sek. nach 'GameEnded / Won'.",11,D.TextMid); arDesc.Size=UDim2.new(1,0,0,22)
+local arRow=Instance.new("Frame",arCard); arRow.Size=UDim2.new(1,0,0,36); arRow.BackgroundTransparency=1; HList(arRow,10)
+local arStatusLbl=Instance.new("TextLabel",arRow); arStatusLbl.Size=UDim2.new(0.55,0,1,0); arStatusLbl.BackgroundTransparency=1; arStatusLbl.Text="Auto Retry:  AUS"; arStatusLbl.TextColor3=D.TextMid; arStatusLbl.TextSize=13; arStatusLbl.Font=Enum.Font.GothamBold; arStatusLbl.TextXAlignment=Enum.TextXAlignment.Left
+local arToggleBtn=Instance.new("TextButton",arRow); arToggleBtn.Size=UDim2.new(0.42,0,0,32); arToggleBtn.BackgroundColor3=D.CardHover; arToggleBtn.BackgroundTransparency=0; arToggleBtn.Text="⬜  AUS"; arToggleBtn.TextColor3=D.TextLow; arToggleBtn.TextSize=12; arToggleBtn.Font=Enum.Font.GothamBold; arToggleBtn.AutoButtonColor=false; arToggleBtn.BorderSizePixel=0; Corner(arToggleBtn,8); Stroke(arToggleBtn,D.TextLow,1,0.4)
+local function UpdateAutoRetryUI()
+    if Config.AutoRetry then arToggleBtn.Text="✅  AN"; arToggleBtn.TextColor3=D.Green; arStatusLbl.Text="Auto Retry:  AN"; arStatusLbl.TextColor3=D.Green; Stroke(arToggleBtn,D.Green,1.5,0); Tween(arToggleBtn,{BackgroundColor3=D.GreenDark})
+    else arToggleBtn.Text="⬜  AUS"; arToggleBtn.TextColor3=D.TextLow; arStatusLbl.Text="Auto Retry:  AUS"; arStatusLbl.TextColor3=D.TextMid; Stroke(arToggleBtn,D.TextLow,1,0.4); Tween(arToggleBtn,{BackgroundColor3=D.CardHover}) end
+end
+Track(arToggleBtn.MouseButton1Click:Connect(function() Config.AutoRetry=not Config.AutoRetry; SaveConfig(); UpdateAutoRetryUI() end))
+
+-- ── WELT-AUSWAHL ─────────────────────────────────────────────
+local worldCard=Card(GamePage); Pad(worldCard,10,10,10,10); VList(worldCard,8)
+SectionLabel(worldCard,"WELT-AUSWAHL")
+local worldStatusLbl=MkLabel(worldCard,"⏳  Lade Welten...",11,D.TextLow); worldStatusLbl.Size=UDim2.new(1,0,0,16)
+
+-- Modus-Buttons (Story / Ranger / Calamity / Raid)
+SectionLabel(worldCard,"SPIELMODUS").Size=UDim2.new(1,0,0,14)
+local modeRow=Instance.new("Frame",worldCard); modeRow.Size=UDim2.new(1,0,0,28); modeRow.BackgroundTransparency=1; HList(modeRow,4)
+local modeBtns={}
+local diffCard=nil   -- wird nach modeRow erstellt – Sichtbarkeit abhängig von Story
+for i,mode in ipairs(MODES) do
+    local mb=Instance.new("TextButton",modeRow)
+    mb.Size=UDim2.new(0.24,0,0,26); mb.BackgroundColor3=D.CardHover; mb.BackgroundTransparency=0
+    mb.Text=mode.label; mb.TextColor3=mode.color; mb.TextSize=10; mb.Font=Enum.Font.GothamBold
+    mb.AutoButtonColor=false; mb.BorderSizePixel=0; Corner(mb,7); Stroke(mb,mode.color,1,0.5)
+    Track(mb.MouseButton1Click:Connect(function()
+        selectedMode=mode.id
+        -- Highlight
+        for _,b in pairs(modeBtns) do Tween(b,{BackgroundColor3=D.CardHover}); local bs=b:FindFirstChildOfClass("UIStroke"); if bs then bs.Transparency=0.5 end end
+        Tween(mb,{BackgroundColor3=Color3.fromRGB(math.clamp(math.floor(mode.color.R*255*0.2),0,255),math.clamp(math.floor(mode.color.G*255*0.2),0,255),math.clamp(math.floor(mode.color.B*255*0.2),0,255))})
+        local mbs=mb:FindFirstChildOfClass("UIStroke"); if mbs then mbs.Transparency=0 end
+        -- Schwierigkeit NUR bei Story anzeigen
+        if diffCard then diffCard.Visible=(selectedMode=="Story") end
+        -- Welt-Buttons neu aufbauen für neuen Modus
+        task.spawn(function() pcall(RebuildWorldButtons) end)
+    end))
+    modeBtns[mode.id]=mb
+end
+
+-- ── Schwierigkeits-Card (NUR bei Story) ──────────────────────
+diffCard=Card(worldCard); Pad(diffCard,8,8,8,8); VList(diffCard,6); diffCard.Visible=true  -- Story ist default
+SectionLabel(diffCard,"SCHWIERIGKEIT  (nur Story)")
+local diffRow=Instance.new("Frame",diffCard); diffRow.Size=UDim2.new(1,0,0,28); diffRow.BackgroundTransparency=1; HList(diffRow,6)
+local diffColors={Normal=D.Green,Hard=D.Orange,Nightmare=D.Red}
+local diffBtns={}
+for _,diff in ipairs({"Normal","Hard","Nightmare"}) do
+    local db=Instance.new("TextButton",diffRow); db.Size=UDim2.new(0.32,0,0,26); db.BackgroundColor3=D.CardHover; db.BackgroundTransparency=0; db.Text=diff; db.TextColor3=diffColors[diff]; db.TextSize=10; db.Font=Enum.Font.GothamBold; db.AutoButtonColor=false; db.BorderSizePixel=0; Corner(db,7); Stroke(db,diffColors[diff],1,0.4)
+    Track(db.MouseButton1Click:Connect(function()
+        FireChangeDifficulty(diff)
+        for _,b in pairs(diffBtns) do Tween(b,{BackgroundColor3=D.CardHover}); local bs=b:FindFirstChildOfClass("UIStroke"); if bs then bs.Transparency=0.4 end end
+        Tween(db,{BackgroundColor3=Color3.fromRGB(math.clamp(math.floor(diffColors[diff].R*255*0.25),0,255),math.clamp(math.floor(diffColors[diff].G*255*0.25),0,255),math.clamp(math.floor(diffColors[diff].B*255*0.25),0,255))}); local dbs=db:FindFirstChildOfClass("UIStroke"); if dbs then dbs.Transparency=0 end
+    end)); diffBtns[diff]=db
+end
+
+-- ── Welt-Buttons Container ────────────────────────────────────
+local worldBtnFrame=Instance.new("Frame",worldCard); worldBtnFrame.Size=UDim2.new(1,0,0,0); worldBtnFrame.AutomaticSize=Enum.AutomaticSize.Y; worldBtnFrame.BackgroundTransparency=1; VList(worldBtnFrame,4)
+
+local function CreateWorldButton(displayName, chapterId)
+    if not worldBtnFrame then return end
+    local wb=Instance.new("TextButton",worldBtnFrame); wb.Size=UDim2.new(1,0,0,30); wb.BackgroundColor3=D.CardHover; wb.BackgroundTransparency=0; wb.Text="🌍  "..displayName; wb.TextColor3=D.TextHi; wb.TextSize=12; wb.Font=Enum.Font.GothamSemibold; wb.AutoButtonColor=false; wb.BorderSizePixel=0; Corner(wb,7); Stroke(wb,D.Border,1,0.4)
+    Track(wb.MouseButton1Click:Connect(function()
+        FireChangeChapter(chapterId)
+        worldStatusLbl.Text="✅  "..displayName; worldStatusLbl.TextColor3=D.Cyan
+        for _,b in pairs(worldBtnFrame:GetChildren()) do if b:IsA("TextButton") then Tween(b,{BackgroundColor3=D.CardHover}); local bs=b:FindFirstChildOfClass("UIStroke"); if bs then bs.Color=D.Border; bs.Transparency=0.4 end end end
+        Tween(wb,{BackgroundColor3=Color3.fromRGB(0,35,60)}); Stroke(wb,D.Cyan,1.5,0)
+    end)); return wb
+end
+
+-- ── Dynamische Welten laden ───────────────────────────────────
+function RebuildWorldButtons()
+    if not worldBtnFrame then return end
+    for _,v in pairs(worldBtnFrame:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
+
+    -- FIX: WaitForChild mit pcall für sicheres Laden
+    local chapterFolder=nil
+    pcall(function()
+        chapterFolder = Player:WaitForChild("PlayerGui",5)
+            :WaitForChild("PlayRoom",5)
+            :WaitForChild("Main",5)
+            :WaitForChild("GameStage",5)
+            :WaitForChild("Main",5)
+            :WaitForChild("Base",5)
+            :WaitForChild("Chapter",5)
     end)
+
+    if not chapterFolder then
+        -- Fallback: hardcoded
+        worldStatusLbl.Text="⚠  Fallback (PlayRoom nicht geladen)"; worldStatusLbl.TextColor3=D.Orange
+        local fallback={["OnePiece"]="Voocha Village",["Namek"]="Green Planet",["Naruto"]="Leaf Village",["TokyoGhoul"]="Ghoul City",["SAO"]="Virtual Sword",["JJK"]="Tokyo City"}
+        for rawN,dispN in pairs(fallback) do
+            local modeEntry=nil; for _,m in ipairs(MODES) do if m.id==selectedMode then modeEntry=m; break end end
+            local suffix=modeEntry and modeEntry.suffix or "_Chapter1"
+            CreateWorldButton(dispN..(selectedMode~="Story" and " ["..selectedMode.."]" or ""), rawN..suffix)
+        end
+        return
+    end
+
+    local children=chapterFolder:GetChildren()
+    if #children==0 then worldStatusLbl.Text="⚠  Keine Welten gefunden"; worldStatusLbl.TextColor3=D.Orange; return end
+
+    -- Finde den korrekten Modus-Suffix
+    local modeEntry=nil
+    for _,m in ipairs(MODES) do if m.id==selectedMode then modeEntry=m; break end end
+    local suffix=modeEntry and modeEntry.suffix or "_Chapter1"
+
+    local loaded=0
+    for _,child in ipairs(children) do
+        local rawName=child.Name   -- z.B. "OnePiece", "JJK"
+        local displayName=(WORLD_DISPLAY[rawName] or rawName)
+        local modeLabel=selectedMode~="Story" and " ["..selectedMode.."]" or ""
+        local chapterId=rawName..suffix   -- z.B. "OnePiece_Chapter1" oder "JJK_Ranger1"
+        CreateWorldButton(displayName..modeLabel, chapterId)
+        loaded=loaded+1
+    end
+    worldStatusLbl.Text=string.format("✅  %d Welten  |  Modus: %s", loaded, selectedMode); worldStatusLbl.TextColor3=D.Green
 end
 
--- === UI BUILDER ===
-local ScreenGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
-local Main = Instance.new("Frame", ScreenGui); Main.BackgroundColor3 = Color3.fromRGB(20, 20, 20); Main.BackgroundTransparency = 0.1; Instance.new("UICorner", Main)
-local Sidebar = Instance.new("Frame", Main); Sidebar.BackgroundColor3 = Color3.fromRGB(10, 10, 10); Sidebar.BackgroundTransparency = 0.1; Instance.new("UICorner", Sidebar)
-local Content = Instance.new("Frame", Main); Content.BackgroundTransparency = 1
+local refreshWorldBtn=NeonBtn(worldCard,"🔄  Welten neu laden",D.CyanDim,26)
+Track(refreshWorldBtn.MouseButton1Click:Connect(function() worldStatusLbl.Text="⏳  Lade..."; worldStatusLbl.TextColor3=D.Yellow; task.spawn(function() pcall(RebuildWorldButtons) end) end))
 
-local MiniBtn = Instance.new("TextButton", ScreenGui); MiniBtn.Size = UDim2.new(0, 45, 0, 45); MiniBtn.Position = UDim2.new(0, 10, 0.5, 0); MiniBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 255); MiniBtn.Text = "G"; MiniBtn.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", MiniBtn).CornerRadius = UDim.new(1, 0)
+-- ============================================================
+--  ===  MISC TAB  ===
+-- ============================================================
+MkLabel(MiscPage,"🔧  Misc",14,D.Cyan,true)
+local afkCard=Card(MiscPage,50); Pad(afkCard,0,14,0,14); local afkRow2=Instance.new("Frame",afkCard); afkRow2.Size=UDim2.new(1,0,1,0); afkRow2.BackgroundTransparency=1
+local afkDot=Instance.new("Frame",afkRow2); afkDot.Size=UDim2.new(0,10,0,10); afkDot.Position=UDim2.new(0,0,0.5,-5); afkDot.BackgroundColor3=D.Green; afkDot.BorderSizePixel=0; Corner(afkDot,99)
+local afkLbl=Instance.new("TextLabel",afkRow2); afkLbl.Position=UDim2.new(0,18,0,0); afkLbl.Size=UDim2.new(1,-18,1,0); afkLbl.BackgroundTransparency=1; afkLbl.Text="Anti-AFK  —  Aktiv"; afkLbl.TextColor3=D.Green; afkLbl.TextSize=13; afkLbl.Font=Enum.Font.GothamBold; afkLbl.TextXAlignment=Enum.TextXAlignment.Left
+task.spawn(function() while ScreenGui.Parent do Tween(afkDot,{BackgroundTransparency=0.65},TI_mid); task.wait(1.1); Tween(afkDot,{BackgroundTransparency=0},TI_mid); task.wait(1.1) end end)
+local afkInfo=Card(MiscPage); Pad(afkInfo,10,12,10,12); VList(afkInfo,4); SectionLabel(afkInfo,"ANTI-AFK  INFO"); local afkTxt=MkLabel(afkInfo,"Simuliert alle 60 Sek. einen Doppelsprung.",11,D.TextMid); afkTxt.Size=UDim2.new(1,0,0,22)
 
-MakeDraggable(Main, Main); MakeDraggable(MiniBtn, MiniBtn)
+-- ============================================================
+--  ===  SESSION TAB  ===
+-- ============================================================
 
-local TabHolder = Instance.new("Frame", Sidebar); TabHolder.Position = UDim2.new(0.1, 0, 0.1, 0); TabHolder.Size = UDim2.new(0.8, 0, 0.8, 0); TabHolder.BackgroundTransparency = 1; Instance.new("UIListLayout", TabHolder).Padding = UDim.new(0, 5)
+-- Header mit Session-Timer
+local sHeaderCard=Card(SessPage,52)
+local sHRow=Instance.new("Frame",sHeaderCard); sHRow.Size=UDim2.new(1,0,0.55,0); sHRow.BackgroundTransparency=1; Pad(sHRow,0,12,0,12)
+local sRoundsLbl=Instance.new("TextLabel",sHRow); sRoundsLbl.Size=UDim2.new(0.55,0,1,0); sRoundsLbl.BackgroundTransparency=1; sRoundsLbl.Text="Runden: 0"; sRoundsLbl.TextColor3=D.Green; sRoundsLbl.TextSize=14; sRoundsLbl.Font=Enum.Font.GothamBold; sRoundsLbl.TextXAlignment=Enum.TextXAlignment.Left
+local sItemCountLbl=Instance.new("TextLabel",sHRow); sItemCountLbl.Position=UDim2.new(0.55,0,0,0); sItemCountLbl.Size=UDim2.new(0.45,0,1,0); sItemCountLbl.BackgroundTransparency=1; sItemCountLbl.Text="0 Items"; sItemCountLbl.TextColor3=D.TextMid; sItemCountLbl.TextSize=12; sItemCountLbl.Font=Enum.Font.GothamSemibold; sItemCountLbl.TextXAlignment=Enum.TextXAlignment.Right
 
-local activePage = nil
-local function CreateTab(name)
-    local B = Instance.new("TextButton", TabHolder); B.Size = UDim2.new(1, 0, 0, 32); B.Text = name; B.BackgroundColor3 = Color3.fromRGB(35, 35, 35); B.TextColor3 = Color3.new(1,1,1); B.TextScaled = true; Instance.new("UICorner", B)
-    local P = Instance.new("ScrollingFrame", Content); P.Size = UDim2.new(1, 0, 1, 0); P.Visible = false; P.BackgroundTransparency = 1; P.ScrollBarThickness = 2; P.AutomaticCanvasSize = Enum.AutomaticSize.Y; Instance.new("UIListLayout", P).Padding = UDim.new(0, 8)
-    B.MouseButton1Click:Connect(function() if activePage then activePage.Visible = false end P.Visible = true; activePage = P end)
-    return P
+-- Session-Timer Label (NEU)
+local sTimerRow=Instance.new("Frame",sHeaderCard); sTimerRow.Size=UDim2.new(1,0,0.45,0); sTimerRow.Position=UDim2.new(0,0,0.55,0); sTimerRow.BackgroundTransparency=1; Pad(sTimerRow,0,12,0,12)
+sessionTimerLbl=Instance.new("TextLabel",sTimerRow); sessionTimerLbl.Size=UDim2.new(1,0,1,0); sessionTimerLbl.BackgroundTransparency=1; sessionTimerLbl.Text="⏱  0m 00s"; sessionTimerLbl.TextColor3=D.TextLow; sessionTimerLbl.TextSize=11; sessionTimerLbl.Font=Enum.Font.Gotham; sessionTimerLbl.TextXAlignment=Enum.TextXAlignment.Left
+
+-- Info-Items
+local infoSectCard=Card(SessPage); Pad(infoSectCard,8,10,8,10); VList(infoSectCard,5); SectionLabel(infoSectCard,"ℹ  INFO-ITEMS  (nicht gezählt)")
+local infoItemsFrame=Instance.new("Frame",infoSectCard); infoItemsFrame.Size=UDim2.new(1,0,0,0); infoItemsFrame.AutomaticSize=Enum.AutomaticSize.Y; infoItemsFrame.BackgroundTransparency=1; HList(infoItemsFrame,8)
+local infoDisplays={}
+for _,iname in ipairs({"Exp","Gems","Gold"}) do
+    local iF=Instance.new("Frame",infoItemsFrame); iF.Size=UDim2.new(0.31,0,0,44); iF.BackgroundColor3=Color3.fromRGB(12,22,40); iF.BackgroundTransparency=0; iF.BorderSizePixel=0; Corner(iF,8); Stroke(iF,D.Orange,1,0.5)
+    local iN=Instance.new("TextLabel",iF); iN.Size=UDim2.new(1,0,0.45,0); iN.BackgroundTransparency=1; iN.Text=iname; iN.TextColor3=D.Orange; iN.TextSize=10; iN.Font=Enum.Font.GothamSemibold; iN.TextXAlignment=Enum.TextXAlignment.Center
+    local iV=Instance.new("TextLabel",iF); iV.Size=UDim2.new(1,0,0.55,0); iV.Position=UDim2.new(0,0,0.45,0); iV.BackgroundTransparency=1; iV.Text="0"; iV.TextColor3=D.TextHi; iV.TextSize=14; iV.Font=Enum.Font.GothamBold; iV.TextXAlignment=Enum.TextXAlignment.Center
+    infoDisplays[iname]=iV
 end
 
-local WebPage = CreateTab("Webhook")
-local SessionPage = CreateTab("Session")
-local SettPage = CreateTab("Settings")
+-- Goal Card
+local goalCard=Card(SessPage); Pad(goalCard,10,10,10,10); VList(goalCard,8); SectionLabel(goalCard,"🎯  ITEM GOAL")
+local goalRow1=Instance.new("Frame",goalCard); goalRow1.Size=UDim2.new(1,0,0,30); goalRow1.BackgroundTransparency=1; HList(goalRow1,8)
+local goalItemOuter=Instance.new("Frame",goalRow1); goalItemOuter.Size=UDim2.new(0.58,0,0,30); goalItemOuter.BackgroundColor3=D.Input; goalItemOuter.BackgroundTransparency=0; goalItemOuter.BorderSizePixel=0; Corner(goalItemOuter,7); Stroke(goalItemOuter,D.Border,1,0.2)
+local goalItemBox=Instance.new("TextBox",goalItemOuter); goalItemBox.Size=UDim2.new(1,0,1,0); goalItemBox.BackgroundTransparency=1; goalItemBox.PlaceholderText="Item-Name..."; goalItemBox.PlaceholderColor3=D.TextLow; goalItemBox.Text=""; goalItemBox.TextColor3=D.TextHi; goalItemBox.TextSize=11; goalItemBox.Font=Enum.Font.Gotham; goalItemBox.ClearTextOnFocus=false; Pad(goalItemBox,0,8,0,8)
+local goalAmtOuter=Instance.new("Frame",goalRow1); goalAmtOuter.Size=UDim2.new(0.38,0,0,30); goalAmtOuter.BackgroundColor3=D.Input; goalAmtOuter.BackgroundTransparency=0; goalAmtOuter.BorderSizePixel=0; Corner(goalAmtOuter,7); Stroke(goalAmtOuter,D.Border,1,0.2)
+local goalAmtBox=Instance.new("TextBox",goalAmtOuter); goalAmtBox.Size=UDim2.new(1,0,1,0); goalAmtBox.BackgroundTransparency=1; goalAmtBox.PlaceholderText="Anzahl..."; goalAmtBox.PlaceholderColor3=D.TextLow; goalAmtBox.Text=""; goalAmtBox.TextColor3=D.TextHi; goalAmtBox.TextSize=11; goalAmtBox.Font=Enum.Font.Gotham; goalAmtBox.ClearTextOnFocus=false; Pad(goalAmtBox,0,8,0,8)
+local goalSetBtn=NeonBtn(goalCard,"🎯  Ziel setzen",D.Purple,28)
+local goalStatusCard=Card(goalCard,34); goalStatusCard.BackgroundColor3=Color3.fromRGB(16,12,30); Pad(goalStatusCard,0,10,0,10)
+local goalStatusLbl=Instance.new("TextLabel",goalStatusCard); goalStatusLbl.Size=UDim2.new(1,0,1,0); goalStatusLbl.BackgroundTransparency=1; goalStatusLbl.Text="Kein Ziel gesetzt"; goalStatusLbl.TextColor3=D.TextLow; goalStatusLbl.TextSize=11; goalStatusLbl.Font=Enum.Font.GothamSemibold; goalStatusLbl.TextXAlignment=Enum.TextXAlignment.Left
 
-local function AddButton(parent, text, color, func)
-    local b = Instance.new("TextButton", parent); b.Size = UDim2.new(1, -10, 0, 38); b.Text = text; b.BackgroundColor3 = color; b.TextColor3 = Color3.new(1,1,1); b.TextScaled = true; Instance.new("UICorner", b)
-    b.MouseButton1Click:Connect(func); return b
+local function UpdateGoalStatus()
+    if Config.GoalItem=="" or Config.GoalAmount<=0 then goalStatusLbl.Text="Kein Ziel gesetzt"; goalStatusLbl.TextColor3=D.TextLow; goalStatusCard.BackgroundColor3=Color3.fromRGB(16,12,30); Stroke(goalStatusCard,D.Border,1,0.4); return end
+    local cur=SessionTotals[Config.GoalItem] or InfoTotals[Config.GoalItem] or 0; local pct=math.floor((cur/Config.GoalAmount)*100)
+    if goalReached then goalStatusLbl.Text=string.format("✅  %s  %d/%d  ERREICHT!",Config.GoalItem,cur,Config.GoalAmount); goalStatusLbl.TextColor3=D.Green; goalStatusCard.BackgroundColor3=D.GreenDark; Stroke(goalStatusCard,D.Green,1.5,0)
+    else goalStatusLbl.Text=string.format("🎯  %s  |  %d/%d  (%d%%)",Config.GoalItem,cur,Config.GoalAmount,pct); goalStatusLbl.TextColor3=D.Purple; goalStatusCard.BackgroundColor3=Color3.fromRGB(18,10,36); Stroke(goalStatusCard,D.Purple,1,0.3) end
 end
+Track(goalSetBtn.MouseButton1Click:Connect(function()
+    local iname=goalItemBox.Text:match("^%s*(.-)%s*$"); local iamt=tonumber(goalAmtBox.Text)
+    if iname=="" or not iamt or iamt<=0 then return end
+    Config.GoalItem=iname; Config.GoalAmount=iamt; goalReached=false; SaveConfig(); UpdateGoalStatus()
+end))
 
--- === SESSION TAB ===
-local SessionHeader = Instance.new("TextLabel", SessionPage); SessionHeader.Size = UDim2.new(1, 0, 0, 35); SessionHeader.BackgroundTransparency = 1; SessionHeader.TextColor3 = Color3.new(0, 1, 0.7); SessionHeader.TextScaled = true; SessionHeader.Text = "Runden: 0"
-local SessionList = Instance.new("Frame", SessionPage); SessionList.Size = UDim2.new(1, -10, 0, 0); SessionList.AutomaticSize = Enum.AutomaticSize.Y; SessionList.BackgroundTransparency = 1; Instance.new("UIListLayout", SessionList).Padding = UDim.new(0, 6)
+-- Item-Liste
+local sListCard=Card(SessPage); Pad(sListCard,6,8,6,8); VList(sListCard,4)
+local sEmptyLbl=MkLabel(sListCard,"Noch keine Items gesammelt...",12,D.TextLow); sEmptyLbl.Size=UDim2.new(1,0,0,30); sEmptyLbl.TextXAlignment=Enum.TextXAlignment.Center
+local sTotalCard=Card(SessPage,34); Pad(sTotalCard,0,12,0,12); local sTotalRow=Instance.new("Frame",sTotalCard); sTotalRow.Size=UDim2.new(1,0,1,0); sTotalRow.BackgroundTransparency=1
+local sTotalLbl=MkLabel(sTotalRow,"Gesamt: 0 Items",12,D.TextMid); sTotalLbl.Size=UDim2.new(1,0,1,0); sTotalLbl.TextXAlignment=Enum.TextXAlignment.Right
+local sResetBtn=NeonBtn(SessPage,"🗑  Session zurücksetzen",D.Red,34)
+
+-- Funktion: Item aus Inventory als Ziel vorausfüllen (mit Pop-up Anzahl-Eingabe)
+local function SetGoalFromInventory(itemName)
+    -- Tab wechseln und Felder füllen
+    SelectTab(SessPage, SessBtn)
+    goalItemBox.Text = itemName
+    goalAmtBox.Text  = ""
+    -- Fokus auf Anzahl-Box
+    task.defer(function()
+        pcall(function() goalAmtBox:CaptureFocus() end)
+    end)
+    -- Visuelle Hervorhebung
+    Stroke(goalItemOuter, D.Purple, 1.5, 0)
+    task.delay(2, function() Stroke(goalItemOuter, D.Border, 1, 0.2) end)
+    Stroke(goalAmtOuter, D.Purple, 1.5, 0)
+    Tween(goalStatusCard, {BackgroundColor3 = Color3.fromRGB(28,16,50)})
+    goalStatusLbl.Text = "✏  Anzahl für '"..itemName.."' eingeben, dann Ziel setzen"
+    goalStatusLbl.TextColor3 = D.Purple
+end
 
 local function UpdateSessionUI()
-    SessionHeader.Text = "Runden gespielt: " .. roundCount
-    for _, v in pairs(SessionList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
-    for name, amt in pairs(SessionTotals) do
-        local frame = Instance.new("Frame", SessionList); frame.Size = UDim2.new(1, 0, 0, 40); frame.BackgroundColor3 = Color3.fromRGB(30, 35, 40); Instance.new("UICorner", frame)
-        local l = Instance.new("TextLabel", frame); l.Size = UDim2.new(1, -20, 1, 0); l.Position = UDim2.new(0, 10, 0, 0); l.BackgroundTransparency = 1; l.TextColor3 = Color3.new(1, 1, 1); l.TextScaled = true; l.Text = name .. ": " .. amt; l.TextXAlignment = Enum.TextXAlignment.Left
+    if not sRoundsLbl then return end
+    sRoundsLbl.Text="Runden: "..roundCount
+    for iname,lbl in pairs(infoDisplays) do lbl.Text=tostring(InfoTotals[iname] or 0) end
+    for _,v in pairs(sListCard:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
+    local total,count=0,0
+    for name,amt in pairs(SessionTotals) do
+        total=total+amt; count=count+1
+        local isRare=RARE_ITEMS[name]==true; local isGoalDone=goalReached and name==Config.GoalItem
+        local row=Instance.new("Frame",sListCard); row.Size=UDim2.new(1,0,0,36); row.BorderSizePixel=0; Corner(row,7)
+        if isGoalDone then row.BackgroundColor3=D.GreenDark; Stroke(row,D.Green,1.5,0)
+        elseif isRare then row.BackgroundColor3=D.RedDark; Stroke(row,D.Red,1.5,0)
+        else row.BackgroundColor3=D.CardHover; Stroke(row,D.Border,1,0.5) end
+        local bar=Instance.new("Frame",row); bar.Size=UDim2.new(0,3,0.55,0); bar.Position=UDim2.new(0,0,0.225,0); bar.BackgroundColor3=isRare and D.Red or (isGoalDone and D.Green or D.Cyan); bar.BorderSizePixel=0; Corner(bar,2)
+        local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,12,0,0); nL.Size=UDim2.new(1,-70,1,0); nL.BackgroundTransparency=1; nL.Text=name; nL.TextColor3=isRare and D.Red or (isGoalDone and D.Green or D.TextHi); nL.TextSize=12; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
+        if isRare then
+            local rg=Instance.new("UIGradient",nL); rg.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,60,60)),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(255,180,0)),ColorSequenceKeypoint.new(1,Color3.fromRGB(255,60,60))})
+            task.spawn(function() local off=0; while nL.Parent do off=(off+0.02)%1; rg.Offset=Vector2.new(off,0); task.wait(0.05) end end)
+        end
+        local aL=Instance.new("TextLabel",row); aL.Position=UDim2.new(1,-62,0,0); aL.Size=UDim2.new(0,56,1,0); aL.BackgroundTransparency=1; aL.Text="×"..tostring(amt); aL.TextColor3=isRare and D.Red or (isGoalDone and D.Green or D.Cyan); aL.TextSize=13; aL.Font=Enum.Font.GothamBold; aL.TextXAlignment=Enum.TextXAlignment.Right
     end
+    sEmptyLbl.Visible=(count==0); if count==0 then sEmptyLbl.Parent=sListCard end
+    sTotalLbl.Text="Gesamt: "..tostring(total).." Items"; sItemCountLbl.Text=tostring(total).." Items"
+    UpdateGoalStatus()
 end
-AddButton(SessionPage, "RESET SESSION", Color3.fromRGB(130, 20, 20), function() SessionTotals = {}; roundCount = 0; UpdateSessionUI() end)
+Track(sResetBtn.MouseButton1Click:Connect(function() SessionTotals={}; InfoTotals={}; roundCount=0; goalReached=false; sessionStart=os.time(); UpdateSessionUI() end))
 
--- === WEBHOOK TAB ===
-local WebInp = Instance.new("TextBox", WebPage); WebInp.Size = UDim2.new(1,-10,0,40); WebInp.PlaceholderText = "Webhook URL..."; WebInp.BackgroundColor3 = Color3.fromRGB(50,50,50); WebInp.TextColor3 = Color3.new(1,1,1); WebInp.TextScaled = true; Instance.new("UICorner", WebInp)
-WebInp.FocusLost:Connect(function() 
-    Config.WebhookURL = WebInp.Text 
-    SaveConfig()
-end)
-AddButton(WebPage, "TEST SENDEN", Color3.fromRGB(60, 60, 60), function() SendWebhook({}) end)
+-- ============================================================
+--  ===  INVENTORY TAB  ===
+-- ============================================================
+MkLabel(InvPage,"🎒  Inventar",14,D.Cyan,true)
 
--- === SETTINGS ===
-local function SetGUISize(mode)
-    if mode == "Mobile" then
-        Main.Size = UDim2.new(0, 357, 0, 238); Sidebar.Size = UDim2.new(0, 105, 1, 0); Content.Position = UDim2.new(0, 115, 0, 8); Content.Size = UDim2.new(1, -125, 1, -16)
-    else
-        Main.Size = UDim2.new(0, 520, 0, 340); Sidebar.Size = UDim2.new(0, 140, 1, 0); Content.Position = UDim2.new(0, 150, 0, 10); Content.Size = UDim2.new(1, -160, 1, -20)
+-- Info
+local invInfoLbl=MkLabel(InvPage,"Klicke auf ein Item um es als Ziel im Session-Tab einzutragen.",11,D.TextLow); invInfoLbl.Size=UDim2.new(1,0,0,20)
+
+-- Inventar-Liste
+local invListCard=Card(InvPage); Pad(invListCard,6,8,6,8); VList(invListCard,4)
+local invEmptyLbl=MkLabel(invListCard,"Inventar wird geladen...",12,D.TextLow); invEmptyLbl.Size=UDim2.new(1,0,0,30); invEmptyLbl.TextXAlignment=Enum.TextXAlignment.Center
+
+-- Refresh-Button
+local invRefreshBtn=NeonBtn(InvPage,"🔄  Inventar neu laden",D.CyanDim,30)
+
+local function RebuildInventoryUI()
+    -- nil-Guard
+    if not invListCard then return end
+
+    for _,v in pairs(invListCard:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
+
+    -- FIX: pcall für sicheres Laden
+    local itemsFolder=nil
+    pcall(function()
+        itemsFolder = ReplicatedStorage
+            :WaitForChild("Player_Data",5)
+            :WaitForChild(Player.Name,5)
+            :WaitForChild("Items",5)
+    end)
+
+    if not itemsFolder then
+        invEmptyLbl.Visible=true; invEmptyLbl.Parent=invListCard
+        invEmptyLbl.Text="Inventar-Pfad nicht gefunden"; invEmptyLbl.TextColor3=D.Orange
+        return
     end
-    Config.UISize = mode
-    SaveConfig()
-end
-AddButton(SettPage, "PC MODUS", Color3.fromRGB(50,50,50), function() SetGUISize("PC") end)
-AddButton(SettPage, "MOBILE MODUS", Color3.fromRGB(50,50,50), function() SetGUISize("Mobile") end)
-AddButton(SettPage, "UNLOAD GUI", Color3.fromRGB(150, 50, 50), function() ScreenGui:Destroy() end)
 
--- === EVENTS ===
-Remote.OnClientEvent:Connect(function(cat, data)
-    if cat == "Rewards - Items" then 
-        roundCount = roundCount + 1
-        for _, item in pairs(data) do
-            if typeof(item) == "Instance" then
-                local v = item:FindFirstChild("Amount") or item:FindFirstChild("Value")
-                SessionTotals[item.Name] = (SessionTotals[item.Name] or 0) + (v and tonumber(v.Value) or 1)
+    local children=itemsFolder:GetChildren()
+    if #children==0 then
+        invEmptyLbl.Visible=true; invEmptyLbl.Parent=invListCard
+        invEmptyLbl.Text="Inventar ist leer"; invEmptyLbl.TextColor3=D.TextLow
+        return
+    end
+    invEmptyLbl.Visible=false
+
+    for _,item in ipairs(children) do
+        local itemName, itemValue = "", ""
+        pcall(function()
+            if item:IsA("StringValue") then
+                itemName=item.Name; itemValue=tostring(item.Value)
+            else
+                itemName=item.Name
+                local vc=item:FindFirstChild("Value") or item:FindFirstChild("Amount")
+                if vc then itemValue=tostring(vc.Value) end
+            end
+        end)
+
+        if itemName ~= "" then
+            local isRare=RARE_ITEMS[itemName]==true
+            local row=Instance.new("Frame",invListCard); row.Size=UDim2.new(1,0,0,36); row.BorderSizePixel=0; Corner(row,7)
+            row.BackgroundColor3=isRare and D.RedDark or D.CardHover
+            Stroke(row,isRare and D.Red or D.Border,1,isRare and 0 or 0.5)
+
+            -- Klick-Target-Button (unsichtbar, füllt ganze Row)
+            local clickBtn=Instance.new("TextButton",row); clickBtn.Size=UDim2.new(1,0,1,0); clickBtn.BackgroundTransparency=1; clickBtn.Text=""; clickBtn.BorderSizePixel=0
+            local capturedName=itemName
+            Track(clickBtn.MouseButton1Click:Connect(function()
+                -- Item als Ziel vorausfüllen
+                SetGoalFromInventory(capturedName)
+                -- Kurzes Highlight-Flash
+                Tween(row,{BackgroundColor3=Color3.fromRGB(30,20,60)})
+                task.delay(0.3,function() Tween(row,{BackgroundColor3=isRare and D.RedDark or D.CardHover}) end)
+            end))
+            -- Hover
+            Track(clickBtn.MouseEnter:Connect(function() Tween(row,{BackgroundColor3=isRare and Color3.fromRGB(80,15,15) or D.CardHover}) end))
+            Track(clickBtn.MouseLeave:Connect(function() Tween(row,{BackgroundColor3=isRare and D.RedDark or D.CardHover}) end))
+
+            local bar=Instance.new("Frame",row); bar.Size=UDim2.new(0,3,0.55,0); bar.Position=UDim2.new(0,0,0.225,0); bar.BackgroundColor3=isRare and D.Red or D.Purple; bar.BorderSizePixel=0; Corner(bar,2)
+            local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,12,0,0); nL.Size=UDim2.new(1,-90,1,0); nL.BackgroundTransparency=1; nL.Text=itemName; nL.TextColor3=isRare and D.Red or D.TextHi; nL.TextSize=12; nL.Font=Enum.Font.GothamSemibold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
+
+            -- "→ Ziel" Hint rechts
+            local hintL=Instance.new("TextLabel",row); hintL.Position=UDim2.new(1,-82,0,0); hintL.Size=UDim2.new(0,76,1,0); hintL.BackgroundTransparency=1; hintL.Text="→ Ziel"; hintL.TextColor3=D.TextLow; hintL.TextSize=10; hintL.Font=Enum.Font.Gotham; hintL.TextXAlignment=Enum.TextXAlignment.Right
+
+            if itemValue~="" then
+                hintL.Text=itemValue.."  →"; hintL.TextColor3=D.Purple; hintL.TextSize=11; hintL.Font=Enum.Font.GothamBold
             end
         end
-        UpdateSessionUI()
-        SendWebhook(data)
     end
-end)
-
--- === LOAD & STARTUP ===
-MiniBtn.MouseButton1Click:Connect(function() Main.Visible = not Main.Visible end)
-
-if isfile(saveFile) then
-    local success, data = pcall(function() return HttpService:JSONDecode(readfile(saveFile)) end)
-    if success then Config = data end
 end
 
+Track(invRefreshBtn.MouseButton1Click:Connect(function()
+    invEmptyLbl.Text="⏳  Lädt..."; invEmptyLbl.TextColor3=D.Yellow; invEmptyLbl.Visible=true; invEmptyLbl.Parent=invListCard
+    task.spawn(function() pcall(RebuildInventoryUI) end)
+end))
+
+-- ============================================================
+--  ===  SETTINGS TAB  ===
+-- ============================================================
+MkLabel(SettPage,"⚙  Einstellungen",14,D.Cyan,true)
+local modeCardS=Card(SettPage); Pad(modeCardS,10,10,10,10); VList(modeCardS,8); SectionLabel(modeCardS,"FENSTERGRÖSSE")
+local modeRowS=Instance.new("Frame",modeCardS); modeRowS.Size=UDim2.new(1,0,0,34); modeRowS.BackgroundTransparency=1; HList(modeRowS,8)
+local pcBtn=Instance.new("TextButton",modeRowS); pcBtn.Size=UDim2.new(0.48,0,0,34); pcBtn.BackgroundColor3=D.CardHover; pcBtn.Text="🖥  PC"; pcBtn.TextColor3=D.TextHi; pcBtn.TextSize=12; pcBtn.Font=Enum.Font.GothamBold; pcBtn.AutoButtonColor=false; pcBtn.BorderSizePixel=0; Corner(pcBtn,7); Stroke(pcBtn,D.Cyan,1,0.3)
+local mobBtn=Instance.new("TextButton",modeRowS); mobBtn.Size=UDim2.new(0.48,0,0,34); mobBtn.BackgroundColor3=D.CardHover; mobBtn.Text="📱  Mobile"; mobBtn.TextColor3=D.TextHi; mobBtn.TextSize=12; mobBtn.Font=Enum.Font.GothamBold; mobBtn.AutoButtonColor=false; mobBtn.BorderSizePixel=0; Corner(mobBtn,7); Stroke(mobBtn,D.Border,1,0.3)
+local keybindCard=Card(SettPage); Pad(keybindCard,10,10,10,10); VList(keybindCard,8); SectionLabel(keybindCard,"GUI KEYBIND")
+local kbRow=Instance.new("Frame",keybindCard); kbRow.Size=UDim2.new(1,0,0,34); kbRow.BackgroundTransparency=1; HList(kbRow,8)
+local kbInfoLbl=Instance.new("TextLabel",kbRow); kbInfoLbl.Size=UDim2.new(0.52,0,1,0); kbInfoLbl.BackgroundTransparency=1; kbInfoLbl.Text="Toggle-Taste:"; kbInfoLbl.TextColor3=D.TextMid; kbInfoLbl.TextSize=12; kbInfoLbl.Font=Enum.Font.GothamSemibold; kbInfoLbl.TextXAlignment=Enum.TextXAlignment.Left
+local kbBtn=Instance.new("TextButton",kbRow); kbBtn.Size=UDim2.new(0.46,0,0,34); kbBtn.BackgroundColor3=D.CardHover; kbBtn.Text="[ F4 ]"; kbBtn.TextColor3=D.Cyan; kbBtn.TextSize=13; kbBtn.Font=Enum.Font.GothamBold; kbBtn.AutoButtonColor=false; kbBtn.BorderSizePixel=0; Corner(kbBtn,8); Stroke(kbBtn,D.Cyan,1,0.3)
+local listeningForKey=false; local keybindConnection=nil
+local function SetKeybindDisplay(kn) kbBtn.Text="[ "..(kn or "F4").." ]"; kbBtn.TextColor3=D.Cyan; Stroke(kbBtn,D.Cyan,1,0.3) end
+Track(kbBtn.MouseButton1Click:Connect(function()
+    if listeningForKey then return end; listeningForKey=true; kbBtn.Text="⌨  Taste drücken..."; kbBtn.TextColor3=D.Yellow; Stroke(kbBtn,D.Yellow,1.5,0)
+    task.spawn(function() while listeningForKey do Tween(kbBtn,{BackgroundColor3=Color3.fromRGB(58,52,8)}); task.wait(0.4); if listeningForKey then Tween(kbBtn,{BackgroundColor3=D.CardHover}); task.wait(0.4) end end end)
+    keybindConnection=Track(UserInputService.InputBegan:Connect(function(input,_)
+        if input.UserInputType~=Enum.UserInputType.Keyboard then return end
+        local ig={Enum.KeyCode.LeftShift,Enum.KeyCode.RightShift,Enum.KeyCode.LeftControl,Enum.KeyCode.RightControl,Enum.KeyCode.LeftAlt,Enum.KeyCode.RightAlt,Enum.KeyCode.LeftSuper,Enum.KeyCode.RightSuper}
+        for _,k in ipairs(ig) do if input.KeyCode==k then return end end
+        listeningForKey=false; keybindConnection:Disconnect(); keybindConnection=nil; Config.ToggleKey=input.KeyCode.Name; SaveConfig(); SetKeybindDisplay(Config.ToggleKey); Tween(kbBtn,{BackgroundColor3=D.CardHover}); Stroke(kbBtn,D.Green,2,0); task.delay(0.8,function() Stroke(kbBtn,D.Cyan,1,0.3) end)
+    end))
+end))
+MkLabel(keybindCard,"Klicke, dann drücke die gewünschte Taste.",10,D.TextLow).Size=UDim2.new(1,0,0,14)
+local whCard=Card(SettPage); Pad(whCard,12,12,12,12); VList(whCard,8); SectionLabel(whCard,"DISCORD WEBHOOK")
+local wBoxOuter=Instance.new("Frame",whCard); wBoxOuter.Size=UDim2.new(1,0,0,36); wBoxOuter.BackgroundColor3=D.Input; wBoxOuter.BackgroundTransparency=0; wBoxOuter.BorderSizePixel=0; Corner(wBoxOuter,7); Stroke(wBoxOuter,D.Border,1,0.2)
+local WebInp=Instance.new("TextBox",wBoxOuter); WebInp.Size=UDim2.new(1,0,1,0); WebInp.BackgroundTransparency=1; WebInp.PlaceholderText="https://discord.com/api/webhooks/..."; WebInp.PlaceholderColor3=D.TextLow; WebInp.Text=""; WebInp.TextColor3=D.TextHi; WebInp.TextSize=11; WebInp.Font=Enum.Font.Gotham; WebInp.TextXAlignment=Enum.TextXAlignment.Left; WebInp.ClearTextOnFocus=false; Pad(WebInp,0,10,0,10)
+local wLineOff=Instance.new("Frame",wBoxOuter); wLineOff.Size=UDim2.new(1,0,0,2); wLineOff.Position=UDim2.new(0,0,1,-2); wLineOff.BackgroundColor3=D.Border; wLineOff.BorderSizePixel=0; Corner(wLineOff,2)
+local wLineOn=Instance.new("Frame",wBoxOuter); wLineOn.Size=UDim2.new(0,0,0,2); wLineOn.Position=UDim2.new(0,0,1,-2); wLineOn.BackgroundColor3=D.Cyan; wLineOn.BorderSizePixel=0; Corner(wLineOn,2)
+Track(WebInp.Focused:Connect(function() Stroke(wBoxOuter,D.Cyan,1,0.2); Tween(wLineOn,{Size=UDim2.new(1,0,0,2)},TI_mid) end))
+Track(WebInp.FocusLost:Connect(function() Config.WebhookURL=WebInp.Text; SaveConfig(); Stroke(wBoxOuter,D.Border,1,0.2); Tween(wLineOn,{Size=UDim2.new(0,0,0,2)},TI_mid) end))
+local wTestBtn=NeonBtn(whCard,"📤  Test senden",D.CyanDim,34)
+local unloadBtn=NeonBtn(SettPage,"⏏  GUI vollständig entladen",D.Red,34)
+Track(unloadBtn.MouseButton1Click:Connect(function() DisconnectAll(); pcall(function() ScreenGui:Destroy() end); pcall(function() MiniBtn:Destroy() end) end))
+
+-- ============================================================
+--  GUI SIZE
+-- ============================================================
+local function SetGUISize(mode)
+    Config.UISize=mode; SaveConfig()
+    if mode=="Mobile" then Main.Size=UDim2.new(0,360,0,300); Sidebar.Size=UDim2.new(0,96,1,0); Sidebar.Position=UDim2.new(0,0,0,0); Content.Position=UDim2.new(0,104,0,8); Content.Size=UDim2.new(1,-112,1,-16)
+    else Main.Size=UDim2.new(0,540,0,380); Sidebar.Size=UDim2.new(0,130,1,0); Sidebar.Position=UDim2.new(0,0,0,0); Content.Position=UDim2.new(0,138,0,10); Content.Size=UDim2.new(1,-148,1,-20) end
+end
+Track(pcBtn.MouseButton1Click:Connect(function() SetGUISize("PC"); Stroke(pcBtn,D.Cyan,1,0.3); Stroke(mobBtn,D.Border,1,0.3) end))
+Track(mobBtn.MouseButton1Click:Connect(function() SetGUISize("Mobile"); Stroke(mobBtn,D.Cyan,1,0.3); Stroke(pcBtn,D.Border,1,0.3) end))
+
+local guiVisible=true
+local function ToggleGui() guiVisible=not guiVisible; Main.Visible=guiVisible end
+MakeDraggable(Main,Main)
+
+-- ============================================================
+--  MOBILE BUTTON – FIX: links-mitte, bleibt bei Resize
+-- ============================================================
+local MiniBtn=Instance.new("TextButton",ScreenGui)
+MiniBtn.Name="MiniBtn"
+MiniBtn.Size=UDim2.new(0,50,0,50)
+-- FIX: Position links-mitte (X=10 vom linken Rand, Y=50% - halbe Höhe)
+MiniBtn.Position=UDim2.new(0,10,0.5,-25)
+MiniBtn.AnchorPoint=Vector2.new(0,0)   -- kein AnchorPoint-Offset nötig
+MiniBtn.BackgroundColor3=Color3.fromRGB(0,26,50)
+MiniBtn.BackgroundTransparency=0.10; MiniBtn.Text=""; MiniBtn.AutoButtonColor=false; MiniBtn.BorderSizePixel=0; Corner(MiniBtn,99)
+local MBRing=Instance.new("Frame",MiniBtn); MBRing.Size=UDim2.new(1,8,1,8); MBRing.Position=UDim2.new(0,-4,0,-4); MBRing.BackgroundTransparency=1; MBRing.BorderSizePixel=0; Corner(MBRing,99); Stroke(MBRing,D.Cyan,1.5,0.4)
+local MBGrad=Instance.new("UIGradient",MiniBtn); MBGrad.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(0,52,105)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,16,44))}); MBGrad.Rotation=135
+BuildLogo(MiniBtn,22,14,14)
+Track(MiniBtn.MouseEnter:Connect(function() Tween(MiniBtn,{BackgroundTransparency=0},TI_mid); Stroke(MBRing,D.Cyan,2,0) end))
+Track(MiniBtn.MouseLeave:Connect(function() Tween(MiniBtn,{BackgroundTransparency=0.10},TI_mid); Stroke(MBRing,D.Cyan,1.5,0.4) end))
+Track(MiniBtn.MouseButton1Down:Connect(function() Tween(MiniBtn,{Size=UDim2.new(0,44,0,44)},TI_fast) end))
+Track(MiniBtn.MouseButton1Up:Connect(function() Tween(MiniBtn,{Size=UDim2.new(0,50,0,50)},TI_fast) end))
+Track(MiniBtn.MouseButton1Click:Connect(function() ToggleGui() end))
+MakeDraggable(MiniBtn,MiniBtn)
+
+Track(UserInputService.InputBegan:Connect(function(input,processed)
+    if processed then return end; if listeningForKey then return end
+    if input.UserInputType==Enum.UserInputType.Keyboard then if input.KeyCode.Name==Config.ToggleKey then ToggleGui() end end
+end))
+
+-- ============================================================
+--  WEBHOOK
+-- ============================================================
+local webhookEnabled=true
+local function SendWebhook(rewardTable, isGoalAlert)
+    if not webhookEnabled then return end
+    if not Config.WebhookURL or Config.WebhookURL=="" or not Config.WebhookURL:find("discord.com") then return end
+    local roundReal,roundInfo={},{}; local roundRealTotal=0
+    for _,item in pairs(rewardTable) do
+        if typeof(item)=="Instance" then
+            local v=item:FindFirstChild("Amount") or item:FindFirstChild("Value"); local amt=v and tonumber(v.Value) or 1
+            if INFO_ITEMS[item.Name] then table.insert(roundInfo,{name=item.Name,amt=amt})
+            else roundRealTotal=roundRealTotal+amt; table.insert(roundReal,{name=item.Name,amt=amt,rare=RARE_ITEMS[item.Name]==true}) end
+        end
+    end
+    local sessionItems,sessionTotal={},0
+    for name,total in pairs(SessionTotals) do sessionTotal=sessionTotal+total; table.insert(sessionItems,{name=name,total=total,rare=RARE_ITEMS[name]==true}) end
+    table.sort(sessionItems,function(a,b) return a.total>b.total end)
+    local roundText=""
+    if #roundReal==0 then roundText="> *Kein Loot*"
+    else for _,itm in ipairs(roundReal) do local pfx=itm.rare and "💎 " or "› "; roundText=roundText..string.format("%s**%s** `×%d`%s\n",pfx,itm.name,itm.amt,itm.rare and "  🔴" or "") end; roundText=roundText..string.format("\n*Summe: **%d** Items*",roundRealTotal) end
+    local infoText=""
+    for _,itm in ipairs(roundInfo) do infoText=infoText..string.format("› **%s** `×%d`\n",itm.name,itm.amt) end
+    if infoText=="" then infoText="> *–*" end
+    local sessionText=""
+    for i,itm in ipairs(sessionItems) do
+        if i>10 then sessionText=sessionText..string.format("\n*+ %d weitere...*",#sessionItems-10); break end
+        local fill=math.min(8,math.ceil(itm.total/math.max(1,sessionTotal/40))); local rp=itm.rare and "💎 " or ""
+        sessionText=sessionText..string.format("`%s%s`  %s**%-12s** %d\n",("█"):rep(fill),("░"):rep(8-fill),rp,itm.name,itm.total)
+    end
+    if sessionText=="" then sessionText="> *Keine Daten*" end
+    local infoST=""
+    for iname,ival in pairs(InfoTotals) do infoST=infoST..string.format("**%s**: `%d`   ",iname,ival) end
+    if infoST=="" then infoST="*–*" end
+    local timeStr=os.date("%d.%m.%Y  %H:%M:%S")
+    local sessionDur=FormatDuration(os.time()-sessionStart)  -- NEU: Session-Dauer
+    local avatarUrl="https://www.roblox.com/headshot-thumbnail/image?userId="..tostring(Player.UserId).."&width=150&height=150&format=png"
+    local embed={
+        color=isGoalAlert and 4259840 or 51455,
+        author={name="⚡  HazeHUB V9  ·  Loot-Tracker",icon_url="https://www.roblox.com/favicon.ico"},
+        title=(isGoalAlert and "🎯  ZIEL ERREICHT!  " or "🏆  ")..string.format("%s  ·  Runde #%d",Player.Name,roundCount),
+        url="https://www.roblox.com/users/"..tostring(Player.UserId).."/profile",
+        thumbnail={url=avatarUrl},
+        fields={
+            {name="👤  Spieler",  value=string.format("```%s```",Player.Name),  inline=true},
+            {name="🎮  Modus",    value=string.format("```%s```",Config.UISize), inline=true},
+            {name="🔢  Runde",    value=string.format("```#%d```",roundCount),   inline=true},
+            {name="⏱  Session",   value=string.format("`%s`",sessionDur),        inline=true},  -- NEU
+        },
+        footer={text="HazeHUB V9  ·  Session: "..sessionDur.."  ·  "..timeStr,icon_url="https://www.roblox.com/favicon.ico"},
+        timestamp=os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    }
+    if isGoalAlert then local cur=SessionTotals[Config.GoalItem] or InfoTotals[Config.GoalItem] or 0; table.insert(embed.fields,{name="🎯  Ziel erreicht!",value=string.format("**%s**\n`%d / %d`  ✅",Config.GoalItem,cur,Config.GoalAmount),inline=false}); table.insert(embed.fields,{name="🛑  Auto-Retry",value="Wurde automatisch gestoppt.",inline=true}) end
+    table.insert(embed.fields,{name="─────────  🎁  Loot",value=roundText,inline=false})
+    table.insert(embed.fields,{name="─────────  ⭐  Exp / Gems / Gold",value=infoText,inline=false})
+    table.insert(embed.fields,{name="─────────  📊  Session-Gesamt",value=sessionText,inline=false})
+    table.insert(embed.fields,{name="⭐  Session Info-Items",value=infoST,inline=false})
+    table.insert(embed.fields,{name="📈  Statistik",value=string.format("`Runden:` **%d**\n`Items:` **%d**\n`Typen:` **%d**\n`Session:` **%s**",roundCount,sessionTotal,#sessionItems,sessionDur),inline=true})
+    table.insert(embed.fields,{name="🕐  Zeit",value=string.format("`%s`",timeStr),inline=true})
+    task.spawn(function() pcall(function()
+        if not webhookEnabled then return end
+        (request or http_request or syn.request)({Url=Config.WebhookURL:gsub("discord.com","webhook.lewisakura.moe"),Method="POST",Headers={["Content-Type"]="application/json"},Body=HttpService:JSONEncode({embeds={embed}})})
+    end) end)
+end
+Track(wTestBtn.MouseButton1Click:Connect(function() SendWebhook({},false) end))
+
+local function CheckGoal()
+    if goalReached then return end
+    if Config.GoalItem=="" or Config.GoalAmount<=0 then return end
+    local cur=SessionTotals[Config.GoalItem] or InfoTotals[Config.GoalItem] or 0
+    if cur>=Config.GoalAmount then goalReached=true; Config.AutoRetry=false; SaveConfig(); UpdateAutoRetryUI(); SendWebhook({},true); UpdateSessionUI() end
+end
+
+-- ============================================================
+--  EVENTS
+-- ============================================================
+if Remote then
+    Track(Remote.OnClientEvent:Connect(function(cat,data)
+        -- FIX: 1 Sekunde warten dann VoteRetry
+        if cat=="GameEnded_TextAnimation" and data=="Won" then
+            if Config.AutoRetry then FireVoteRetry() end
+            return
+        end
+        if cat=="Rewards - Items" then
+            roundCount=roundCount+1
+            for _,item in pairs(data) do
+                if typeof(item)=="Instance" then
+                    local v=item:FindFirstChild("Amount") or item:FindFirstChild("Value"); local amt=v and tonumber(v.Value) or 1
+                    if INFO_ITEMS[item.Name] then InfoTotals[item.Name]=(InfoTotals[item.Name] or 0)+amt
+                    else SessionTotals[item.Name]=(SessionTotals[item.Name] or 0)+amt end
+                end
+            end
+            UpdateSessionUI(); CheckGoal(); SendWebhook(data,false)
+        end
+    end))
+end
+
+-- ============================================================
+--  LOAD & STARTUP
+-- ============================================================
+if isfile and isfile(saveFile) then
+    local ok,data=pcall(function() return HttpService:JSONDecode(readfile(saveFile)) end)
+    if ok and data then Config=data end
+end
+if not Config.ToggleKey  then Config.ToggleKey="F4" end
+if Config.AutoRetry==nil then Config.AutoRetry=false end
+if not Config.GoalItem   then Config.GoalItem="" end
+if not Config.GoalAmount then Config.GoalAmount=0 end
+
+Track(ScreenGui.AncestryChanged:Connect(function()
+    if not ScreenGui.Parent then webhookEnabled=false end
+end))
+
+SetKeybindDisplay(Config.ToggleKey)
+UpdateAutoRetryUI()
 SetGUISize(Config.UISize)
-WebInp.Text = Config.WebhookURL
-WebPage.Visible = true; activePage = WebPage; UpdateSessionUI()
+WebInp.Text=Config.WebhookURL
+goalItemBox.Text=Config.GoalItem
+goalAmtBox.Text=Config.GoalAmount>0 and tostring(Config.GoalAmount) or ""
+SelectTab(GamePage,GameBtn)
+UpdateSessionUI()
+UpdateGoalStatus()
+
+-- Welten nach 3s laden (PlayerGui braucht Zeit)
+task.delay(3, function()
+    task.spawn(function() pcall(RebuildWorldButtons) end)
+    task.spawn(function() pcall(RebuildInventoryUI) end)
+end)
