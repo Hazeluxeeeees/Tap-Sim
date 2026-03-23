@@ -81,6 +81,7 @@ local Haze = {
         LOBBY_ID      = 111446873000464,
         MAIN_URL      = "https://raw.githubusercontent.com/Hazeluxeeeees/Tap-Sim/refs/heads/main/script",
         AF_URL        = "https://raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/autofarm.lua",
+        SHOP_URL      = "https://raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/Shops",
     },
 }
 
@@ -698,6 +699,7 @@ local MiscPage  = MakeTab("Misc",      "🔧")
 local SessPage  = MakeTab("Session",   "📊")
 local InvPage   = MakeTab("Inventory", "🎒")
 local QuestPage = MakeTab("Quests",    "📋")
+local ShopPage  = MakeTab("Shops",     "🏪")
 local SettPage  = MakeTab("Settings",  "⚙")
 
 -- ============================================================
@@ -1304,7 +1306,7 @@ local UPGRADE_STATS = {
 H.UI.Lbl.UpgradeStats = {}
 for _, statDef in ipairs(UPGRADE_STATS) do
     local sRow = Instance.new("Frame", playerStatsCard)
-    sRow.Size = UDim2.new(1, 0, 0, 38); sRow.BackgroundColor3 = D.CardHover
+    sRow.Size = UDim2.new(1, 0, 0, 52); sRow.BackgroundColor3 = D.CardHover
     sRow.BorderSizePixel = 0; Corner(sRow, 7); Stroke(sRow, statDef.color, 1, 0.6)
 
     local iconBar = Instance.new("Frame", sRow)
@@ -1312,24 +1314,31 @@ for _, statDef in ipairs(UPGRADE_STATS) do
     iconBar.BorderSizePixel = 0; Corner(iconBar, 2)
 
     local sNameLbl = Instance.new("TextLabel", sRow)
-    sNameLbl.Position = UDim2.new(0, 10, 0, 3); sNameLbl.Size = UDim2.new(0.55, -10, 0.5, 0)
+    sNameLbl.Position = UDim2.new(0, 10, 0, 3); sNameLbl.Size = UDim2.new(0.55, -10, 0, 14)
     sNameLbl.BackgroundTransparency = 1; sNameLbl.Text = statDef.icon .. " " .. statDef.label
     sNameLbl.TextColor3 = statDef.color; sNameLbl.TextSize = 11; sNameLbl.Font = Enum.Font.GothamBold
     sNameLbl.TextXAlignment = Enum.TextXAlignment.Left
 
     local sLvlLbl = Instance.new("TextLabel", sRow)
-    sLvlLbl.Position = UDim2.new(0, 10, 0.5, 0); sLvlLbl.Size = UDim2.new(0.55, -10, 0.5, -2)
+    sLvlLbl.Position = UDim2.new(0, 10, 0, 18); sLvlLbl.Size = UDim2.new(0.55, -10, 0, 13)
     sLvlLbl.BackgroundTransparency = 1; sLvlLbl.Text = "Lv. –"
     sLvlLbl.TextColor3 = D.TextMid; sLvlLbl.TextSize = 10; sLvlLbl.Font = Enum.Font.GothamSemibold
     sLvlLbl.TextXAlignment = Enum.TextXAlignment.Left
 
+    -- ★ Gold bis Max Label
+    local sGoldLbl = Instance.new("TextLabel", sRow)
+    sGoldLbl.Position = UDim2.new(0, 10, 0, 34); sGoldLbl.Size = UDim2.new(0.65, -10, 0, 13)
+    sGoldLbl.BackgroundTransparency = 1; sGoldLbl.Text = "🪙 Gold bis Max: –"
+    sGoldLbl.TextColor3 = D.TextLow; sGoldLbl.TextSize = 9; sGoldLbl.Font = Enum.Font.Gotham
+    sGoldLbl.TextXAlignment = Enum.TextXAlignment.Left
+
     local sCostLbl = Instance.new("TextLabel", sRow)
-    sCostLbl.Position = UDim2.new(0.55, 0, 0, 0); sCostLbl.Size = UDim2.new(0.45, -6, 1, 0)
+    sCostLbl.Position = UDim2.new(0.55, 0, 0, 3); sCostLbl.Size = UDim2.new(0.45, -6, 0, 28)
     sCostLbl.BackgroundTransparency = 1; sCostLbl.Text = "..."
     sCostLbl.TextColor3 = D.Gold; sCostLbl.TextSize = 10; sCostLbl.Font = Enum.Font.GothamSemibold
-    sCostLbl.TextXAlignment = Enum.TextXAlignment.Right
+    sCostLbl.TextXAlignment = Enum.TextXAlignment.Right; sCostLbl.TextWrapped = true
 
-    H.UI.Lbl.UpgradeStats[statDef.key] = { level = sLvlLbl, cost = sCostLbl }
+    H.UI.Lbl.UpgradeStats[statDef.key] = { level = sLvlLbl, cost = sCostLbl, gold = sGoldLbl }
 end
 
 local function RefreshPlayerStats()
@@ -1438,6 +1447,45 @@ local function RefreshPlayerStats()
             else
                 lbls.cost.Text = "–"
                 lbls.cost.TextColor3 = D.TextLow
+            end
+
+            -- ★ Gold bis Max Berechnung
+            if lbls.gold then
+                local curLvl = nil
+                if lvlTxt then
+                    -- Versuche Zahl aus Level-Text zu parsen (z.B. "5", "Level 5", "5/50")
+                    curLvl = tonumber(lvlTxt:match("(%d+)")) or nil
+                end
+                local isMax = lvlTxt and (lvlTxt:find("MAX") or lvlTxt:find("max"))
+                if isMax then
+                    lbls.gold.Text = "🪙 Gold bis Max: bereits MAX"
+                    lbls.gold.TextColor3 = D.GreenBright
+                elseif curLvl then
+                    local goldNeeded = 0
+                    if statDef.key == "YenGenarate" then
+                        -- Max LVL 50, konstant 500 Gold pro Upgrade
+                        local remaining = math.max(0, 50 - curLvl)
+                        goldNeeded = remaining * 500
+                    elseif statDef.key == "YenMax" then
+                        -- Max LVL 100, erstes Upgrade kostet 250, jedes weitere +250
+                        -- Upgrade von LVL n auf n+1 kostet: n * 250
+                        -- Gesamt von curLvl bis 100: Summe(n * 250, n = curLvl..99)
+                        for n = curLvl, 99 do
+                            goldNeeded = goldNeeded + (n * 250)
+                        end
+                    elseif statDef.key == "BaseHealth" then
+                        -- Max LVL 100, erstes Upgrade kostet 200, jedes weitere +200
+                        -- Upgrade von LVL n auf n+1 kostet: n * 200
+                        for n = curLvl, 99 do
+                            goldNeeded = goldNeeded + (n * 200)
+                        end
+                    end
+                    lbls.gold.Text = "🪙 Gold bis Max: " .. FmtNum(goldNeeded)
+                    lbls.gold.TextColor3 = goldNeeded == 0 and D.GreenBright or D.TextLow
+                else
+                    lbls.gold.Text = "🪙 Gold bis Max: –"
+                    lbls.gold.TextColor3 = D.TextLow
+                end
             end
         end)
     end
@@ -2194,7 +2242,7 @@ task.spawn(function()
     pcall(RebuildWorldList)
 end)
 
--- Externes Modul laden
+-- Externes Modul laden (Autofarm)
 task.spawn(function()
     task.wait(1)
     local ok, err = pcall(function()
@@ -2206,5 +2254,25 @@ task.spawn(function()
             H.UI.Lbl.ModulStatus.TextColor3 = D.Red
         end)
         warn("[HazeHUB] Autofarm-Modul Fehler:", err)
+    end
+end)
+
+-- Externes Modul laden (Shops)
+_G.HazeShared.ShopContainer = ShopPage   -- Shop-Modul schreibt direkt in diesen Tab
+task.spawn(function()
+    task.wait(2)
+    local ok, err = pcall(function()
+        loadstring(game:HttpGet(K.SHOP_URL))()
+    end)
+    if not ok then
+        warn("[HazeHUB] Shop-Modul Fehler:", err)
+        -- Fallback-Hinweis im Shop-Tab
+        pcall(function()
+            local errLbl = Instance.new("TextLabel", ShopPage)
+            errLbl.Size = UDim2.new(1, 0, 0, 40); errLbl.BackgroundTransparency = 1
+            errLbl.Text = "🔴  Shop-Modul konnte nicht geladen werden."
+            errLbl.TextColor3 = D.Red; errLbl.TextSize = 11; errLbl.Font = Enum.Font.GothamBold
+            errLbl.TextXAlignment = Enum.TextXAlignment.Left
+        end)
     end
 end)
