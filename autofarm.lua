@@ -1,8 +1,9 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB – autofarm.lua  v2.8.0
+--  HazeHUB – autofarm.lua  v2.8.1
 --  GitHub: Hazeluxeeeees/HazeHub-Modules
 --
---  v2.8.0:
+--  v2.8.1:
+--    + Alle Pfade nutzen LP.Name (dynamisch, kein Hardcode)
 --    + TeleportToLobby via TeleportService (ID: 111446873000464)
 --    + Auto-Resume: Settings.json AutoFarm=true → nach 5s starten
 --    + Re-Load nach Teleport: loadstring(game:HttpGet(MAIN_URL))()
@@ -11,7 +12,7 @@
 --    + Location-Check via workspace:FindFirstChild("Lobby")
 -- ╚══════════════════════════════════════════════════════════╝
 
-local VERSION    = "2.8.0"
+local VERSION    = "2.8.1"
 local LOBBY_ID   = 111446873000464
 local MAIN_URL   = "https://raw.githubusercontent.com/Hazeluxeeeees/Tap-Sim/refs/heads/main/script"
 
@@ -55,6 +56,7 @@ end
 local Players          = game:GetService("Players")
 local VirtualUser      = game:GetService("VirtualUser")
 local TeleportService  = game:GetService("TeleportService")
+-- ★ LP immer dynamisch – niemals hardcoded
 local LP               = Players.LocalPlayer
 local RS               = game:GetService("ReplicatedStorage")
 local WS               = game:GetService("Workspace")
@@ -130,11 +132,12 @@ local function Fire(action, data)
 end
 
 -- ============================================================
---  INVENTAR
+--  INVENTAR  (★ LP.Name dynamisch)
 -- ============================================================
 local function GetLiveInvAmt(itemName)
     local n = 0
     pcall(function()
+        -- ★ Dynamisch: LP.Name statt hardcoded
         local f = RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Items",3)
         local item = f:FindFirstChild(itemName); if not item then return end
         local vc = item:FindFirstChild("Value") or item:FindFirstChild("Amount")
@@ -146,20 +149,14 @@ end
 
 -- ============================================================
 --  ★ DoTeleportToLobby
---  Einheitliche Funktion für automatischen Lobby-Exit.
---  Speichert AutoFarm=true in Settings.json VOR dem Teleport,
---  damit das Re-Load-Skript nach dem Teleport weiterläuft.
 -- ============================================================
 local function DoTeleportToLobby(keepAutoFarm)
-    -- Wenn keepAutoFarm=true: Settings.json bleibt auf AutoFarm=true
-    -- damit der Re-Load nach Teleport die Farm fortsetzt
     if keepAutoFarm then
         if CFG then CFG.AutoFarm = true end
         if SaveConfig  then pcall(SaveConfig)  end
         if SaveSettings then pcall(SaveSettings) end
         print("[HazeHub] AutoFarm=true in Settings gespeichert (Teleport-Persistenz)")
     end
-
     print("[HazeHub] Teleportiere zur Lobby ID: " .. LOBBY_ID)
     pcall(function()
         TeleportService:Teleport(LOBBY_ID)
@@ -308,7 +305,7 @@ end
 -- ============================================================
 --  ★ ScanRewardsSafe
 --  Pfad: LP.PlayerGui.PlayRoom.Main.GameStage.Main.Base.Rewards.ItemsList
---  Identifizierung via item.Name (ignoriert UIGridLayout und UIListLayout)
+--  ★ LP.Name ist bereits dynamisch durch LP = Players.LocalPlayer
 -- ============================================================
 local function ScanRewardsSafe()
     local rewards = {}
@@ -319,13 +316,11 @@ local function ScanRewardsSafe()
 
     pcall(function()
         for _, item in pairs(list:GetChildren()) do
-            -- ★ Ignoriere UIGridLayout, UIListLayout und andere UI-Objekte
             if item:IsA("UIGridLayout") or item:IsA("UIListLayout")
             or item:IsA("UIPageLayout") or item:IsA("UITableLayout")
             or item:IsA("UIPadding") or item:IsA("UICorner") then continue end
 
             if item:IsA("Frame") or item:IsA("ImageLabel") or item:IsA("TextButton") or item:IsA("TextLabel") then
-                -- ★ Primär via item.Name
                 local iname = item.Name
                 local rate  = 0
                 local amt   = 1
@@ -349,7 +344,6 @@ local function ScanRewardsSafe()
                     end
                 end)
 
-                -- Nur eintragen wenn Name sinnvoll (kein UI-Layout-Typ-Name)
                 if iname ~= "" and not iname:match("^UI") and not iname:match("^Frame$") then
                     rewards[iname] = { dropRate = rate, dropAmount = amt }
                     print(string.format("[HazeHub] Item: '%s'  Rate=%.1f%%", iname, rate))
@@ -362,7 +356,6 @@ local function ScanRewardsSafe()
     return rewards, cnt > 0
 end
 
--- Wartet bis ItemsList Kinder hat (direkter Pfad, mit Timeout)
 local function WaitForItemsListFilled(timeoutSec)
     timeoutSec = timeoutSec or 5
     local deadline = os.clock() + timeoutSec
@@ -414,27 +407,25 @@ local function ScanAllRewards(onProgress)
         pcall(function() onProgress(string.format("Scanne %d/%d: [%s] %s", scanned, total, t.mode, t.chapId)) end)
         print(string.format("[HazeHub] [%s] %s > %s (%d/%d)", t.mode, t.worldId, t.chapId, scanned, total))
 
-        -- ★ Remote-Sequenz mit 2s Pflicht-Delay nach Change-Chapter
         if t.mode == "Story" then
             Fire("Create");                                             task.wait(0.5)
             Fire("Change-World",   { World   = t.worldId });           task.wait(0.5)
             Fire("Change-Chapter", { Chapter = t.chapId })
-            task.wait(2.0)   -- ★ 2s Pflicht-Delay
+            task.wait(2.0)
         elseif t.mode == "Ranger" then
             Fire("Create");                                             task.wait(0.5)
             Fire("Change-Mode", { KeepWorld=t.worldId, Mode="Ranger Stage" })
             task.wait(1.0)
             Fire("Change-World",   { World   = t.worldId });           task.wait(0.5)
             Fire("Change-Chapter", { Chapter = t.chapId })
-            task.wait(2.0)   -- ★ 2s Pflicht-Delay
+            task.wait(2.0)
         elseif t.mode == "Calamity" then
             Fire("Create");                                             task.wait(0.5)
             Fire("Change-Mode",    { Mode    = "Calamity" });          task.wait(0.5)
             Fire("Change-Chapter", { Chapter = t.chapId })
-            task.wait(2.0)   -- ★ 2s Pflicht-Delay
+            task.wait(2.0)
         end
 
-        -- Warte auf Items
         local filled = WaitForItemsListFilled(3)
         if not filled then
             print(string.format("[HazeHub] Retry für %s...", t.chapId))
@@ -530,7 +521,6 @@ end
 
 -- ============================================================
 --  ★ RUNDEN-MONITOR
---  Ist-Menge >= Ziel-Menge → DoTeleportToLobby(keepAutoFarm=true)
 -- ============================================================
 local function RoundMonitorLoop(q)
     print("[HazeHub] RUNDE: Tracker '" .. q.item .. "'")
@@ -539,25 +529,20 @@ local function RoundMonitorLoop(q)
     while AF.Running and os.time() < deadline do
         if CheckIsLobby() then print("[HazeHub] Tracker: Lobby erkannt."); break end
         task.wait(4)
+        -- ★ Dynamisch: GetLiveInvAmt nutzt LP.Name intern
         local cur = GetLiveInvAmt(q.item)
         print(string.format("[HazeHub] '%s': %d/%d", q.item, cur, q.amount))
         SetStatus(string.format("RUNDE: '%s'  %d/%d  (%.0f%%)",
             q.item, cur, q.amount, math.min(100, cur/math.max(1,q.amount)*100)), D.Cyan)
         pcall(UpdateQueueUI); pcall(function() HS.UpdateGoalsUI() end)
 
-        -- ★ Ist-Menge >= Ziel-Menge
         if cur >= q.amount then
             print(string.format("[HazeHub] ZIEL ERREICHT: '%s' %d/%d → Teleport zur Lobby!", q.item, cur, q.amount))
             task.spawn(function() pcall(function() SendWebhook({}, q.item, cur) end) end)
             RemoveFromQueue(q.item); pcall(UpdateQueueUI)
             SetStatus(string.format("✅ '%s' erreicht! Teleportiere...", q.item), D.GreenBright)
             SaveState()
-
-            -- ★ TeleportService:Teleport() mit AutoFarm-Persistenz
-            -- keepAutoFarm=true damit nach Teleport weitergemacht wird
             DoTeleportToLobby(true)
-
-            -- Warte auf Teleport (max 15s, dann Timeout)
             local w = 0
             while AF.Running and not CheckIsLobby() and w < 15 do
                 task.wait(1); w = w + 1
@@ -585,7 +570,6 @@ local function LobbyActionLoop(delaySeconds)
     if not q then
         SetStatus("Queue leer – Farm beendet.", D.Green)
         AF.Active=false; AF.Running=false; _G.AutoFarmRunning=false; SaveState()
-        -- AutoFarm-Flag zurücksetzen
         if CFG then CFG.AutoFarm=false end
         if SaveConfig  then pcall(SaveConfig)  end
         if SaveSettings then pcall(SaveSettings) end
@@ -652,7 +636,6 @@ end
 -- ============================================================
 local function StopFarm()
     AF.Active=false; AF.Running=false; AF.Scanning=false; _G.AutoFarmRunning=false
-    -- AutoFarm-Flag zurücksetzen
     if CFG then CFG.AutoFarm=false end
     if SaveConfig  then pcall(SaveConfig)  end
     if SaveSettings then pcall(SaveSettings) end
@@ -661,11 +644,9 @@ local function StopFarm()
 end
 HS.StopFarm = StopFarm
 
--- StartFarmFromMain
 HS.StartFarmFromMain = function()
     if AF.Active then SetStatus("Farm läuft!", D.Yellow); return end
     if #AF.Queue==0 then SetStatus("Queue leer!", D.Orange); return end
-    -- AutoFarm-Flag setzen
     if CFG then CFG.AutoFarm=true end
     if SaveConfig  then pcall(SaveConfig)  end
     if SaveSettings then pcall(SaveSettings) end
@@ -706,10 +687,7 @@ local function RunScanTask(forceDelete, thenStartFarm)
 end
 
 -- ============================================================
---  ★ AUTO-RESUME
---  Liest HazeHUB_Settings.json (AutoFarm=true)
---  UND HazeHUB_State.json (running=true)
---  → Farm nach 5s Delay automatisch starten
+--  ★ AUTO-RESUME  (Settings.json AutoFarm=true ODER State.running=true)
 -- ============================================================
 local function TryAutoResume()
     task.wait(3)
@@ -718,16 +696,16 @@ local function TryAutoResume()
     local settings  = LoadSettingsFile()
     local isLobby   = CheckIsLobby()
 
+    -- ★ LP.Name in Log (dynamisch)
     print(string.format(
-        "[HazeHub] TryAutoResume: Lobby=%s  Queue=%s  State.running=%s  Settings.AutoFarm=%s",
+        "[HazeHub] TryAutoResume [%s]: Lobby=%s  Queue=%s  State.running=%s  Settings.AutoFarm=%s",
+        LP.Name,
         tostring(isLobby), tostring(hasQueue),
         tostring(state and state.running),
         tostring(settings and settings.AutoFarm)))
 
     if hasQueue then SyncInventoryWithQueue(); pcall(UpdateQueueUI) end
 
-    -- Entscheide ob Farm fortgesetzt werden soll
-    -- Kriterium: Settings.AutoFarm=true ODER State.running=true
     local shouldResume = (settings and settings.AutoFarm == true)
                       or (state and state.running == true)
 
@@ -737,7 +715,6 @@ local function TryAutoResume()
     end
 
     if not hasQueue or not GetNextItem() then
-        -- Nichts mehr zu tun → Flags zurücksetzen
         _G.AutoFarmRunning=false
         if CFG then CFG.AutoFarm=false end
         if SaveConfig  then pcall(SaveConfig)  end
@@ -752,7 +729,6 @@ local function TryAutoResume()
         warn("[HazeHub] TryAutoResume: DB leer."); return
     end
 
-    -- ★ 5s Delay, dann Farm starten
     SetStatus(string.format("Auto-Resume: Farm startet in 5s... (%d Items)", #AF.Queue), D.Yellow)
     print("[HazeHub] Auto-Resume: Warte 5s...")
     task.wait(5)
@@ -763,7 +739,6 @@ local function TryAutoResume()
         print("[HazeHub] Auto-Resume: In Lobby → FarmLoop starten.")
         task.spawn(FarmLoop)
     else
-        -- In Runde → Runden-Monitor starten
         print("[HazeHub] Auto-Resume: In Runde → RoundMonitor starten.")
         AF.Active=true; AF.Running=true; _G.AutoFarmRunning=true; SaveState()
         task.spawn(function()
@@ -915,4 +890,4 @@ else AF.UI.Lbl.DBStatus.Text="Keine DB."; AF.UI.Lbl.DBStatus.TextColor3=D.TextLo
 task.spawn(TryAutoResume)
 
 HS.SetModuleLoaded(VERSION)
-print(string.format("[HazeHub] autofarm.lua v%s geladen | DB: %d Chapters", VERSION, DBCount()))
+print(string.format("[HazeHub] autofarm.lua v%s geladen | Spieler: %s | DB: %d Chapters", VERSION, LP.Name, DBCount()))
