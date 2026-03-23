@@ -1,1284 +1,435 @@
 -- ╔══════════════════════════════════════════════════════════╗
 --  HazeHUB – craft.lua  v1.0.0
---  GitHub: Hazeluxeeeees/HazeHub-Modules  (main/craft)
---
 --  Modul 4: Crafting & Auto-Collector
---
---  Features:
---    + Alle Rezepte aus CraftingRecipes laden & anzeigen
---    + ViewportFrame-Vorschau per GetData.GetItemModel()
---    + Live-Materialcheck aus RS.Player_Data.[Name].Items
---    + Suchleiste für Rezepte
---    + Auto-Collector Queue: fehlende Items → Farm-Queue
---    + Integration mit HazeHUB WorldCache / RewardDB
---    + Craft-Button → RS.Remote.Server.Crafting.Event:FireServer
---    + Vollständiges HazeHUB-Theme (inkl. D.BorderCyan)
---
---  LADEN: wird vom Hauptskript via loadstring(game:HttpGet(...))()
---  aufgerufen – kein separater Scope nötig wenn richtig eingebunden.
+--  URL: raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/craft
 -- ╚══════════════════════════════════════════════════════════╝
 
 local VERSION = "1.0.0"
 
--- ============================================================
---  WARTEN BIS SHARED BEREIT (max 15s)
--- ============================================================
-local _waited = 0
-while not (_G.HazeShared
-    and _G.HazeShared.Card
-    and _G.HazeShared.MkLbl
-    and _G.HazeShared.D) do
-    task.wait(0.3); _waited = _waited + 0.3
-    if _waited >= 15 then
-        warn("[HazeHub-Craft] HazeShared nicht bereit nach 15s – abgebrochen.")
+-- ── Warten bis HazeShared & CraftPage bereit ─────────────────
+local _w = 0
+while not (_G.HazeShared and _G.HazeShared.D and _G.HazeShared.Card and _G.HazeShared.CraftPage) do
+    task.wait(0.3); _w = _w + 0.3
+    if _w >= 25 then
+        warn("[HazeHub-Craft] HazeShared/CraftPage nicht bereit – abgebrochen.")
         return
     end
 end
 
--- ============================================================
---  SHARED ALIASE
--- ============================================================
-local HS      = _G.HazeShared
-local D       = HS.D
-local TF      = HS.TF
-local TM      = HS.TM
-local Tw      = HS.Tw
-local Svc     = HS.Svc
-local Card    = HS.Card
-local NeonBtn = HS.NeonBtn
-local MkLbl   = HS.MkLbl
-local SecLbl  = HS.SecLbl
-local MkInput = HS.MkInput
-local VList   = HS.VList
-local HList   = HS.HList
-local Pad     = HS.Pad
-local Corner  = HS.Corner
-local Stroke  = HS.Stroke
+-- ── Shared Aliase ─────────────────────────────────────────────
+local HS        = _G.HazeShared
+local D         = HS.D
+local TF        = HS.TF;  local TM = HS.TM;  local Tw = HS.Tw
+local Svc       = HS.Svc
+local Card      = HS.Card;    local NeonBtn = HS.NeonBtn
+local MkLbl     = HS.MkLbl;  local SecLbl  = HS.SecLbl
+local MkInput   = HS.MkInput; local VList   = HS.VList
+local HList     = HS.HList;   local Pad     = HS.Pad
+local Corner    = HS.Corner;  local Stroke  = HS.Stroke
+local CraftPage = HS.CraftPage
 
--- ============================================================
---  SERVICES & LOCALS
--- ============================================================
-local Players    = game:GetService("Players")
-local RS         = game:GetService("ReplicatedStorage")
-local LP         = Players.LocalPlayer
-local TweenSvc   = game:GetService("TweenService")
+-- ── Services ──────────────────────────────────────────────────
+local Players = game:GetService("Players")
+local RS      = game:GetService("ReplicatedStorage")
+local LP      = Players.LocalPlayer
 
--- ============================================================
---  DATEN-MODULE (mit Fallback-Schutz)
--- ============================================================
+-- ── Daten-Module (mit Fallback) ───────────────────────────────
 local CraftingRecipes = nil
 local GetData         = nil
-local RarityColor     = nil
-local Items_Info      = nil
-
 pcall(function() CraftingRecipes = require(RS.Shared.Info.CraftingRecipes) end)
 pcall(function() GetData         = require(RS.Shared.GetData) end)
-pcall(function() RarityColor     = require(RS.Modules.UI.RarityColor) end)
-pcall(function() Items_Info      = require(RS.Shared.Info.Items) end)
 
--- ============================================================
---  HILFSFUNKTIONEN
--- ============================================================
+-- ── Helpers ───────────────────────────────────────────────────
 local function FmtNum(n)
-    n = math.floor(tonumber(n) or 0)
-    local s = tostring(n); local r = ""; local c = 0
-    for i = #s, 1, -1 do
-        c = c + 1; r = s:sub(i, i) .. r
-        if c % 3 == 0 and i > 1 then r = "," .. r end
-    end
+    n = math.floor(tonumber(n) or 0); local s = tostring(n); local r = ""; local c = 0
+    for i = #s, 1, -1 do c=c+1; r=s:sub(i,i)..r; if c%3==0 and i>1 then r=","..r end end
     return r
 end
 
--- Inventar-Menge live abrufen
-local function GetItemAmt(itemName)
+local function GetItemAmt(name)
     local n = 0
     pcall(function()
-        local itemsFolder = RS:WaitForChild("Player_Data", 3)
-            :WaitForChild(LP.Name, 3)
-            :WaitForChild("Items", 3)
-        local item = itemsFolder:FindFirstChild(itemName)
-        if not item then return end
-        local vc = item:FindFirstChild("Amount") or item:FindFirstChild("Value")
-        if vc then
-            n = tonumber(vc.Value) or 0
-        elseif item:IsA("IntValue") or item:IsA("NumberValue") then
-            n = tonumber(item.Value) or 0
-        end
+        local f = RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Items",3)
+        local it = f:FindFirstChild(name); if not it then return end
+        local vc = it:FindFirstChild("Amount") or it:FindFirstChild("Value")
+        if vc then n = tonumber(vc.Value) or 0
+        elseif it:IsA("IntValue") or it:IsA("NumberValue") then n = tonumber(it.Value) or 0 end
     end)
     return n
 end
 
--- Rezept-Anforderungen prüfen: true = alle Items vorhanden
-local function CheckRecipeMet(recipeName, amount)
+local function AllMatsMet(recipeName, amount)
     amount = amount or 1
     if not CraftingRecipes or not CraftingRecipes[recipeName] then return false end
     local recipe = CraftingRecipes[recipeName]
     if not recipe.Requirement then return false end
-    for matName, matAmt in pairs(recipe.Requirement) do
-        if GetItemAmt(matName) < (matAmt * amount) then
-            return false
-        end
+    for mat, amt in pairs(recipe.Requirement) do
+        if GetItemAmt(mat) < (amt * amount) then return false end
     end
     return true
 end
 
--- Viewport-Modell laden (Item ODER Unit)
-local function LoadModelIntoViewport(viewport, itemName)
-    -- Alte Inhalte bereinigen
-    for _, v in pairs(viewport:GetDescendants()) do
-        if v:IsA("Model") or v:IsA("Camera") or v:IsA("WorldModel") then
-            v:Destroy()
-        end
+-- Viewport-Modell laden
+local function LoadViewport(vp, itemName)
+    for _, v in pairs(vp:GetDescendants()) do
+        if v:IsA("Model") or v:IsA("Camera") or v:IsA("WorldModel") then v:Destroy() end
     end
-
-    local wm = Instance.new("WorldModel")
-    wm.Parent = viewport
-
+    local wm = Instance.new("WorldModel"); wm.Parent = vp
     local model = nil
     pcall(function()
         if GetData then
             model = GetData.GetItemModel(itemName)
-            if not model then
-                model = GetData.GetUnitModel(itemName)
-            end
+            if not model then model = GetData.GetUnitModel(itemName) end
         end
     end)
-
     if not model then return false end
-
     local ok = pcall(function()
-        local clone = model:Clone()
-        clone.Parent = wm
-
-        local cam = Instance.new("Camera")
-        cam.Parent = viewport
-        viewport.CurrentCamera = cam
-
+        local clone = model:Clone(); clone.Parent = wm
+        local cam = Instance.new("Camera"); cam.Parent = vp; vp.CurrentCamera = cam
         if clone.PrimaryPart then
-            cam.CFrame = clone.PrimaryPart.CFrame * CFrame.new(0, 0, 2.5)
-            clone:SetPrimaryPartCFrame(
-                CFrame.lookAt(clone.PrimaryPart.Position, cam.CFrame.Position)
-            )
+            cam.CFrame = clone.PrimaryPart.CFrame * CFrame.new(0,0,2.5)
+            clone:SetPrimaryPartCFrame(CFrame.lookAt(clone.PrimaryPart.Position, cam.CFrame.Position))
         end
-
-        -- Idle-Animation
-        local humanoid = clone:FindFirstChild("Humanoid", true)
-        if humanoid then
-            local anims = humanoid.Parent:FindFirstChild("Animations")
-            if anims then
-                local idle = anims:FindFirstChild("Idle")
-                if idle then
-                    humanoid:LoadAnimation(idle):Play()
-                end
-            end
+        local hum = clone:FindFirstChild("Humanoid",true)
+        if hum then
+            local anims = hum.Parent:FindFirstChild("Animations")
+            if anims then local idle=anims:FindFirstChild("Idle"); if idle then hum:LoadAnimation(idle):Play() end end
         end
     end)
     return ok
 end
 
--- Beste Welt für ein Material finden (aus RewardDB)
-local function FindBestWorldForMaterial(matName)
-    -- 1. Versuch: RewardDB aus autofarm (RAM)
-    if _G.HazeShared._AutoFarm_RewardDB then
-        local db = _G.HazeShared._AutoFarm_RewardDB
+-- Beste Welt für ein Material finden
+local function FindBestWorld(matName)
+    -- 1: RewardDB aus autofarm
+    local db = _G.HazeShared._AutoFarm_RewardDB
+    if db then
         local bestChap, bestWorld, bestMode, bestRate = nil, nil, nil, -1
         for chapId, data in pairs(db) do
             if data.items and data.items[matName] then
                 local r = data.items[matName].dropRate or 0
-                if r > bestRate then
-                    bestRate  = r
-                    bestChap  = data.chapId or chapId
-                    bestWorld = data.world
-                    bestMode  = data.mode
-                end
+                if r > bestRate then bestRate=r; bestChap=data.chapId or chapId; bestWorld=data.world; bestMode=data.mode end
             end
         end
-        if bestChap then
-            return bestChap, bestWorld, bestMode, bestRate
+        if bestChap then return bestChap, bestWorld, bestMode end
+    end
+    -- 2: WorldCache Fallback – ersten verfügbaren Chapter nehmen
+    local wData = HS.GetWorldData and HS.GetWorldData()
+    local wIds  = HS.GetWorldIds  and HS.GetWorldIds()
+    if wData and wIds then
+        for _, wid in ipairs(wIds) do
+            local wd = wData[wid] or {}
+            if wd.story and #wd.story > 0 then return wd.story[1], wid, "Story" end
         end
     end
-
-    -- 2. Versuch: WorldCache-Datei (WorldData aus Hauptskript)
-    local worldData = nil
-    local worldIds  = nil
-    pcall(function()
-        worldData = HS.GetWorldData and HS.GetWorldData()
-        worldIds  = HS.GetWorldIds  and HS.GetWorldIds()
-    end)
-
-    if worldData and worldIds then
-        for _, wid in ipairs(worldIds) do
-            local wd = worldData[wid] or {}
-            -- Fallback: ersten verfügbaren Chapter nehmen
-            if wd.story and #wd.story > 0 then
-                return wd.story[1], wid, "Story", 0
-            end
-        end
-    end
-
-    return nil, nil, nil, 0
+    return nil, nil, nil
 end
 
--- ============================================================
---  CRAFTING STATE
--- ============================================================
+-- ── State ─────────────────────────────────────────────────────
 local Craft = {
-    SearchFilter = "",
-    SelectedItem = nil,
-    CraftAmount  = 1,
-    CollectQueue = {},  -- { matName, needed, chapId, worldId, mode }
-    Collecting   = false,
-    UI = { Lbl = {}, Fr = {}, Btn = {}, Inp = {} },
+    CraftAmt   = 1,
+    Queue      = {},   -- { matName, needed, chapId, worldId, mode }
+    Collecting = false,
+    UI         = { Lbl={}, Fr={}, Btn={}, Inp={} },
 }
-
--- Über HazeShared für autofarm zugänglich machen
 _G.HazeShared.CraftModule = Craft
 
--- ============================================================
---  TAB ERSTELLEN
--- ============================================================
--- Neuen Tab "Crafting" in der bestehenden GUI erstellen
--- Das Hauptskript übergibt das Tab-System über HS
-local CraftPage = nil
-
--- Tab über das Hauptskript-Tab-System anlegen
+-- ── Placeholder entfernen ─────────────────────────────────────
 pcall(function()
-    -- MakeTab ist im Hauptskript lokal – wir nutzen den alternativen Weg
-    -- über den bereits exportierten Frame-Container
-    local tabHolder = HS.Svc.Player.PlayerGui.HazeHUB_v19.Main.Sidebar.TabHolder
-    local content   = HS.Svc.Player.PlayerGui.HazeHUB_v19.Main.Content
-
-    -- Tab-Button
-    local B = Instance.new("TextButton", tabHolder)
-    B.Size = UDim2.new(1, 0, 0, 30)
-    B.BackgroundColor3 = D.TabInactive
-    B.Text = "🔨  Crafting"
-    B.TextColor3 = D.TextMid
-    B.TextSize = 10
-    B.Font = Enum.Font.GothamSemibold
-    B.AutoButtonColor = false
-    B.BorderSizePixel = 0
-    Corner(B, 7)
-    Stroke(B, D.Cyan, 1, 1)
-
-    -- Tab-Inhalt
-    local P = Instance.new("ScrollingFrame", content)
-    P.Name = "Crafting"
-    P.Size = UDim2.new(1, 0, 1, 0)
-    P.Visible = false
-    P.BackgroundTransparency = 1
-    P.ScrollBarThickness = 3
-    P.ScrollBarImageColor3 = D.CyanDim
-    P.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    P.BorderSizePixel = 0
-    VList(P, 8)
-    Pad(P, 10, 10, 10, 10)
-
-    CraftPage = P
-
-    -- Tab-Klick-Logik (setzt alle anderen Tabs auf unsichtbar)
-    B.MouseEnter:Connect(function()
-        if P.Visible == false then
-            Tw(B, { BackgroundColor3 = D.CardHover })
-        end
-    end)
-    B.MouseLeave:Connect(function()
-        if P.Visible == false then
-            Tw(B, { BackgroundColor3 = D.TabInactive })
-        end
-    end)
-    B.MouseButton1Click:Connect(function()
-        -- Alle anderen Tabs ausblenden
-        for _, child in pairs(content:GetChildren()) do
-            if child:IsA("ScrollingFrame") then
-                child.Visible = false
-            end
-        end
-        -- Alle anderen Tab-Buttons zurücksetzen
-        for _, btn in pairs(tabHolder:GetChildren()) do
-            if btn:IsA("TextButton") and btn ~= B then
-                btn.BackgroundColor3 = D.TabInactive
-                btn.TextColor3 = D.TextMid
-                local s = btn:FindFirstChildOfClass("UIStroke")
-                if s then s.Transparency = 1 end
-            end
-        end
-        -- Diesen Tab aktivieren
-        P.Visible = true
-        B.BackgroundColor3 = D.TabActive
-        B.TextColor3 = D.Cyan
-        local s = B:FindFirstChildOfClass("UIStroke")
-        if s then s.Transparency = 0 end
-
-        -- Tab-Inhalte aktualisieren
-        task.spawn(function() pcall(RebuildCraftingList) end)
-    end)
+    for _, v in pairs(CraftPage:GetChildren()) do
+        if v:IsA("TextLabel") and v.Text:find("geladen") then v:Destroy() end
+    end
 end)
 
--- Falls Tab-Erstellung fehlschlug – Fallback-Container
-if not CraftPage then
-    warn("[HazeHub-Craft] Tab-Erstellung fehlgeschlagen – nutze Fallback-Container.")
-    -- Fallback: direkt in PlayerGui erstellen (sichtbar als separates Fenster)
-    local sg = Instance.new("ScreenGui")
-    sg.Name = "HazeHUB_Craft"
-    sg.ResetOnSpawn = false
-    sg.DisplayOrder = 1000
-    sg.Parent = LP.PlayerGui
-
-    local mainF = Instance.new("Frame", sg)
-    mainF.Size = UDim2.new(0, 420, 0, 520)
-    mainF.Position = UDim2.new(0.5, -210, 0.5, -260)
-    mainF.BackgroundColor3 = D.BG
-    mainF.BorderSizePixel = 0
-    Corner(mainF, 12)
-    Stroke(mainF, D.BorderCyan, 1.5, 0.45)
-
-    local sf = Instance.new("ScrollingFrame", mainF)
-    sf.Size = UDim2.new(1, 0, 1, 0)
-    sf.BackgroundTransparency = 1
-    sf.ScrollBarThickness = 3
-    sf.ScrollBarImageColor3 = D.CyanDim
-    sf.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    sf.BorderSizePixel = 0
-    VList(sf, 8)
-    Pad(sf, 10, 10, 10, 10)
-    CraftPage = sf
-end
-
--- ============================================================
---  GUI AUFBAUEN
--- ============================================================
-
--- Header
+-- ── UI aufbauen ───────────────────────────────────────────────
 MkLbl(CraftPage, "🔨  Crafting", 14, D.Cyan, true)
+MkLbl(CraftPage, "Craft-Modul v"..VERSION.." | "..LP.Name, 9, D.TextLow).Size = UDim2.new(1,0,0,13)
 
-local verLbl = MkLbl(CraftPage, "Craft-Modul v" .. VERSION .. " | " .. LP.Name, 9, D.TextLow)
-verLbl.Size = UDim2.new(1, 0, 0, 13)
+-- Status
+local statusCard = Card(CraftPage,28); Pad(statusCard,4,10,4,10)
+Craft.UI.Lbl.Status = Instance.new("TextLabel",statusCard)
+Craft.UI.Lbl.Status.Size=UDim2.new(1,0,1,0); Craft.UI.Lbl.Status.BackgroundTransparency=1
+Craft.UI.Lbl.Status.Text="⏳ Lade Rezepte..."; Craft.UI.Lbl.Status.TextColor3=D.Yellow
+Craft.UI.Lbl.Status.TextSize=11; Craft.UI.Lbl.Status.Font=Enum.Font.GothamSemibold
+Craft.UI.Lbl.Status.TextXAlignment=Enum.TextXAlignment.Left
 
--- ── Status-Card ──────────────────────────────────────────────
-local statusCard = Card(CraftPage, 30)
-Pad(statusCard, 4, 10, 4, 10)
-Craft.UI.Lbl.Status = Instance.new("TextLabel", statusCard)
-Craft.UI.Lbl.Status.Size = UDim2.new(1, 0, 1, 0)
-Craft.UI.Lbl.Status.BackgroundTransparency = 1
-Craft.UI.Lbl.Status.Text = "⏳ Lade Rezepte..."
-Craft.UI.Lbl.Status.TextColor3 = D.Yellow
-Craft.UI.Lbl.Status.TextSize = 11
-Craft.UI.Lbl.Status.Font = Enum.Font.GothamSemibold
-Craft.UI.Lbl.Status.TextXAlignment = Enum.TextXAlignment.Left
-
-local function SetCraftStatus(text, color)
-    pcall(function()
-        Craft.UI.Lbl.Status.Text       = text
-        Craft.UI.Lbl.Status.TextColor3 = color or D.TextMid
-    end)
+local function SetStatus(txt,col)
+    pcall(function() Craft.UI.Lbl.Status.Text=txt; Craft.UI.Lbl.Status.TextColor3=col or D.TextMid end)
 end
 
--- ── Suchleiste ───────────────────────────────────────────────
-local searchCard = Card(CraftPage)
-Pad(searchCard, 8, 10, 8, 10)
-VList(searchCard, 6)
-SecLbl(searchCard, "🔍  REZEPT SUCHEN")
+-- Suchleiste
+local searchCard=Card(CraftPage); Pad(searchCard,8,10,8,10); VList(searchCard,6); SecLbl(searchCard,"🔍  REZEPT SUCHEN")
+local searchOuter,searchBox=MkInput(searchCard,"Item-Name eingeben...",32); searchOuter.Size=UDim2.new(1,0,0,32); Craft.UI.Inp.Search=searchBox
+local searchRefBtn=NeonBtn(searchCard,"🔄  Rezepte neu laden",D.CyanDim,26)
 
-local searchOuter, searchBox = MkInput(searchCard, "Item-Name eingeben...", 32)
-searchOuter.Size = UDim2.new(1, 0, 0, 32)
-Craft.UI.Inp.Search = searchBox
-
-local searchRefBtn = NeonBtn(searchCard, "🔄  Rezepte neu laden", D.CyanDim, 26)
-
--- ── Craft-Menge ──────────────────────────────────────────────
-local amtCard = Card(CraftPage)
-Pad(amtCard, 8, 10, 8, 10)
-
-local amtRow = Instance.new("Frame", amtCard)
-amtRow.Size = UDim2.new(1, 0, 0, 32)
-amtRow.BackgroundTransparency = 1
-HList(amtRow, 8)
-
-local amtLabel = MkLbl(amtRow, "Craft-Menge:", 11, D.TextMid)
-amtLabel.Size = UDim2.new(0.45, 0, 1, 0)
-
-local amtOuter, amtBox = MkInput(amtRow, "1", 32)
-amtOuter.Size = UDim2.new(0.3, 0, 0, 32)
-amtBox.Text = "1"
-Craft.UI.Inp.Amount = amtBox
-
-local amtLbl = MkLbl(amtRow, "Stück", 10, D.TextLow)
-amtLbl.Size = UDim2.new(0.22, 0, 1, 0)
-Craft.UI.Lbl.AmtDisplay = amtLbl
-
+-- Craft-Menge
+local amtCard=Card(CraftPage); Pad(amtCard,8,10,8,10)
+local amtRow=Instance.new("Frame",amtCard); amtRow.Size=UDim2.new(1,0,0,32); amtRow.BackgroundTransparency=1; HList(amtRow,8)
+MkLbl(amtRow,"Craft-Menge:",11,D.TextMid).Size=UDim2.new(0.45,0,1,0)
+local amtOuter,amtBox=MkInput(amtRow,"1",32); amtOuter.Size=UDim2.new(0.3,0,0,32); amtBox.Text="1"; Craft.UI.Inp.Amount=amtBox
+MkLbl(amtRow,"Stück",10,D.TextLow).Size=UDim2.new(0.22,0,1,0)
 amtBox:GetPropertyChangedSignal("Text"):Connect(function()
-    local n = tonumber(amtBox.Text) or 1
-    if n < 1 then n = 1 end
-    Craft.CraftAmount = n
-    task.spawn(function() pcall(RebuildCraftingList) end)
+    Craft.CraftAmt=math.max(1,tonumber(amtBox.Text) or 1)
+    task.spawn(function() pcall(RebuildCraftList) end)
 end)
 
--- ── Rezept-Liste ─────────────────────────────────────────────
-SecLbl(CraftPage, "📜  VERFÜGBARE REZEPTE")
+-- Rezept-Liste
+SecLbl(CraftPage,"📜  VERFÜGBARE REZEPTE")
+Craft.UI.Fr.RecipeList=Instance.new("Frame",CraftPage); Craft.UI.Fr.RecipeList.Size=UDim2.new(1,0,0,0); Craft.UI.Fr.RecipeList.AutomaticSize=Enum.AutomaticSize.Y; Craft.UI.Fr.RecipeList.BackgroundTransparency=1; VList(Craft.UI.Fr.RecipeList,6)
+Craft.UI.Lbl.NoRecipes=MkLbl(Craft.UI.Fr.RecipeList,"Keine Rezepte gefunden.",12,D.TextLow); Craft.UI.Lbl.NoRecipes.Size=UDim2.new(1,0,0,30); Craft.UI.Lbl.NoRecipes.TextXAlignment=Enum.TextXAlignment.Center
 
-Craft.UI.Fr.RecipeList = Instance.new("Frame", CraftPage)
-Craft.UI.Fr.RecipeList.Size = UDim2.new(1, 0, 0, 0)
-Craft.UI.Fr.RecipeList.AutomaticSize = Enum.AutomaticSize.Y
-Craft.UI.Fr.RecipeList.BackgroundTransparency = 1
-VList(Craft.UI.Fr.RecipeList, 6)
+-- Auto-Collector
+local collCard=Card(CraftPage); Pad(collCard,10,10,10,10); VList(collCard,8); Stroke(collCard,D.Purple,1.5,0.3)
+SecLbl(collCard,"🤖  AUTO-COLLECTOR QUEUE")
+Craft.UI.Lbl.CollStatus=MkLbl(collCard,"Queue leer.",10,D.TextLow); Craft.UI.Lbl.CollStatus.Size=UDim2.new(1,0,0,16)
 
-Craft.UI.Lbl.NoRecipes = MkLbl(Craft.UI.Fr.RecipeList,
-    "Keine Rezepte gefunden.", 12, D.TextLow)
-Craft.UI.Lbl.NoRecipes.Size = UDim2.new(1, 0, 0, 30)
-Craft.UI.Lbl.NoRecipes.TextXAlignment = Enum.TextXAlignment.Center
+local collBarBg=Instance.new("Frame",collCard); collBarBg.Size=UDim2.new(1,0,0,6); collBarBg.BackgroundColor3=Color3.fromRGB(18,26,48); collBarBg.BorderSizePixel=0; collBarBg.Visible=false; Corner(collBarBg,3); Craft.UI.Fr.CollBarBg=collBarBg
+local collBarFill=Instance.new("Frame",collBarBg); collBarFill.Size=UDim2.new(0,0,1,0); collBarFill.BackgroundColor3=D.Purple; collBarFill.BorderSizePixel=0; Corner(collBarFill,3); Craft.UI.Fr.CollBarFill=collBarFill
 
--- ── Auto-Collector Sektion ───────────────────────────────────
-local collCard = Card(CraftPage)
-Pad(collCard, 10, 10, 10, 10)
-VList(collCard, 8)
-Stroke(collCard, D.Purple, 1.5, 0.3)
-SecLbl(collCard, "🤖  AUTO-COLLECTOR QUEUE")
+Craft.UI.Fr.CollQueue=Instance.new("Frame",collCard); Craft.UI.Fr.CollQueue.Size=UDim2.new(1,0,0,0); Craft.UI.Fr.CollQueue.AutomaticSize=Enum.AutomaticSize.Y; Craft.UI.Fr.CollQueue.BackgroundTransparency=1; VList(Craft.UI.Fr.CollQueue,4)
 
-Craft.UI.Lbl.CollStatus = MkLbl(collCard, "Queue leer.", 10, D.TextLow)
-Craft.UI.Lbl.CollStatus.Size = UDim2.new(1, 0, 0, 16)
+local collCtrlRow=Instance.new("Frame",collCard); collCtrlRow.Size=UDim2.new(1,0,0,34); collCtrlRow.BackgroundTransparency=1; HList(collCtrlRow,8)
 
--- Fortschrittsbalken
-local collBarBg = Instance.new("Frame", collCard)
-collBarBg.Size = UDim2.new(1, 0, 0, 6)
-collBarBg.BackgroundColor3 = Color3.fromRGB(18, 26, 48)
-collBarBg.BorderSizePixel = 0
-collBarBg.Visible = false
-Corner(collBarBg, 3)
-Craft.UI.Fr.CollBarBg = collBarBg
+Craft.UI.Btn.Start=Instance.new("TextButton",collCtrlRow)
+Craft.UI.Btn.Start.Size=UDim2.new(0.62,0,0,34); Craft.UI.Btn.Start.BackgroundColor3=Color3.fromRGB(40,10,80)
+Craft.UI.Btn.Start.Text="🤖  Start Auto-Farm"; Craft.UI.Btn.Start.TextColor3=D.Purple
+Craft.UI.Btn.Start.TextSize=11; Craft.UI.Btn.Start.Font=Enum.Font.GothamBold
+Craft.UI.Btn.Start.AutoButtonColor=false; Craft.UI.Btn.Start.BorderSizePixel=0; Corner(Craft.UI.Btn.Start,8); Stroke(Craft.UI.Btn.Start,D.Purple,1.5,0.2)
+Craft.UI.Btn.Start.MouseEnter:Connect(function() Tw(Craft.UI.Btn.Start,{BackgroundColor3=Color3.fromRGB(65,18,120)}) end)
+Craft.UI.Btn.Start.MouseLeave:Connect(function() Tw(Craft.UI.Btn.Start,{BackgroundColor3=Color3.fromRGB(40,10,80)}) end)
 
-local collBarFill = Instance.new("Frame", collBarBg)
-collBarFill.Size = UDim2.new(0, 0, 1, 0)
-collBarFill.BackgroundColor3 = D.Purple
-collBarFill.BorderSizePixel = 0
-Corner(collBarFill, 3)
-Craft.UI.Fr.CollBarFill = collBarFill
+local collStopBtn=Instance.new("TextButton",collCtrlRow); collStopBtn.Size=UDim2.new(0.34,0,0,34); collStopBtn.BackgroundColor3=D.RedDark; collStopBtn.Text="⏹ Stop"; collStopBtn.TextColor3=D.Red; collStopBtn.TextSize=11; collStopBtn.Font=Enum.Font.GothamBold; collStopBtn.AutoButtonColor=false; collStopBtn.BorderSizePixel=0; Corner(collStopBtn,8); Stroke(collStopBtn,D.Red,1,0.4)
+collStopBtn.MouseEnter:Connect(function() Tw(collStopBtn,{BackgroundColor3=D.Red}) end); collStopBtn.MouseLeave:Connect(function() Tw(collStopBtn,{BackgroundColor3=D.RedDark}) end)
 
--- Queue-Liste
-Craft.UI.Fr.CollQueue = Instance.new("Frame", collCard)
-Craft.UI.Fr.CollQueue.Size = UDim2.new(1, 0, 0, 0)
-Craft.UI.Fr.CollQueue.AutomaticSize = Enum.AutomaticSize.Y
-Craft.UI.Fr.CollQueue.BackgroundTransparency = 1
-VList(Craft.UI.Fr.CollQueue, 4)
+local collClearBtn=NeonBtn(collCard,"🗑  Queue leeren",D.Red,26)
 
--- Steuerungsreihe
-local collCtrlRow = Instance.new("Frame", collCard)
-collCtrlRow.Size = UDim2.new(1, 0, 0, 34)
-collCtrlRow.BackgroundTransparency = 1
-HList(collCtrlRow, 8)
-
-Craft.UI.Btn.StartCollect = Instance.new("TextButton", collCtrlRow)
-Craft.UI.Btn.StartCollect.Size = UDim2.new(0.62, 0, 0, 34)
-Craft.UI.Btn.StartCollect.BackgroundColor3 = Color3.fromRGB(40, 10, 80)
-Craft.UI.Btn.StartCollect.Text = "🤖  Start Auto-Collector"
-Craft.UI.Btn.StartCollect.TextColor3 = D.Purple
-Craft.UI.Btn.StartCollect.TextSize = 11
-Craft.UI.Btn.StartCollect.Font = Enum.Font.GothamBold
-Craft.UI.Btn.StartCollect.AutoButtonColor = false
-Craft.UI.Btn.StartCollect.BorderSizePixel = 0
-Corner(Craft.UI.Btn.StartCollect, 8)
-Stroke(Craft.UI.Btn.StartCollect, D.Purple, 1.5, 0.2)
-Craft.UI.Btn.StartCollect.MouseEnter:Connect(function()
-    Tw(Craft.UI.Btn.StartCollect, { BackgroundColor3 = Color3.fromRGB(65, 18, 120) })
-end)
-Craft.UI.Btn.StartCollect.MouseLeave:Connect(function()
-    Tw(Craft.UI.Btn.StartCollect, { BackgroundColor3 = Color3.fromRGB(40, 10, 80) })
-end)
-
-local collStopBtn = Instance.new("TextButton", collCtrlRow)
-collStopBtn.Size = UDim2.new(0.34, 0, 0, 34)
-collStopBtn.BackgroundColor3 = D.RedDark
-collStopBtn.Text = "⏹ Stop"
-collStopBtn.TextColor3 = D.Red
-collStopBtn.TextSize = 11
-collStopBtn.Font = Enum.Font.GothamBold
-collStopBtn.AutoButtonColor = false
-collStopBtn.BorderSizePixel = 0
-Corner(collStopBtn, 8)
-Stroke(collStopBtn, D.Red, 1, 0.4)
-collStopBtn.MouseEnter:Connect(function() Tw(collStopBtn, { BackgroundColor3 = D.Red }) end)
-collStopBtn.MouseLeave:Connect(function() Tw(collStopBtn, { BackgroundColor3 = D.RedDark }) end)
-
-local collClearBtn = NeonBtn(collCard, "🗑  Queue leeren", D.Red, 26)
-
--- ============================================================
---  QUEUE UI UPDATER
--- ============================================================
-local function UpdateCollectQueueUI()
-    -- Queue-Zeilen leeren
-    for _, v in pairs(Craft.UI.Fr.CollQueue:GetChildren()) do
-        if v:IsA("Frame") then v:Destroy() end
-    end
-
-    if #Craft.CollectQueue == 0 then
-        Craft.UI.Lbl.CollStatus.Text = "Queue leer."
-        Craft.UI.Lbl.CollStatus.TextColor3 = D.TextLow
-        Craft.UI.Fr.CollBarBg.Visible = false
-        return
-    end
-
-    Craft.UI.Fr.CollBarBg.Visible = true
-    Craft.UI.Lbl.CollStatus.Text = string.format(
-        "🤖 %d Material%s in Queue", #Craft.CollectQueue,
-        #Craft.CollectQueue == 1 and "" or "ien")
-    Craft.UI.Lbl.CollStatus.TextColor3 = D.Purple
-
-    for i, entry in ipairs(Craft.CollectQueue) do
-        local cur    = GetItemAmt(entry.matName)
-        local needed = entry.needed
-        local pct    = math.min(1, cur / math.max(1, needed))
-        local done   = cur >= needed
-
-        local row = Instance.new("Frame", Craft.UI.Fr.CollQueue)
-        row.Size = UDim2.new(1, 0, 0, 40)
-        row.BorderSizePixel = 0
-        Corner(row, 7)
-        if done then
-            row.BackgroundColor3 = D.GreenDark
-            Stroke(row, D.GreenBright, 1.5, 0)
-        else
-            row.BackgroundColor3 = D.CardHover
-            Stroke(row, D.Purple, 1, 0.5)
-        end
-
-        -- Farbbalken links
-        local acBar = Instance.new("Frame", row)
-        acBar.Size = UDim2.new(0, 3, 0.7, 0)
-        acBar.Position = UDim2.new(0, 0, 0.15, 0)
-        acBar.BackgroundColor3 = done and D.GreenBright or D.Purple
-        acBar.BorderSizePixel = 0
-        Corner(acBar, 2)
-
-        -- Material-Name
-        local nL = Instance.new("TextLabel", row)
-        nL.Position = UDim2.new(0, 10, 0, 4)
-        nL.Size = UDim2.new(0.6, -10, 0, 15)
-        nL.BackgroundTransparency = 1
-        nL.Text = (done and "✅ " or (i == 1 and "▶ " or "")) .. entry.matName
-        nL.TextColor3 = done and D.GreenBright or (i == 1 and D.Cyan or D.TextHi)
-        nL.TextSize = 11
-        nL.Font = Enum.Font.GothamBold
-        nL.TextXAlignment = Enum.TextXAlignment.Left
-        nL.TextTruncate = Enum.TextTruncate.AtEnd
-
-        -- Fortschritt
-        local pL = Instance.new("TextLabel", row)
-        pL.Position = UDim2.new(0, 10, 0, 21)
-        pL.Size = UDim2.new(0.6, -10, 0, 14)
-        pL.BackgroundTransparency = 1
-        if done then
-            pL.Text = string.format("✅ %d / %d", cur, needed)
-            pL.TextColor3 = D.GreenBright
-        else
-            pL.Text = string.format("%d / %d  (%.0f%%)", cur, needed, pct * 100)
-            pL.TextColor3 = D.TextLow
-        end
-        pL.TextSize = 10
-        pL.Font = Enum.Font.GothamSemibold
-        pL.TextXAlignment = Enum.TextXAlignment.Left
-
-        -- Welt-Info (rechts)
-        if entry.chapId then
-            local wLbl = Instance.new("TextLabel", row)
-            wLbl.Position = UDim2.new(0.6, 2, 0, 4)
-            wLbl.Size = UDim2.new(0.32, -6, 0, 30)
-            wLbl.BackgroundTransparency = 1
-            wLbl.Text = string.format("[%s]\n%s", entry.mode or "?", entry.chapId or "?")
-            wLbl.TextColor3 = D.TextLow
-            wLbl.TextSize = 8
-            wLbl.Font = Enum.Font.Gotham
-            wLbl.TextXAlignment = Enum.TextXAlignment.Right
-            wLbl.TextWrapped = true
-        end
-
-        -- Fortschrittsbalken
-        local pgBg = Instance.new("Frame", row)
-        pgBg.Size = UDim2.new(1, -14, 0, 3)
-        pgBg.Position = UDim2.new(0, 10, 1, -5)
-        pgBg.BackgroundColor3 = Color3.fromRGB(20, 28, 50)
-        pgBg.BorderSizePixel = 0
-        Corner(pgBg, 2)
-        local pgF = Instance.new("Frame", pgBg)
-        pgF.Size = UDim2.new(pct, 0, 1, 0)
-        pgF.BackgroundColor3 = done and D.GreenBright or D.Purple
-        pgF.BorderSizePixel = 0
-        Corner(pgF, 2)
-
-        -- Entfernen-Button
-        local ci = i
-        local xBtn = Instance.new("TextButton", row)
-        xBtn.Size = UDim2.new(0, 28, 0, 28)
-        xBtn.Position = UDim2.new(1, -32, 0.5, -14)
-        xBtn.BackgroundColor3 = Color3.fromRGB(50, 12, 12)
-        xBtn.Text = "✕"
-        xBtn.TextColor3 = D.Red
-        xBtn.TextSize = 11
-        xBtn.Font = Enum.Font.GothamBold
-        xBtn.AutoButtonColor = false
-        xBtn.BorderSizePixel = 0
-        Corner(xBtn, 6)
-        Stroke(xBtn, D.Red, 1, 0.4)
-        xBtn.MouseEnter:Connect(function() Tw(xBtn, { BackgroundColor3 = D.RedDark }) end)
-        xBtn.MouseLeave:Connect(function() Tw(xBtn, { BackgroundColor3 = Color3.fromRGB(50, 12, 12) }) end)
-        xBtn.MouseButton1Click:Connect(function()
-            table.remove(Craft.CollectQueue, ci)
-            UpdateCollectQueueUI()
-        end)
+-- ── Queue-UI ──────────────────────────────────────────────────
+local function UpdateQueueUI()
+    for _,v in pairs(Craft.UI.Fr.CollQueue:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
+    if #Craft.Queue==0 then Craft.UI.Lbl.CollStatus.Text="Queue leer."; Craft.UI.Lbl.CollStatus.TextColor3=D.TextLow; Craft.UI.Fr.CollBarBg.Visible=false; return end
+    Craft.UI.Fr.CollBarBg.Visible=true
+    Craft.UI.Lbl.CollStatus.Text=string.format("🤖 %d Material%s in Queue",#Craft.Queue,#Craft.Queue==1 and "" or "ien"); Craft.UI.Lbl.CollStatus.TextColor3=D.Purple
+    for i,entry in ipairs(Craft.Queue) do
+        local cur=GetItemAmt(entry.matName); local needed=entry.needed; local pct=math.min(1,cur/math.max(1,needed)); local done=cur>=needed
+        local row=Instance.new("Frame",Craft.UI.Fr.CollQueue); row.Size=UDim2.new(1,0,0,40); row.BorderSizePixel=0; Corner(row,7)
+        if done then row.BackgroundColor3=D.GreenDark; Stroke(row,D.GreenBright,1.5,0) else row.BackgroundColor3=D.CardHover; Stroke(row,D.Purple,1,0.5) end
+        local acBar=Instance.new("Frame",row); acBar.Size=UDim2.new(0,3,0.7,0); acBar.Position=UDim2.new(0,0,0.15,0); acBar.BackgroundColor3=done and D.GreenBright or D.Purple; acBar.BorderSizePixel=0; Corner(acBar,2)
+        local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,10,0,4); nL.Size=UDim2.new(0.6,-10,0,15); nL.BackgroundTransparency=1; nL.Text=(done and "✅ " or (i==1 and "▶ " or ""))..entry.matName; nL.TextColor3=done and D.GreenBright or (i==1 and D.Cyan or D.TextHi); nL.TextSize=11; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
+        local pL=Instance.new("TextLabel",row); pL.Position=UDim2.new(0,10,0,21); pL.Size=UDim2.new(0.6,-10,0,14); pL.BackgroundTransparency=1
+        if done then pL.Text=string.format("✅ %d / %d",cur,needed); pL.TextColor3=D.GreenBright else pL.Text=string.format("%d / %d  (%.0f%%)",cur,needed,pct*100); pL.TextColor3=D.TextLow end
+        pL.TextSize=10; pL.Font=Enum.Font.GothamSemibold; pL.TextXAlignment=Enum.TextXAlignment.Left
+        if entry.chapId then local wLbl=Instance.new("TextLabel",row); wLbl.Position=UDim2.new(0.6,2,0,4); wLbl.Size=UDim2.new(0.32,-6,0,30); wLbl.BackgroundTransparency=1; wLbl.Text=string.format("[%s]\n%s",entry.mode or "?",entry.chapId or "?"); wLbl.TextColor3=D.TextLow; wLbl.TextSize=8; wLbl.Font=Enum.Font.Gotham; wLbl.TextXAlignment=Enum.TextXAlignment.Right; wLbl.TextWrapped=true end
+        local pgBg=Instance.new("Frame",row); pgBg.Size=UDim2.new(1,-14,0,3); pgBg.Position=UDim2.new(0,10,1,-5); pgBg.BackgroundColor3=Color3.fromRGB(20,28,50); pgBg.BorderSizePixel=0; Corner(pgBg,2)
+        local pgF=Instance.new("Frame",pgBg); pgF.Size=UDim2.new(pct,0,1,0); pgF.BackgroundColor3=done and D.GreenBright or D.Purple; pgF.BorderSizePixel=0; Corner(pgF,2)
+        local ci=i; local xBtn=Instance.new("TextButton",row); xBtn.Size=UDim2.new(0,28,0,28); xBtn.Position=UDim2.new(1,-32,0.5,-14); xBtn.BackgroundColor3=Color3.fromRGB(50,12,12); xBtn.Text="✕"; xBtn.TextColor3=D.Red; xBtn.TextSize=11; xBtn.Font=Enum.Font.GothamBold; xBtn.AutoButtonColor=false; xBtn.BorderSizePixel=0; Corner(xBtn,6); Stroke(xBtn,D.Red,1,0.4)
+        xBtn.MouseEnter:Connect(function() Tw(xBtn,{BackgroundColor3=D.RedDark}) end); xBtn.MouseLeave:Connect(function() Tw(xBtn,{BackgroundColor3=Color3.fromRGB(50,12,12)}) end)
+        xBtn.MouseButton1Click:Connect(function() table.remove(Craft.Queue,ci); UpdateQueueUI() end)
     end
 end
 
--- ============================================================
---  REZEPT-KARTE ERSTELLEN
--- ============================================================
+-- ── Rezept-Karte aufbauen ─────────────────────────────────────
 local function BuildRecipeCard(parent, itemName, recipeData, craftAmt)
     craftAmt = craftAmt or 1
-
-    -- Materialen prüfen
     local allMet = true
     local matLines = {}
     if recipeData.Requirement then
-        for matName, matAmt in pairs(recipeData.Requirement) do
-            local have    = GetItemAmt(matName)
-            local need    = matAmt * craftAmt
-            local met     = have >= need
-            if not met then allMet = false end
-            table.insert(matLines, { name = matName, have = have, need = need, met = met })
+        for mat, amt in pairs(recipeData.Requirement) do
+            local have=GetItemAmt(mat); local need=amt*craftAmt; local met=have>=need
+            if not met then allMet=false end
+            table.insert(matLines,{name=mat,have=have,need=need,met=met})
         end
-        table.sort(matLines, function(a, b)
-            if a.met ~= b.met then return not a.met end
-            return a.name < b.name
-        end)
+        table.sort(matLines,function(a,b) if a.met~=b.met then return not a.met end; return a.name<b.name end)
     end
 
     -- Karte
-    local card = Instance.new("Frame", parent)
-    card.Size = UDim2.new(1, 0, 0, 0)
-    card.AutomaticSize = Enum.AutomaticSize.Y
-    card.BorderSizePixel = 0
-    Corner(card, 9)
+    local card=Instance.new("Frame",parent); card.Size=UDim2.new(1,0,0,0); card.AutomaticSize=Enum.AutomaticSize.Y; card.BorderSizePixel=0; Corner(card,9)
+    if allMet then card.BackgroundColor3=Color3.fromRGB(0,28,16); Stroke(card,D.GreenBright,1.5,0.1)
+    else card.BackgroundColor3=D.Card; Stroke(card,D.Border,1,0.3) end
 
-    if allMet then
-        card.BackgroundColor3 = Color3.fromRGB(0, 30, 18)
-        Stroke(card, D.GreenBright, 1.5, 0.15)
-    else
-        card.BackgroundColor3 = D.Card
-        Stroke(card, D.Border, 1, 0.3)
-    end
+    local inner=Instance.new("Frame",card); inner.Size=UDim2.new(1,0,0,0); inner.AutomaticSize=Enum.AutomaticSize.Y; inner.BackgroundTransparency=1; Pad(inner,8,10,8,10); VList(inner,6)
 
-    -- Innenlayout
-    local innerPad = Instance.new("Frame", card)
-    innerPad.Size = UDim2.new(1, 0, 0, 0)
-    innerPad.AutomaticSize = Enum.AutomaticSize.Y
-    innerPad.BackgroundTransparency = 1
-    Pad(innerPad, 8, 10, 8, 10)
-    VList(innerPad, 6)
+    -- Header: Viewport + Name
+    local headerRow=Instance.new("Frame",inner); headerRow.Size=UDim2.new(1,0,0,56); headerRow.BackgroundTransparency=1
 
-    -- Header-Zeile: Viewport + Name + Kosten
-    local headerRow = Instance.new("Frame", innerPad)
-    headerRow.Size = UDim2.new(1, 0, 0, 56)
-    headerRow.BackgroundTransparency = 1
-
-    -- ViewportFrame (Modell-Vorschau)
-    local vp = Instance.new("ViewportFrame", headerRow)
-    vp.Size = UDim2.new(0, 52, 0, 52)
-    vp.Position = UDim2.new(0, 0, 0, 0)
-    vp.BackgroundColor3 = Color3.fromRGB(12, 18, 36)
-    vp.BorderSizePixel = 0
-    vp.ImageColor3 = Color3.new(1, 1, 1)
-    Corner(vp, 7)
-    Stroke(vp, allMet and D.GreenBright or D.Border, 1, allMet and 0.3 or 0.5)
-
-    -- Modell laden (asynchron damit GUI nicht blockiert)
+    local vp=Instance.new("ViewportFrame",headerRow); vp.Size=UDim2.new(0,52,0,52); vp.Position=UDim2.new(0,0,0,0); vp.BackgroundColor3=Color3.fromRGB(12,18,36); vp.BorderSizePixel=0; vp.ImageColor3=Color3.new(1,1,1); Corner(vp,7); Stroke(vp,allMet and D.GreenBright or D.Border,1,allMet and 0.2 or 0.5)
     task.spawn(function()
-        local ok = LoadModelIntoViewport(vp, itemName)
+        local ok=LoadViewport(vp,itemName)
         if not ok then
-            -- Fallback: Grauer Hintergrund mit Initiale
-            vp.ImageColor3 = Color3.fromRGB(0.3, 0.3, 0.3)
-            local fallLbl = Instance.new("TextLabel", vp)
-            fallLbl.Size = UDim2.new(1, 0, 1, 0)
-            fallLbl.BackgroundTransparency = 1
-            fallLbl.Text = itemName:sub(1, 1):upper()
-            fallLbl.TextColor3 = D.TextMid
-            fallLbl.TextSize = 18
-            fallLbl.Font = Enum.Font.GothamBold
-            fallLbl.TextXAlignment = Enum.TextXAlignment.Center
-            fallLbl.TextYAlignment = Enum.TextYAlignment.Center
+            local fb=Instance.new("TextLabel",vp); fb.Size=UDim2.new(1,0,1,0); fb.BackgroundTransparency=1; fb.Text=itemName:sub(1,1):upper(); fb.TextColor3=D.TextMid; fb.TextSize=18; fb.Font=Enum.Font.GothamBold; fb.TextXAlignment=Enum.TextXAlignment.Center; fb.TextYAlignment=Enum.TextYAlignment.Center
         end
     end)
 
-    -- Item-Name
-    local nameLbl = Instance.new("TextLabel", headerRow)
-    nameLbl.Position = UDim2.new(0, 60, 0, 2)
-    nameLbl.Size = UDim2.new(1, -120, 0, 20)
-    nameLbl.BackgroundTransparency = 1
-    nameLbl.Text = itemName
-    nameLbl.TextColor3 = allMet and D.GreenBright or D.TextHi
-    nameLbl.TextSize = 12
-    nameLbl.Font = Enum.Font.GothamBold
-    nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-    nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+    local nameLbl=Instance.new("TextLabel",headerRow); nameLbl.Position=UDim2.new(0,60,0,2); nameLbl.Size=UDim2.new(1,-120,0,20); nameLbl.BackgroundTransparency=1; nameLbl.Text=itemName; nameLbl.TextColor3=allMet and D.GreenBright or D.TextHi; nameLbl.TextSize=12; nameLbl.Font=Enum.Font.GothamBold; nameLbl.TextXAlignment=Enum.TextXAlignment.Left; nameLbl.TextTruncate=Enum.TextTruncate.AtEnd
+    if recipeData.Cost then local costLbl=Instance.new("TextLabel",headerRow); costLbl.Position=UDim2.new(0,60,0,22); costLbl.Size=UDim2.new(1,-120,0,14); costLbl.BackgroundTransparency=1; costLbl.Text="💰 "..FmtNum(recipeData.Cost*craftAmt).." Gold"; costLbl.TextColor3=D.Gold; costLbl.TextSize=10; costLbl.Font=Enum.Font.GothamSemibold; costLbl.TextXAlignment=Enum.TextXAlignment.Left end
+    local badgeLbl=Instance.new("TextLabel",headerRow); badgeLbl.Position=UDim2.new(1,-60,0,0); badgeLbl.Size=UDim2.new(0,56,0,20); badgeLbl.BackgroundTransparency=1
+    if allMet then badgeLbl.Text="✅ Bereit"; badgeLbl.TextColor3=D.GreenBright else local mc=0; for _,ml in ipairs(matLines) do if ml.met then mc=mc+1 end end; badgeLbl.Text=string.format("%d/%d",mc,#matLines); badgeLbl.TextColor3=D.Orange end
+    badgeLbl.TextSize=10; badgeLbl.Font=Enum.Font.GothamBold; badgeLbl.TextXAlignment=Enum.TextXAlignment.Right
 
-    -- Kosten-Label
-    local costLbl = Instance.new("TextLabel", headerRow)
-    costLbl.Position = UDim2.new(0, 60, 0, 22)
-    costLbl.Size = UDim2.new(1, -120, 0, 14)
-    costLbl.BackgroundTransparency = 1
-    if recipeData.Cost then
-        costLbl.Text = "💰 " .. FmtNum(recipeData.Cost * craftAmt) .. " Gold"
-        costLbl.TextColor3 = D.Gold
-    else
-        costLbl.Text = ""
-    end
-    costLbl.TextSize = 10
-    costLbl.Font = Enum.Font.GothamSemibold
-    costLbl.TextXAlignment = Enum.TextXAlignment.Left
-
-    -- Status-Badge (rechts)
-    local badgeLbl = Instance.new("TextLabel", headerRow)
-    badgeLbl.Position = UDim2.new(1, -56, 0, 0)
-    badgeLbl.Size = UDim2.new(0, 52, 0, 20)
-    badgeLbl.BackgroundTransparency = 1
-    if allMet then
-        badgeLbl.Text = "✅ Bereit"
-        badgeLbl.TextColor3 = D.GreenBright
-    else
-        local metCount = 0
-        for _, ml in ipairs(matLines) do if ml.met then metCount = metCount + 1 end end
-        badgeLbl.Text = string.format("%d/%d", metCount, #matLines)
-        badgeLbl.TextColor3 = D.Orange
-    end
-    badgeLbl.TextSize = 10
-    badgeLbl.Font = Enum.Font.GothamBold
-    badgeLbl.TextXAlignment = Enum.TextXAlignment.Right
-
-    -- Materialien-Zeilen
+    -- Material-Zeilen  Format: "14 / 20  Erde"
     if #matLines > 0 then
-        local matSep = Instance.new("Frame", innerPad)
-        matSep.Size = UDim2.new(1, 0, 0, 1)
-        matSep.BackgroundColor3 = D.Border
-        matSep.BackgroundTransparency = 0.4
-        matSep.BorderSizePixel = 0
-
-        local matHolder = Instance.new("Frame", innerPad)
-        matHolder.Size = UDim2.new(1, 0, 0, 0)
-        matHolder.AutomaticSize = Enum.AutomaticSize.Y
-        matHolder.BackgroundTransparency = 1
-        VList(matHolder, 3)
-
-        for _, ml in ipairs(matLines) do
-            local matRow = Instance.new("Frame", matHolder)
-            matRow.Size = UDim2.new(1, 0, 0, 22)
-            matRow.BackgroundTransparency = 1
-
-            -- Farbpunkt
-            local dot = Instance.new("Frame", matRow)
-            dot.Size = UDim2.new(0, 8, 0, 8)
-            dot.Position = UDim2.new(0, 0, 0.5, -4)
-            dot.BackgroundColor3 = ml.met and D.Green or D.Red
-            dot.BorderSizePixel = 0
-            Corner(dot, 99)
-
-            -- Material-Text: "have/need Name"
-            local mLbl = Instance.new("TextLabel", matRow)
-            mLbl.Position = UDim2.new(0, 14, 0, 0)
-            mLbl.Size = UDim2.new(0.65, -14, 1, 0)
-            mLbl.BackgroundTransparency = 1
-            mLbl.Text = string.format("%d / %d  %s", ml.have, ml.need, ml.name)
-            mLbl.TextColor3 = ml.met and D.Green or D.TextMid
-            mLbl.TextSize = 10
-            mLbl.Font = Enum.Font.GothamSemibold
-            mLbl.TextXAlignment = Enum.TextXAlignment.Left
-            mLbl.TextTruncate = Enum.TextTruncate.AtEnd
-
-            -- Fortschrittsbalken
-            local pct = math.min(1, ml.have / math.max(1, ml.need))
-            local pgBg2 = Instance.new("Frame", matRow)
-            pgBg2.Size = UDim2.new(0.33, 0, 0, 4)
-            pgBg2.Position = UDim2.new(0.66, 0, 0.5, -2)
-            pgBg2.BackgroundColor3 = Color3.fromRGB(20, 28, 50)
-            pgBg2.BorderSizePixel = 0
-            Corner(pgBg2, 2)
-            local pgF2 = Instance.new("Frame", pgBg2)
-            pgF2.Size = UDim2.new(pct, 0, 1, 0)
-            pgF2.BackgroundColor3 = ml.met and D.Green or D.Red
-            pgF2.BorderSizePixel = 0
-            Corner(pgF2, 2)
+        local matSep=Instance.new("Frame",inner); matSep.Size=UDim2.new(1,0,0,1); matSep.BackgroundColor3=D.Border; matSep.BackgroundTransparency=0.4; matSep.BorderSizePixel=0
+        local matHolder=Instance.new("Frame",inner); matHolder.Size=UDim2.new(1,0,0,0); matHolder.AutomaticSize=Enum.AutomaticSize.Y; matHolder.BackgroundTransparency=1; VList(matHolder,3)
+        for _,ml in ipairs(matLines) do
+            local mr=Instance.new("Frame",matHolder); mr.Size=UDim2.new(1,0,0,22); mr.BackgroundTransparency=1
+            local dot=Instance.new("Frame",mr); dot.Size=UDim2.new(0,8,0,8); dot.Position=UDim2.new(0,0,0.5,-4); dot.BackgroundColor3=ml.met and D.Green or D.Red; dot.BorderSizePixel=0; Corner(dot,99)
+            local mLbl=Instance.new("TextLabel",mr); mLbl.Position=UDim2.new(0,14,0,0); mLbl.Size=UDim2.new(0.65,-14,1,0); mLbl.BackgroundTransparency=1
+            mLbl.Text=string.format("%d / %d  %s",ml.have,ml.need,ml.name)   -- Format: "14/20 Erde"
+            mLbl.TextColor3=ml.met and D.Green or D.TextMid; mLbl.TextSize=10; mLbl.Font=Enum.Font.GothamSemibold; mLbl.TextXAlignment=Enum.TextXAlignment.Left; mLbl.TextTruncate=Enum.TextTruncate.AtEnd
+            local pct=math.min(1,ml.have/math.max(1,ml.need))
+            local pgBg=Instance.new("Frame",mr); pgBg.Size=UDim2.new(0.33,0,0,4); pgBg.Position=UDim2.new(0.66,0,0.5,-2); pgBg.BackgroundColor3=Color3.fromRGB(20,28,50); pgBg.BorderSizePixel=0; Corner(pgBg,2)
+            local pgF=Instance.new("Frame",pgBg); pgF.Size=UDim2.new(pct,0,1,0); pgF.BackgroundColor3=ml.met and D.Green or D.Red; pgF.BorderSizePixel=0; Corner(pgF,2)
         end
     end
 
-    -- Button-Zeile
-    local btnRow = Instance.new("Frame", innerPad)
-    btnRow.Size = UDim2.new(1, 0, 0, 34)
-    btnRow.BackgroundTransparency = 1
-    HList(btnRow, 8)
+    -- Buttons
+    local btnRow=Instance.new("Frame",inner); btnRow.Size=UDim2.new(1,0,0,34); btnRow.BackgroundTransparency=1; HList(btnRow,8)
 
     -- Craft-Button
-    local craftBtn = Instance.new("TextButton", btnRow)
-    craftBtn.Size = UDim2.new(allMet and 0.5 or 0.48, 0, 0, 34)
-    craftBtn.Font = Enum.Font.GothamBold
-    craftBtn.TextSize = 11
-    craftBtn.AutoButtonColor = false
-    craftBtn.BorderSizePixel = 0
-    Corner(craftBtn, 8)
-
+    local craftBtn=Instance.new("TextButton",btnRow)
+    craftBtn.Size=UDim2.new(allMet and 1 or 0.48,0,0,34); craftBtn.Font=Enum.Font.GothamBold; craftBtn.TextSize=11; craftBtn.AutoButtonColor=false; craftBtn.BorderSizePixel=0; Corner(craftBtn,8)
     if allMet then
-        craftBtn.BackgroundColor3 = D.GreenDark
-        craftBtn.Text = "⚒  Jetzt Craften!"
-        craftBtn.TextColor3 = D.GreenBright
-        Stroke(craftBtn, D.GreenBright, 1.5, 0)
-        craftBtn.MouseEnter:Connect(function()
-            Tw(craftBtn, { BackgroundColor3 = Color3.fromRGB(0, 80, 40) })
-        end)
-        craftBtn.MouseLeave:Connect(function()
-            Tw(craftBtn, { BackgroundColor3 = D.GreenDark })
-        end)
+        craftBtn.BackgroundColor3=D.GreenDark; craftBtn.Text="⚒  Jetzt Craften!"; craftBtn.TextColor3=D.GreenBright; Stroke(craftBtn,D.GreenBright,1.5,0)
+        craftBtn.MouseEnter:Connect(function() Tw(craftBtn,{BackgroundColor3=Color3.fromRGB(0,80,40)}) end); craftBtn.MouseLeave:Connect(function() Tw(craftBtn,{BackgroundColor3=D.GreenDark}) end)
     else
-        craftBtn.BackgroundColor3 = Color3.fromRGB(18, 22, 38)
-        craftBtn.Text = "⚒  Craften"
-        craftBtn.TextColor3 = D.TextLow
-        Stroke(craftBtn, D.TextLow, 1, 0.6)
-        craftBtn.MouseEnter:Connect(function()
-            if not allMet then return end
-            Tw(craftBtn, { BackgroundColor3 = Color3.fromRGB(0, 80, 40) })
-        end)
+        craftBtn.BackgroundColor3=Color3.fromRGB(18,22,38); craftBtn.Text="⚒  Craften"; craftBtn.TextColor3=D.TextLow; Stroke(craftBtn,D.TextLow,1,0.6)
     end
 
-    local capName = itemName
-    local capAmt  = craftAmt
+    local capName=itemName; local capAmt=craftAmt
     craftBtn.MouseButton1Click:Connect(function()
-        if not allMet then
-            SetCraftStatus("❌ Nicht alle Materialien vorhanden!", D.Red)
-            task.delay(2, function()
-                pcall(function() SetCraftStatus("Bereit.", D.TextMid) end)
-            end)
-            return
-        end
-        -- Craft-Remote feuern
-        pcall(function()
-            RS.Remote.Server.Crafting.Event:FireServer(capName, capAmt, capAmt)
-        end)
-        craftBtn.Text = "⏳ Craftet..."
-        craftBtn.TextColor3 = D.Yellow
-        SetCraftStatus("⚒ Crafting: " .. capName .. " × " .. capAmt, D.Yellow)
-        task.delay(2.5, function()
-            pcall(function()
-                craftBtn.Text = "⚒  Jetzt Craften!"
-                craftBtn.TextColor3 = D.GreenBright
-                SetCraftStatus("✅ Craft abgeschickt: " .. capName, D.Green)
-                -- Liste neu laden
-                task.spawn(function() pcall(RebuildCraftingList) end)
-            end)
-        end)
+        -- Nochmal prüfen (Inventar kann sich geändert haben)
+        if not AllMatsMet(capName,capAmt) then SetStatus("❌ Nicht alle Materialien vorhanden!",D.Red); task.delay(2,function() pcall(function() SetStatus("Bereit.",D.TextMid) end) end); return end
+        -- Remote feuern
+        pcall(function() RS.Remote.Server.Crafting.Event:FireServer(capName,"1","1") end)
+        craftBtn.Text="⏳ Craftet..."; craftBtn.TextColor3=D.Yellow
+        SetStatus("⚒ Crafting: "..capName.." × "..capAmt,D.Yellow)
+        task.delay(2.5,function() pcall(function() craftBtn.Text="⚒  Jetzt Craften!"; craftBtn.TextColor3=D.GreenBright; SetStatus("✅ Craft abgeschickt: "..capName,D.Green); task.spawn(function() pcall(RebuildCraftList) end) end) end)
     end)
 
-    -- Auto-Collect Button (nur wenn Materialien fehlen)
+    -- Sammeln-Button (nur wenn Mats fehlen)
     if not allMet then
-        local collectBtn = Instance.new("TextButton", btnRow)
-        collectBtn.Size = UDim2.new(0.48, 0, 0, 34)
-        collectBtn.BackgroundColor3 = Color3.fromRGB(30, 10, 60)
-        collectBtn.Text = "🤖 Sammeln"
-        collectBtn.TextColor3 = D.Purple
-        collectBtn.TextSize = 11
-        collectBtn.Font = Enum.Font.GothamBold
-        collectBtn.AutoButtonColor = false
-        collectBtn.BorderSizePixel = 0
-        Corner(collectBtn, 8)
-        Stroke(collectBtn, D.Purple, 1, 0.3)
-        collectBtn.MouseEnter:Connect(function()
-            Tw(collectBtn, { BackgroundColor3 = Color3.fromRGB(55, 18, 100) })
-        end)
-        collectBtn.MouseLeave:Connect(function()
-            Tw(collectBtn, { BackgroundColor3 = Color3.fromRGB(30, 10, 60) })
-        end)
-
+        local collectBtn=Instance.new("TextButton",btnRow); collectBtn.Size=UDim2.new(0.48,0,0,34); collectBtn.BackgroundColor3=Color3.fromRGB(30,10,60); collectBtn.Text="🤖 Sammeln"; collectBtn.TextColor3=D.Purple; collectBtn.TextSize=11; collectBtn.Font=Enum.Font.GothamBold; collectBtn.AutoButtonColor=false; collectBtn.BorderSizePixel=0; Corner(collectBtn,8); Stroke(collectBtn,D.Purple,1,0.3)
+        collectBtn.MouseEnter:Connect(function() Tw(collectBtn,{BackgroundColor3=Color3.fromRGB(55,18,100)}) end); collectBtn.MouseLeave:Connect(function() Tw(collectBtn,{BackgroundColor3=Color3.fromRGB(30,10,60)}) end)
         collectBtn.MouseButton1Click:Connect(function()
-            -- Fehlende Materialien zur Queue hinzufügen
-            local added = 0
-            for _, ml in ipairs(matLines) do
+            local added=0
+            for _,ml in ipairs(matLines) do
                 if not ml.met then
-                    local stillNeeded = ml.need - ml.have
-                    -- Doppelte Einträge vermeiden
-                    local alreadyIn = false
-                    for _, e in ipairs(Craft.CollectQueue) do
-                        if e.matName == ml.name then
-                            alreadyIn = true
-                            -- Benötigte Menge ggf. erhöhen
-                            if e.needed < ml.need then
-                                e.needed = ml.need
-                            end
-                            break
-                        end
-                    end
-                    if not alreadyIn then
-                        -- Beste Welt suchen
-                        local chapId, worldId, mode = FindBestWorldForMaterial(ml.name)
-                        table.insert(Craft.CollectQueue, {
-                            matName = ml.name,
-                            needed  = ml.need,
-                            chapId  = chapId,
-                            worldId = worldId,
-                            mode    = mode or "Story",
-                        })
-                        added = added + 1
+                    local already=false; for _,e in ipairs(Craft.Queue) do if e.matName==ml.name then already=true; if e.needed<ml.need then e.needed=ml.need end; break end end
+                    if not already then
+                        local chapId,worldId,mode=FindBestWorld(ml.name)
+                        table.insert(Craft.Queue,{matName=ml.name,needed=ml.need,chapId=chapId,worldId=worldId,mode=mode or "Story"})
+                        added=added+1
                     end
                 end
             end
-            UpdateCollectQueueUI()
-            if added > 0 then
-                SetCraftStatus(
-                    string.format("➕ %d Material%s zur Queue hinzugefügt",
-                        added, added == 1 and "" or "ien"),
-                    D.Purple)
-            else
-                SetCraftStatus("ℹ Alle fehlenden Items bereits in Queue.", D.Yellow)
-            end
-            -- Karte blinken lassen
-            Tw(card, { BackgroundColor3 = Color3.fromRGB(40, 10, 70) }, TM)
-            task.delay(0.4, function()
-                Tw(card, { BackgroundColor3 = D.Card }, TM)
-            end)
+            UpdateQueueUI()
+            if added>0 then SetStatus(string.format("➕ %d Material%s zur Queue",added,added==1 and "" or "ien"),D.Purple)
+            else SetStatus("ℹ Bereits alle in Queue.",D.Yellow) end
+            Tw(card,{BackgroundColor3=Color3.fromRGB(35,10,65)},TM); task.delay(0.4,function() Tw(card,{BackgroundColor3=allMet and Color3.fromRGB(0,28,16) or D.Card},TM) end)
         end)
     end
-
     return card
 end
 
--- ============================================================
---  REZEPT-LISTE AUFBAUEN
--- ============================================================
-function RebuildCraftingList()
-    if not CraftingRecipes then
-        SetCraftStatus("⚠ CraftingRecipes nicht geladen!", D.Orange)
-        return
-    end
-
-    local filter    = (Craft.UI.Inp.Search.Text or ""):lower():match("^%s*(.-)%s*$")
-    local craftAmt  = math.max(1, tonumber(Craft.UI.Inp.Amount.Text) or 1)
-
-    -- Alte Karten entfernen
-    for _, v in pairs(Craft.UI.Fr.RecipeList:GetChildren()) do
-        if v:IsA("Frame") then v:Destroy() end
-    end
-
-    -- Rezepte sammeln + filtern
-    local recipes = {}
-    for itemName, data in pairs(CraftingRecipes) do
-        if type(data) == "table" and data.Requirement then
-            if filter == "" or itemName:lower():find(filter, 1, true) then
-                table.insert(recipes, { name = itemName, data = data })
-            end
+-- ── Rezept-Liste aufbauen ─────────────────────────────────────
+function RebuildCraftList()
+    if not CraftingRecipes then SetStatus("⚠ CraftingRecipes nicht geladen!",D.Orange); return end
+    local filter=(Craft.UI.Inp.Search.Text or ""):lower():match("^%s*(.-)%s*$")
+    local craftAmt=math.max(1,tonumber(Craft.UI.Inp.Amount.Text) or 1)
+    for _,v in pairs(Craft.UI.Fr.RecipeList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
+    local recipes={}
+    for itemName,data in pairs(CraftingRecipes) do
+        if type(data)=="table" and data.Requirement then
+            if filter=="" or itemName:lower():find(filter,1,true) then table.insert(recipes,{name=itemName,data=data}) end
         end
     end
-
-    -- Sortieren: zuerst craftbare Items, dann alphabetisch
-    table.sort(recipes, function(a, b)
-        local aOk = CheckRecipeMet(a.name, craftAmt)
-        local bOk = CheckRecipeMet(b.name, craftAmt)
-        if aOk ~= bOk then return aOk end
-        return a.name:lower() < b.name:lower()
-    end)
-
-    if #recipes == 0 then
-        Craft.UI.Lbl.NoRecipes.Visible = true
-        Craft.UI.Lbl.NoRecipes.Text =
-            filter ~= "" and ("Kein Rezept für '" .. filter .. "' gefunden.")
-                          or "Keine Rezepte geladen."
-        SetCraftStatus("0 Rezepte", D.TextLow)
-        return
+    table.sort(recipes,function(a,b) local aOk=AllMatsMet(a.name,craftAmt); local bOk=AllMatsMet(b.name,craftAmt); if aOk~=bOk then return aOk end; return a.name:lower()<b.name:lower() end)
+    if #recipes==0 then
+        Craft.UI.Lbl.NoRecipes.Visible=true; Craft.UI.Lbl.NoRecipes.Text=filter~="" and ("Kein Rezept für '"..filter.."'") or "Keine Rezepte."; SetStatus("0 Rezepte",D.TextLow); return
     end
-
-    Craft.UI.Lbl.NoRecipes.Visible = false
-
-    local craftable = 0
-    for _, r in ipairs(recipes) do
-        if CheckRecipeMet(r.name, craftAmt) then craftable = craftable + 1 end
-        BuildRecipeCard(Craft.UI.Fr.RecipeList, r.name, r.data, craftAmt)
-        -- Task-Yield um GUI nicht zu blockieren
+    Craft.UI.Lbl.NoRecipes.Visible=false; local craftable=0
+    for _,r in ipairs(recipes) do
+        if AllMatsMet(r.name,craftAmt) then craftable=craftable+1 end
+        BuildRecipeCard(Craft.UI.Fr.RecipeList,r.name,r.data,craftAmt)
         task.wait()
     end
-
-    SetCraftStatus(
-        string.format("✅ %d Rezept%s | %d craftbar",
-            #recipes, #recipes == 1 and "" or "e", craftable),
-        craftable > 0 and D.Green or D.TextMid)
+    SetStatus(string.format("✅ %d Rezept%s | %d craftbar",#recipes,#recipes==1 and "" or "e",craftable),craftable>0 and D.Green or D.TextMid)
 end
 
--- ============================================================
---  AUTO-COLLECTOR LOGIK
--- ============================================================
-local function RunAutoCollector()
-    if Craft.Collecting then
-        SetCraftStatus("⚠ Auto-Collector läuft bereits!", D.Yellow)
-        return
-    end
-    if #Craft.CollectQueue == 0 then
-        SetCraftStatus("⚠ Queue ist leer!", D.Orange)
-        return
-    end
-
-    -- PlayRoom-Remote holen (nutzt R.PlayRoom aus Hauptskript falls vorhanden)
-    local prRemote = nil
-    pcall(function()
-        prRemote = RS:WaitForChild("Remote", 5)
-            :WaitForChild("Server", 5)
-            :WaitForChild("PlayRoom", 5)
-            :WaitForChild("Event", 5)
-    end)
-
-    local function Fire(action, data)
-        if prRemote then
-            pcall(function()
-                if data then prRemote:FireServer(action, data)
-                else         prRemote:FireServer(action) end
-            end)
-        end
-    end
-
-    local function IsInLobby()
-        return game:GetService("Workspace"):FindFirstChild("Lobby") ~= nil
-    end
-
-    Craft.Collecting = true
-    Craft.UI.Btn.StartCollect.Text = "⏳  Sammle..."
-    Craft.UI.Btn.StartCollect.TextColor3 = D.Yellow
-    Craft.UI.Fr.CollBarBg.Visible = true
+-- ── Auto-Collector ────────────────────────────────────────────
+local function RunCollector()
+    if Craft.Collecting then SetStatus("⚠ Läuft bereits!",D.Yellow); return end
+    if #Craft.Queue==0 then SetStatus("⚠ Queue leer!",D.Orange); return end
+    local prRemote=nil; pcall(function() prRemote=RS:WaitForChild("Remote",5):WaitForChild("Server",5):WaitForChild("PlayRoom",5):WaitForChild("Event",5) end)
+    local function Fire(a,d) if prRemote then pcall(function() if d then prRemote:FireServer(a,d) else prRemote:FireServer(a) end end) end end
+    local function IsLobby() return game:GetService("Workspace"):FindFirstChild("Lobby")~=nil end
+    Craft.Collecting=true; Craft.UI.Btn.Start.Text="⏳  Sammle..."; Craft.UI.Btn.Start.TextColor3=D.Yellow; Craft.UI.Fr.CollBarBg.Visible=true
 
     task.spawn(function()
-        local totalItems = #Craft.CollectQueue
-
-        while Craft.Collecting and #Craft.CollectQueue > 0 do
-            -- Abgeschlossene Items entfernen
-            for i = #Craft.CollectQueue, 1, -1 do
-                local e = Craft.CollectQueue[i]
-                if GetItemAmt(e.matName) >= e.needed then
-                    SetCraftStatus(
-                        string.format("✅ '%s' gesammelt! Nächstes...", e.matName),
-                        D.Green)
-                    table.remove(Craft.CollectQueue, i)
-                    pcall(UpdateCollectQueueUI)
-                    task.wait(0.5)
+        while Craft.Collecting and #Craft.Queue>0 do
+            -- Erledigte Items entfernen
+            for i=#Craft.Queue,1,-1 do
+                if GetItemAmt(Craft.Queue[i].matName)>=Craft.Queue[i].needed then
+                    SetStatus(string.format("✅ '%s' fertig! Nächstes...",Craft.Queue[i].matName),D.Green)
+                    table.remove(Craft.Queue,i); pcall(UpdateQueueUI); task.wait(0.5)
                 end
             end
+            if #Craft.Queue==0 then break end
+            local cur=Craft.Queue[1]; local have=GetItemAmt(cur.matName); local pct=math.min(1,have/math.max(1,cur.needed))
+            pcall(function() Tw(Craft.UI.Fr.CollBarFill,{Size=UDim2.new(pct,0,1,0),BackgroundColor3=pct>=1 and D.Green or D.Purple},TF) end)
+            SetStatus(string.format("🤖 '%s': %d/%d",cur.matName,have,cur.needed),D.Purple)
+            if have>=cur.needed then task.wait(0.3); continue end
 
-            if #Craft.CollectQueue == 0 then break end
-
-            local current = Craft.CollectQueue[1]
-            local cur     = GetItemAmt(current.matName)
-
-            -- Fortschrittsbalken
-            local pct = math.min(1, cur / math.max(1, current.needed))
-            pcall(function()
-                Tw(Craft.UI.Fr.CollBarFill,
-                    { Size = UDim2.new(pct, 0, 1, 0),
-                      BackgroundColor3 = pct >= 1 and D.Green or D.Purple }, TF)
-            end)
-
-            SetCraftStatus(
-                string.format("🤖 Sammle '%s': %d/%d",
-                    current.matName, cur, current.needed),
-                D.Purple)
-
-            if cur >= current.needed then
-                -- Schon fertig, nächste Iteration räumt auf
-                task.wait(0.3)
-                continue
-            end
-
-            -- In Lobby-Phase: Stage starten
-            if IsInLobby() then
-                if not current.chapId then
-                    SetCraftStatus(
-                        string.format("⚠ Kein Chapter für '%s' bekannt – überspringe",
-                            current.matName), D.Orange)
-                    table.remove(Craft.CollectQueue, 1)
-                    pcall(UpdateCollectQueueUI)
-                    task.wait(1)
-                    continue
-                end
-
-                SetCraftStatus(
-                    string.format("🚀 Starte [%s] %s für '%s'",
-                        current.mode or "Story",
-                        current.chapId, current.matName),
-                    D.Cyan)
-
+            if IsLobby() then
+                if not cur.chapId then SetStatus(string.format("⚠ Kein Chapter für '%s'",cur.matName),D.Orange); table.remove(Craft.Queue,1); pcall(UpdateQueueUI); task.wait(1); continue end
+                SetStatus(string.format("🚀 [%s] %s für '%s'",cur.mode or "Story",cur.chapId,cur.matName),D.Cyan)
                 pcall(function()
-                    local m = current.mode or "Story"
-                    if m == "Story" then
-                        Fire("Create");                                                task.wait(0.4)
-                        Fire("Change-World",   { World   = current.worldId });        task.wait(0.4)
-                        Fire("Change-Chapter", { Chapter = current.chapId })
-                        task.wait(2.0)
-                        Fire("Submit");                                                task.wait(0.5)
-                        Fire("Start")
-                    elseif m == "Ranger" then
-                        Fire("Create");                                                task.wait(0.4)
-                        Fire("Change-Mode",
-                            { KeepWorld = current.worldId, Mode = "Ranger Stage" });  task.wait(0.6)
-                        Fire("Change-World",   { World   = current.worldId });        task.wait(0.4)
-                        Fire("Change-Chapter", { Chapter = current.chapId })
-                        task.wait(2.0)
-                        Fire("Submit");                                                task.wait(0.5)
-                        Fire("Start")
-                    elseif m == "Calamity" then
-                        Fire("Create");                                                task.wait(0.4)
-                        Fire("Change-Mode",    { Mode    = "Calamity" });             task.wait(0.4)
-                        Fire("Change-Chapter", { Chapter = current.chapId })
-                        task.wait(2.0)
-                        Fire("Submit");                                                task.wait(0.5)
-                        Fire("Start")
-                    end
+                    local m=cur.mode or "Story"
+                    if m=="Story" then Fire("Create"); task.wait(0.4); Fire("Change-World",{World=cur.worldId}); task.wait(0.4); Fire("Change-Chapter",{Chapter=cur.chapId}); task.wait(2); Fire("Submit"); task.wait(0.5); Fire("Start")
+                    elseif m=="Ranger" then Fire("Create"); task.wait(0.4); Fire("Change-Mode",{KeepWorld=cur.worldId,Mode="Ranger Stage"}); task.wait(0.6); Fire("Change-World",{World=cur.worldId}); task.wait(0.4); Fire("Change-Chapter",{Chapter=cur.chapId}); task.wait(2); Fire("Submit"); task.wait(0.5); Fire("Start")
+                    elseif m=="Calamity" then Fire("Create"); task.wait(0.4); Fire("Change-Mode",{Mode="Calamity"}); task.wait(0.4); Fire("Change-Chapter",{Chapter=cur.chapId}); task.wait(2); Fire("Submit"); task.wait(0.5); Fire("Start") end
                 end)
-
-                -- Warten bis Lobby verlassen
-                local leaveWait = 0
-                while IsInLobby() and leaveWait < 20 and Craft.Collecting do
-                    task.wait(1); leaveWait = leaveWait + 1
-                end
-
+                local lw=0; while IsLobby() and lw<20 and Craft.Collecting do task.wait(1); lw=lw+1 end
             else
-                -- In Runde: Inventar überwachen, auf Lobby warten
-                local roundWait = 0
-                while not IsInLobby() and roundWait < 360 and Craft.Collecting do
-                    task.wait(3); roundWait = roundWait + 3
-                    local nowHave = GetItemAmt(current.matName)
-                    local nowPct  = math.min(1, nowHave / math.max(1, current.needed))
-                    pcall(function()
-                        Tw(Craft.UI.Fr.CollBarFill,
-                            { Size = UDim2.new(nowPct, 0, 1, 0) }, TF)
-                    end)
-                    SetCraftStatus(
-                        string.format("⚔ Runde läuft | '%s': %d/%d",
-                            current.matName, nowHave, current.needed),
-                        D.Orange)
-                    if nowHave >= current.needed then
-                        break
-                    end
+                local rw=0
+                while not IsLobby() and rw<360 and Craft.Collecting do
+                    task.wait(3); rw=rw+3; local nowHave=GetItemAmt(cur.matName); local nowPct=math.min(1,nowHave/math.max(1,cur.needed))
+                    pcall(function() Tw(Craft.UI.Fr.CollBarFill,{Size=UDim2.new(nowPct,0,1,0)},TF) end)
+                    SetStatus(string.format("⚔ Runde | '%s': %d/%d",cur.matName,nowHave,cur.needed),D.Orange)
+                    if nowHave>=cur.needed then break end
                 end
-
-                -- Nach Runde kurz warten
-                if IsInLobby() then task.wait(2) end
+                if IsLobby() then task.wait(2) end
             end
-
-            pcall(UpdateCollectQueueUI)
+            pcall(UpdateQueueUI)
         end
 
-        -- Abschluss
-        Craft.Collecting = false
-        pcall(function()
-            Craft.UI.Btn.StartCollect.Text = "🤖  Start Auto-Collector"
-            Craft.UI.Btn.StartCollect.TextColor3 = D.Purple
-            Tw(Craft.UI.Fr.CollBarFill,
-                { Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = D.Green }, TM)
-        end)
-
-        if #Craft.CollectQueue == 0 then
-            SetCraftStatus("✅ Alle Materialien gesammelt! Bereit zum Craften.", D.GreenBright)
-            -- Rezept-Liste aktualisieren
-            task.delay(0.5, function()
-                pcall(RebuildCraftingList)
-            end)
-        else
-            SetCraftStatus("⏹ Auto-Collector gestoppt.", D.TextMid)
-        end
-
-        pcall(UpdateCollectQueueUI)
+        Craft.Collecting=false
+        pcall(function() Craft.UI.Btn.Start.Text="🤖  Start Auto-Farm"; Craft.UI.Btn.Start.TextColor3=D.Purple; Tw(Craft.UI.Fr.CollBarFill,{Size=UDim2.new(1,0,1,0),BackgroundColor3=D.Green},TM) end)
+        if #Craft.Queue==0 then SetStatus("✅ Alle Materialien gesammelt! Bereit zum Craften.",D.GreenBright); task.delay(0.5,function() pcall(RebuildCraftList) end)
+        else SetStatus("⏹ Auto-Collector gestoppt.",D.TextMid) end
+        pcall(UpdateQueueUI)
     end)
 end
 
--- ============================================================
---  BUTTON-VERBINDUNGEN
--- ============================================================
-searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-    Craft.SearchFilter = searchBox.Text
-    task.spawn(function() pcall(RebuildCraftingList) end)
-end)
+-- ── Button-Verbindungen ───────────────────────────────────────
+searchBox:GetPropertyChangedSignal("Text"):Connect(function() task.spawn(function() pcall(RebuildCraftList) end) end)
+searchRefBtn.MouseButton1Click:Connect(function() SetStatus("⏳ Lade neu...",D.Yellow); task.spawn(function() pcall(RebuildCraftList) end) end)
+Craft.UI.Btn.Start.MouseButton1Click:Connect(function() RunCollector() end)
+collStopBtn.MouseButton1Click:Connect(function() Craft.Collecting=false; Craft.UI.Btn.Start.Text="🤖  Start Auto-Farm"; Craft.UI.Btn.Start.TextColor3=D.Purple; SetStatus("⏹ Gestoppt.",D.TextMid) end)
+collClearBtn.MouseButton1Click:Connect(function() Craft.Collecting=false; Craft.Queue={}; UpdateQueueUI(); Craft.UI.Btn.Start.Text="🤖  Start Auto-Farm"; Craft.UI.Btn.Start.TextColor3=D.Purple; SetStatus("🗑 Queue geleert.",D.TextLow) end)
 
-searchRefBtn.MouseButton1Click:Connect(function()
-    SetCraftStatus("⏳ Lade Rezepte neu...", D.Yellow)
-    task.spawn(function() pcall(RebuildCraftingList) end)
-end)
-
-Craft.UI.Btn.StartCollect.MouseButton1Click:Connect(function()
-    RunAutoCollector()
-end)
-
-collStopBtn.MouseButton1Click:Connect(function()
-    Craft.Collecting = false
-    Craft.UI.Btn.StartCollect.Text = "🤖  Start Auto-Collector"
-    Craft.UI.Btn.StartCollect.TextColor3 = D.Purple
-    SetCraftStatus("⏹ Auto-Collector gestoppt.", D.TextMid)
-end)
-
-collClearBtn.MouseButton1Click:Connect(function()
-    Craft.Collecting = false
-    Craft.CollectQueue = {}
-    UpdateCollectQueueUI()
-    SetCraftStatus("🗑 Queue geleert.", D.TextLow)
-    Craft.UI.Btn.StartCollect.Text = "🤖  Start Auto-Collector"
-    Craft.UI.Btn.StartCollect.TextColor3 = D.Purple
-end)
-
--- ============================================================
---  AUTO-COLLECTOR: RewardDB-Brücke (für autofarm.lua)
--- ============================================================
--- autofarm.lua speichert AF.RewardDatabase im RAM.
--- Wir lesen es via HazeShared wenn verfügbar.
+-- Auto-Refresh
 task.spawn(function()
-    task.wait(3)
-    -- Periodisch die RewardDB-Referenz aus autofarm holen
-    while true do
-        task.wait(5)
-        pcall(function()
-            -- autofarm exportiert AF via _G.HazeShared._AutoFarm_RewardDB
-            -- (falls autofarm dies setzt – sonst nil, FindBestWorldForMaterial
-            --  greift dann auf WorldCache zurück)
-        end)
+    while true do task.wait(30)
+        pcall(function() if HS.CraftPage and HS.CraftPage.Visible then pcall(RebuildCraftList); pcall(UpdateQueueUI) end end)
     end
 end)
 
--- ============================================================
---  HAUPTSKRIPT-INTEGRATION
---  Damit autofarm.lua die RewardDB teilt:
---  Füge in autofarm.lua nach "AF.RewardDatabase = data" ein:
---    _G.HazeShared._AutoFarm_RewardDB = AF.RewardDatabase
---  Das craft-Modul liest es dann automatisch.
--- ============================================================
-
--- ============================================================
---  STARTUP
--- ============================================================
--- Kurze Verzögerung damit alle Remotes bereit sind
-task.delay(1.5, function()
-    SetCraftStatus("⏳ Lade Rezepte...", D.Yellow)
-    task.spawn(function()
-        if not CraftingRecipes then
-            -- Nochmal versuchen
-            pcall(function()
-                CraftingRecipes = require(RS.Shared.Info.CraftingRecipes)
-            end)
-        end
-        if not GetData then
-            pcall(function()
-                GetData = require(RS.Shared.GetData)
-            end)
-        end
-        pcall(RebuildCraftingList)
-        pcall(UpdateCollectQueueUI)
-    end)
-end)
-
--- Auto-Refresh alle 30s wenn Tab aktiv
-task.spawn(function()
-    while true do
-        task.wait(30)
-        pcall(function()
-            if CraftPage and CraftPage.Visible then
-                pcall(RebuildCraftingList)
-                pcall(UpdateCollectQueueUI)
-            end
-        end)
-    end
+-- ── Startup ───────────────────────────────────────────────────
+task.delay(1, function()
+    if not CraftingRecipes then pcall(function() CraftingRecipes=require(RS.Shared.Info.CraftingRecipes) end) end
+    if not GetData         then pcall(function() GetData=require(RS.Shared.GetData) end) end
+    pcall(RebuildCraftList)
+    pcall(UpdateQueueUI)
 end)
 
 print(string.format("[HazeHub-Craft] v%s geladen | %s", VERSION, LP.Name))
