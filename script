@@ -1,21 +1,17 @@
 -- ╔══════════════════════════════════════════════════════════╗
 --  HazeHUB V19 – Hauptskript (Loader & Core)
---  v19.3 – Finale Version
+--  v19.4 – Erweiterung: Shop Currency, Player Stats/XP, Quests-Tab
 --
---  ÄNDERUNGEN:
---    + TeleportToLobby() via TeleportService (ID: 111446873000464)
---    + "Back to Lobby" Button feuert TeleportService
---    + Session-Zeit im GUI-Header (immer sichtbar)
---    + Session-Tab zeigt nur noch Runden-Zähler (ohne Timer)
---    + AutoFarm-Flag in HazeHUB_Settings.json (Teleport-Sicherheit)
---    + Nach Teleport: loadstring re-load wenn AutoFarm=true
---    + DBReady-Gate für Start Auto-Farm Button
---    + IsInLobby via workspace:FindFirstChild("Lobby")
+--  NEU IN v19.4:
+--    + Inventory Tab: Shop Currency Sektion (oben, priorisiert)
+--    + Inventory Tab: Player Stats & XP-Bar
+--    + Inventory Tab: Upgrade Stats (Tower Health, Max Yen, Yen Gen)
+--    + Neuer Tab: Quests (Easy/Normal/Hard + Weekly + Daily)
+--    + Alle Pfade verwenden LocalPlayer.Name dynamisch
 -- ╚══════════════════════════════════════════════════════════╝
 
 -- ============================================================
 --  ★ FRÜH-CHECK: Settings lesen VOR allem anderen
---  Wenn AutoFarm=true gespeichert → nach Teleport sofort neu starten
 -- ============================================================
 local _SETTINGS_FILE_EARLY  = "HazeHUB/HazeHUB_Settings.json"
 local _MAIN_RELOAD_URL       = "https://raw.githubusercontent.com/Hazeluxeeeees/Tap-Sim/refs/heads/main/script"
@@ -51,7 +47,7 @@ local Haze = {
         ToggleKey    = "F4",
         AutoRetry    = false,
         SavedGoals   = {},
-        AutoFarm     = false,  -- persistiert für Teleport-Sicherheit
+        AutoFarm     = false,
     },
     S = {
         Goals         = {},
@@ -122,8 +118,7 @@ end)
 if makefolder then pcall(function() makefolder(K.FOLDER) end) end
 
 -- ============================================================
---  ★ TeleportToLobby
---  Einheitliche Funktion — wird von Button UND Autofarm genutzt
+--  TeleportToLobby
 -- ============================================================
 local function TeleportToLobby()
     print("[HazeHUB] TeleportToLobby: Teleportiere zu ID " .. K.LOBBY_ID)
@@ -132,15 +127,12 @@ local function TeleportToLobby()
     end)
 end
 
--- ============================================================
---  IsInLobby  (workspace:FindFirstChild("Lobby"))
--- ============================================================
 local function IsInLobby()
     return game:GetService("Workspace"):FindFirstChild("Lobby") ~= nil
 end
 
 -- ============================================================
---  SAVE / LOAD (AutoSave Config)
+--  SAVE / LOAD
 -- ============================================================
 local function SaveConfig()
     H.Config.SavedGoals = {}
@@ -177,9 +169,6 @@ local function LoadConfig()
     end
 end
 
--- ============================================================
---  SETTINGS FILE  (AutoFarm-Persistenz für Teleport-Sicherheit)
--- ============================================================
 local function SaveSettings()
     if not writefile then return end
     pcall(function()
@@ -258,6 +247,20 @@ local function FmtDur(sec)
     else return string.format("%dm %02ds", m, s) end
 end
 
+local function FmtNum(n)
+    -- Format number with comma separators
+    n = math.floor(tonumber(n) or 0)
+    local s = tostring(n)
+    local result = ""
+    local count = 0
+    for i = #s, 1, -1 do
+        count = count + 1
+        result = s:sub(i, i) .. result
+        if count % 3 == 0 and i > 1 then result = "," .. result end
+    end
+    return result
+end
+
 local function GetInvAmt(itemName)
     local n = 0
     pcall(function()
@@ -270,6 +273,63 @@ local function GetInvAmt(itemName)
         elseif item:IsA("IntValue") or item:IsA("NumberValue") then n = tonumber(item.Value) or 0 end
     end)
     return n
+end
+
+-- ★ NEU: Daten aus RS.Player_Data.[Name].Data lesen
+local function GetDataValue(key)
+    local val = nil
+    pcall(function()
+        local dataFolder = Svc.RS:WaitForChild("Player_Data", 3)
+            :WaitForChild(Svc.Player.Name, 3)
+            :WaitForChild("Data", 3)
+        local child = dataFolder:FindFirstChild(key)
+        if child then
+            val = child.Value
+        end
+    end)
+    return val
+end
+
+-- ★ NEU: Daten aus RS.Player_Data.[Name].Stats lesen
+local function GetStatValue(key)
+    local val = nil
+    pcall(function()
+        local statsFolder = Svc.RS:WaitForChild("Player_Data", 3)
+            :WaitForChild(Svc.Player.Name, 3)
+            :WaitForChild("Stats", 3)
+        local child = statsFolder:FindFirstChild(key)
+        if child then
+            val = child.Value
+        end
+    end)
+    return val
+end
+
+-- ★ NEU: XP-Text aus HUD
+local function GetHUDExpText()
+    local txt = nil
+    pcall(function()
+        txt = Svc.Player.PlayerGui.HUD.ExpBar.Numbers.ContentText
+    end)
+    return txt
+end
+
+-- ★ NEU: Upgrade Stat Level aus PlayerGui
+local function GetUpgradeStatLevel(statName)
+    local txt = nil
+    pcall(function()
+        txt = Svc.Player.PlayerGui.PlayerStats.Main[statName].Frame.Level.Text
+    end)
+    return txt
+end
+
+-- ★ NEU: Upgrade Stat Cost aus PlayerGui
+local function GetUpgradeStatCost(statName)
+    local txt = nil
+    pcall(function()
+        txt = Svc.Player.PlayerGui.PlayerStats.Main[statName].Frame.Cost.Numbers.Text
+    end)
+    return txt
 end
 
 -- ============================================================
@@ -371,6 +431,9 @@ local D = {
     Yellow      = Color3.fromRGB(255,210,0),
     Orange      = Color3.fromRGB(255,145,30),
     Purple      = Color3.fromRGB(180,80,255),
+    Gold        = Color3.fromRGB(255,200,50),
+    Teal        = Color3.fromRGB(0,220,180),
+    Lavender    = Color3.fromRGB(200,170,255),
     TextHi      = Color3.fromRGB(235,245,255),
     TextMid     = Color3.fromRGB(155,175,215),
     TextLow     = Color3.fromRGB(80,100,148),
@@ -535,42 +598,27 @@ H.UI.Fr.Main.Position = UDim2.new(0.5, -285, 0.5, -220)
 H.UI.Fr.Main.BackgroundColor3 = D.BG; H.UI.Fr.Main.BackgroundTransparency = 0.06
 H.UI.Fr.Main.BorderSizePixel = 0; Corner(H.UI.Fr.Main, 12); Stroke(H.UI.Fr.Main, D.BorderCyan, 1.5, 0.45)
 
--- ★ HEADER STRIP (Session-Timer immer sichtbar)
+-- ★ HEADER STRIP
 local headerStrip = Instance.new("Frame", H.UI.Fr.Main)
-headerStrip.Size = UDim2.new(1, 0, 0, 22)
-headerStrip.Position = UDim2.new(0, 0, 0, 0)
-headerStrip.BackgroundColor3 = Color3.fromRGB(6, 8, 18)
-headerStrip.BackgroundTransparency = 0.3
-headerStrip.BorderSizePixel = 0
-Corner(headerStrip, 12)
--- Unterer Rand des Headers ohne runde Ecken (Überlappungstrick)
+headerStrip.Size = UDim2.new(1, 0, 0, 22); headerStrip.Position = UDim2.new(0, 0, 0, 0)
+headerStrip.BackgroundColor3 = Color3.fromRGB(6, 8, 18); headerStrip.BackgroundTransparency = 0.3
+headerStrip.BorderSizePixel = 0; Corner(headerStrip, 12)
 local headerBottom = Instance.new("Frame", H.UI.Fr.Main)
-headerBottom.Size = UDim2.new(1, 0, 0, 11)
-headerBottom.Position = UDim2.new(0, 0, 0, 11)
-headerBottom.BackgroundColor3 = Color3.fromRGB(6, 8, 18)
-headerBottom.BackgroundTransparency = 0.3
+headerBottom.Size = UDim2.new(1, 0, 0, 11); headerBottom.Position = UDim2.new(0, 0, 0, 11)
+headerBottom.BackgroundColor3 = Color3.fromRGB(6, 8, 18); headerBottom.BackgroundTransparency = 0.3
 headerBottom.BorderSizePixel = 0
--- Separator Linie
 local headerLine = Instance.new("Frame", H.UI.Fr.Main)
-headerLine.Size = UDim2.new(1, 0, 0, 1)
-headerLine.Position = UDim2.new(0, 0, 0, 22)
-headerLine.BackgroundColor3 = D.BorderCyan
-headerLine.BackgroundTransparency = 0.5
+headerLine.Size = UDim2.new(1, 0, 0, 1); headerLine.Position = UDim2.new(0, 0, 0, 22)
+headerLine.BackgroundColor3 = D.BorderCyan; headerLine.BackgroundTransparency = 0.5
 headerLine.BorderSizePixel = 0
 
--- Session-Timer Label im Header
 local headerTimerLbl = Instance.new("TextLabel", headerStrip)
-headerTimerLbl.Size = UDim2.new(1, -10, 1, 0)
-headerTimerLbl.Position = UDim2.new(0, 5, 0, 0)
-headerTimerLbl.BackgroundTransparency = 1
-headerTimerLbl.Text = "⏱  0m 00s"
-headerTimerLbl.TextColor3 = D.TextLow
-headerTimerLbl.TextSize = 10
-headerTimerLbl.Font = Enum.Font.Gotham
-headerTimerLbl.TextXAlignment = Enum.TextXAlignment.Right
+headerTimerLbl.Size = UDim2.new(1, -10, 1, 0); headerTimerLbl.Position = UDim2.new(0, 5, 0, 0)
+headerTimerLbl.BackgroundTransparency = 1; headerTimerLbl.Text = "⏱  0m 00s"
+headerTimerLbl.TextColor3 = D.TextLow; headerTimerLbl.TextSize = 10
+headerTimerLbl.Font = Enum.Font.Gotham; headerTimerLbl.TextXAlignment = Enum.TextXAlignment.Right
 H.UI.Lbl.HeaderTimer = headerTimerLbl
 
--- Header-Timer Update Loop
 task.spawn(function()
     while S.Running do
         task.wait(1)
@@ -645,11 +693,12 @@ local function MakeTab(name, icon)
     return P
 end
 
-local GamePage = MakeTab("Game",      "🎮")
-local MiscPage = MakeTab("Misc",      "🔧")
-local SessPage = MakeTab("Session",   "📊")
-local InvPage  = MakeTab("Inventory", "🎒")
-local SettPage = MakeTab("Settings",  "⚙")
+local GamePage  = MakeTab("Game",      "🎮")
+local MiscPage  = MakeTab("Misc",      "🔧")
+local SessPage  = MakeTab("Session",   "📊")
+local InvPage   = MakeTab("Inventory", "🎒")
+local QuestPage = MakeTab("Quests",    "📋")
+local SettPage  = MakeTab("Settings",  "⚙")
 
 -- ============================================================
 --  GUI RESIZE
@@ -969,11 +1018,9 @@ refreshBtn.MouseButton1Click:Connect(function()
     end)
 end)
 
--- Trennlinie
 local sepLine = Instance.new("Frame", GamePage)
 sepLine.Size = UDim2.new(1, 0, 0, 1); sepLine.BackgroundColor3 = D.BorderCyan; sepLine.BackgroundTransparency = 0.4; sepLine.BorderSizePixel = 0
 
--- Modul-Status
 local modulStatusCard = Card(GamePage, 34); Pad(modulStatusCard, 4, 12, 4, 12)
 H.UI.Lbl.ModulStatus = Instance.new("TextLabel", modulStatusCard)
 H.UI.Lbl.ModulStatus.Size = UDim2.new(1, 0, 1, 0); H.UI.Lbl.ModulStatus.BackgroundTransparency = 1
@@ -982,7 +1029,6 @@ H.UI.Lbl.ModulStatus.TextColor3 = D.Red
 H.UI.Lbl.ModulStatus.TextSize = 11; H.UI.Lbl.ModulStatus.Font = Enum.Font.GothamBold
 H.UI.Lbl.ModulStatus.TextXAlignment = Enum.TextXAlignment.Left
 
--- DB-Bestätigung
 local dbConfirmCard = Card(GamePage, 34); Pad(dbConfirmCard, 4, 12, 4, 12)
 dbConfirmCard.Visible = false; Stroke(dbConfirmCard, D.GreenBright, 1.5, 0.1)
 H.UI.Lbl.DBConfirm = Instance.new("TextLabel", dbConfirmCard)
@@ -1017,7 +1063,6 @@ local function ShowDBConfirm(msg)
     end)
 end
 
--- START AUTO-FARM BUTTON (DB-Gate)
 local afStartCard = Card(GamePage); Pad(afStartCard, 8, 10, 8, 10); VList(afStartCard, 6)
 SecLbl(afStartCard, "AUTO-FARM STEUERUNG")
 H.UI.Lbl.AFDBHint = Instance.new("TextLabel", afStartCard)
@@ -1044,7 +1089,6 @@ H.UI.Btn.StartAutoFarm.MouseButton1Click:Connect(function()
         end) end)
         return
     end
-    -- AutoFarm-Flag setzen und persistieren
     H.Config.AutoFarm = true; SaveConfig(); SaveSettings()
     if _G.HazeShared and _G.HazeShared.StartFarmFromMain then
         _G.HazeShared.StartFarmFromMain()
@@ -1054,7 +1098,6 @@ H.UI.Btn.StartAutoFarm.MouseButton1Click:Connect(function()
     task.delay(3, function() pcall(function() H.UI.Btn.StartAutoFarm.Text = "▶  Start Auto-Farm" end) end)
 end)
 
--- Injection Container
 H.UI.Fr.AutofarmInjection = Instance.new("Frame", GamePage)
 H.UI.Fr.AutofarmInjection.Name = "AutofarmInjection"
 H.UI.Fr.AutofarmInjection.Size = UDim2.new(1, 0, 0, 0)
@@ -1081,7 +1124,6 @@ end)
 -- ============================================================
 --  ===  SESSION TAB  ===
 -- ============================================================
--- ★ Nur Runden-Zähler (Session-Timer wurde in Header verschoben)
 local sHCard = Card(SessPage, 50); Pad(sHCard, 8, 12, 8, 12)
 local sHRow = Instance.new("Frame", sHCard); sHRow.Size = UDim2.new(1, 0, 1, 0); sHRow.BackgroundTransparency = 1
 H.UI.Lbl.Rounds = Instance.new("TextLabel", sHRow)
@@ -1182,7 +1224,6 @@ H.UI.Lbl.SessTotal = MkLbl(sTotRow, "Gesamt: 0 Items", 12, D.TextMid)
 H.UI.Lbl.SessTotal.Size = UDim2.new(1, 0, 1, 0); H.UI.Lbl.SessTotal.TextXAlignment = Enum.TextXAlignment.Right
 
 UpdateSessionUI = function()
-    -- Runden-Zähler (ohne Timer – Timer ist im Header)
     H.UI.Lbl.Rounds.Text = "Runden: " .. S.RoundCount
     for k, v in pairs(H.UI.Lbl.InfoVals) do v.Text = tostring(S.InfoTotals[k] or 0) end
     for _, v in pairs(H.UI.Fr.SessList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
@@ -1214,6 +1255,228 @@ end)
 --  ===  INVENTORY TAB  ===
 -- ============================================================
 MkLbl(InvPage, "🎒  Inventar", 14, D.Cyan, true)
+
+-- ★ ════════════════════════════════════════════════════════ ★
+--  SEKTION 1: PLAYER STATS & XP-BAR (oben, zuerst)
+-- ★ ════════════════════════════════════════════════════════ ★
+local playerStatsCard = Card(InvPage); Pad(playerStatsCard, 10, 12, 10, 12); VList(playerStatsCard, 8)
+SecLbl(playerStatsCard, "👤 SPIELER STATS")
+
+-- XP-Text (direkt aus HUD)
+local xpTextLbl = MkLbl(playerStatsCard, "⏳ Lädt XP...", 11, D.Yellow)
+xpTextLbl.Size = UDim2.new(1, 0, 0, 18)
+H.UI.Lbl.XPText = xpTextLbl
+
+-- XP-Bar Hintergrund
+local xpBarBg = Instance.new("Frame", playerStatsCard)
+xpBarBg.Size = UDim2.new(1, 0, 0, 8); xpBarBg.BackgroundColor3 = Color3.fromRGB(20, 28, 50)
+xpBarBg.BorderSizePixel = 0; Corner(xpBarBg, 4)
+local xpBarFill = Instance.new("Frame", xpBarBg)
+xpBarFill.Size = UDim2.new(0, 0, 1, 0); xpBarFill.BackgroundColor3 = D.Cyan
+xpBarFill.BorderSizePixel = 0; Corner(xpBarFill, 4)
+local xpBarGrad = Instance.new("UIGradient", xpBarFill)
+xpBarGrad.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, D.Cyan), ColorSequenceKeypoint.new(1, D.Purple) })
+H.UI.Fr.XPBarFill = xpBarFill
+
+-- Level-Anzeige aus RS.Player_Data
+local lvlRow = Instance.new("Frame", playerStatsCard)
+lvlRow.Size = UDim2.new(1, 0, 0, 26); lvlRow.BackgroundTransparency = 1; HList(lvlRow, 8)
+local lvlLabel = MkLbl(lvlRow, "Level:", 11, D.TextLow)
+lvlLabel.Size = UDim2.new(0.4, 0, 1, 0)
+local lvlVal = MkLbl(lvlRow, "–", 12, D.TextHi, true)
+lvlVal.Size = UDim2.new(0.6, 0, 1, 0)
+H.UI.Lbl.PlayerLevel = lvlVal
+
+-- Separator
+local statSep = Instance.new("Frame", playerStatsCard)
+statSep.Size = UDim2.new(1, 0, 0, 1); statSep.BackgroundColor3 = D.Border
+statSep.BackgroundTransparency = 0.5; statSep.BorderSizePixel = 0
+
+-- Upgrade Stats Bereich
+SecLbl(playerStatsCard, "⚔ UPGRADE STATS")
+
+local UPGRADE_STATS = {
+    { key = "BaseHealth",   label = "Tower Health",  icon = "🏰", color = D.Red    },
+    { key = "YenMax",       label = "Maximum Yen",   icon = "💰", color = D.Gold   },
+    { key = "YenGenarate",  label = "Yen Generation",icon = "⚡", color = D.Yellow },
+}
+
+H.UI.Lbl.UpgradeStats = {}
+for _, statDef in ipairs(UPGRADE_STATS) do
+    local sRow = Instance.new("Frame", playerStatsCard)
+    sRow.Size = UDim2.new(1, 0, 0, 38); sRow.BackgroundColor3 = D.CardHover
+    sRow.BorderSizePixel = 0; Corner(sRow, 7); Stroke(sRow, statDef.color, 1, 0.6)
+
+    local iconBar = Instance.new("Frame", sRow)
+    iconBar.Size = UDim2.new(0, 3, 1, 0); iconBar.BackgroundColor3 = statDef.color
+    iconBar.BorderSizePixel = 0; Corner(iconBar, 2)
+
+    local sNameLbl = Instance.new("TextLabel", sRow)
+    sNameLbl.Position = UDim2.new(0, 10, 0, 3); sNameLbl.Size = UDim2.new(0.55, -10, 0.5, 0)
+    sNameLbl.BackgroundTransparency = 1; sNameLbl.Text = statDef.icon .. " " .. statDef.label
+    sNameLbl.TextColor3 = statDef.color; sNameLbl.TextSize = 11; sNameLbl.Font = Enum.Font.GothamBold
+    sNameLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local sLvlLbl = Instance.new("TextLabel", sRow)
+    sLvlLbl.Position = UDim2.new(0, 10, 0.5, 0); sLvlLbl.Size = UDim2.new(0.55, -10, 0.5, -2)
+    sLvlLbl.BackgroundTransparency = 1; sLvlLbl.Text = "Lv. –"
+    sLvlLbl.TextColor3 = D.TextMid; sLvlLbl.TextSize = 10; sLvlLbl.Font = Enum.Font.GothamSemibold
+    sLvlLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local sCostLbl = Instance.new("TextLabel", sRow)
+    sCostLbl.Position = UDim2.new(0.55, 0, 0, 0); sCostLbl.Size = UDim2.new(0.45, -6, 1, 0)
+    sCostLbl.BackgroundTransparency = 1; sCostLbl.Text = "..."
+    sCostLbl.TextColor3 = D.Gold; sCostLbl.TextSize = 10; sCostLbl.Font = Enum.Font.GothamSemibold
+    sCostLbl.TextXAlignment = Enum.TextXAlignment.Right
+
+    H.UI.Lbl.UpgradeStats[statDef.key] = { level = sLvlLbl, cost = sCostLbl }
+end
+
+local function RefreshPlayerStats()
+    -- XP aus HUD
+    pcall(function()
+        local hudText = GetHUDExpText()
+        if hudText and hudText ~= "" then
+            H.UI.Lbl.XPText.Text = hudText
+            H.UI.Lbl.XPText.TextColor3 = D.Cyan
+            -- Parse Level und XP für Bar
+            local curXP, maxXP = hudText:match("(%d[%d,]*)%s*/s*(%d[%d,]*)XP")
+            if not curXP then curXP, maxXP = hudText:match("(%d[%d,]*)/(%d[%d,]*)") end
+            if curXP and maxXP then
+                local c = tonumber(curXP:gsub(",","")) or 0
+                local m = tonumber(maxXP:gsub(",","")) or 1
+                local pct = math.min(1, c / math.max(1, m))
+                Tw(H.UI.Fr.XPBarFill, { Size = UDim2.new(pct, 0, 1, 0) }, TM)
+            end
+        else
+            H.UI.Lbl.XPText.Text = "XP nicht verfügbar"
+            H.UI.Lbl.XPText.TextColor3 = D.TextLow
+        end
+    end)
+    -- Level aus RS.Player_Data
+    pcall(function()
+        local lvl = GetDataValue("Level")
+        local exp = GetDataValue("Exp")
+        local maxExp = GetDataValue("MaxExp")
+        if lvl then
+            local lvlTxt = "Level " .. tostring(lvl)
+            if exp and maxExp then
+                lvlTxt = lvlTxt .. "  (" .. FmtNum(exp) .. " / " .. FmtNum(maxExp) .. " XP)"
+                local pct = math.min(1, (tonumber(exp) or 0) / math.max(1, tonumber(maxExp) or 1))
+                Tw(H.UI.Fr.XPBarFill, { Size = UDim2.new(pct, 0, 1, 0) }, TM)
+            end
+            H.UI.Lbl.PlayerLevel.Text = lvlTxt
+        end
+    end)
+    -- Upgrade Stats
+    for _, statDef in ipairs(UPGRADE_STATS) do
+        pcall(function()
+            local lbls = H.UI.Lbl.UpgradeStats[statDef.key]
+            if not lbls then return end
+            -- Level lesen
+            local lvlTxt = GetUpgradeStatLevel(statDef.key)
+            if lvlTxt then
+                if lvlTxt:find("MAX") or lvlTxt:find("max") then
+                    lbls.level.Text = "✅ MAX"; lbls.level.TextColor3 = D.GreenBright
+                else
+                    lbls.level.Text = "Lv. " .. lvlTxt; lbls.level.TextColor3 = D.TextMid
+                end
+            else
+                lbls.level.Text = "Lv. –"; lbls.level.TextColor3 = D.TextLow
+            end
+            -- Kosten lesen
+            local costTxt = GetUpgradeStatCost(statDef.key)
+            if costTxt then
+                lbls.cost.Text = "💰 " .. costTxt; lbls.cost.TextColor3 = D.Gold
+            else
+                lbls.cost.Text = "–"; lbls.cost.TextColor3 = D.TextLow
+            end
+        end)
+    end
+end
+
+local statsRefBtn = NeonBtn(playerStatsCard, "🔄 Stats aktualisieren", D.CyanDim, 28)
+statsRefBtn.MouseButton1Click:Connect(function()
+    task.spawn(function() pcall(RefreshPlayerStats) end)
+end)
+
+-- ★ ════════════════════════════════════════════════════════ ★
+--  SEKTION 2: SHOP CURRENCY (priorisiert, direkt nach Stats)
+-- ★ ════════════════════════════════════════════════════════ ★
+local currencyCard = Card(InvPage); Pad(currencyCard, 10, 12, 10, 12); VList(currencyCard, 6)
+SecLbl(currencyCard, "💰 SHOP CURRENCY")
+
+local CURRENCIES = {
+    { key = "Boss Coins",      icon = "🏆", color = D.Gold       },
+    { key = "Esper Token",     icon = "🔮", color = D.Purple     },
+    { key = "Cursed Scrolls",  icon = "📜", color = D.Lavender   },
+    { key = "Cursed Essence",  icon = "💜", color = D.Purple     },
+    { key = "CurseToken",      icon = "🌀", color = D.Cyan       },
+    { key = "Gem",             icon = "💎", color = D.Cyan       },
+    { key = "Gold",            icon = "🟡", color = D.Gold       },
+    { key = "Sol Token",       icon = "☀️", color = D.Orange     },
+    { key = "RCCells",         icon = "🔬", color = D.Teal       },
+}
+
+H.UI.Lbl.Currencies = {}
+for _, cur in ipairs(CURRENCIES) do
+    local cRow = Instance.new("Frame", currencyCard)
+    cRow.Size = UDim2.new(1, 0, 0, 30); cRow.BackgroundColor3 = D.CardHover
+    cRow.BorderSizePixel = 0; Corner(cRow, 7); Stroke(cRow, cur.color, 1, 0.65)
+
+    local cBar = Instance.new("Frame", cRow)
+    cBar.Size = UDim2.new(0, 3, 0.6, 0); cBar.Position = UDim2.new(0, 0, 0.2, 0)
+    cBar.BackgroundColor3 = cur.color; cBar.BorderSizePixel = 0; Corner(cBar, 2)
+
+    local cNameLbl = Instance.new("TextLabel", cRow)
+    cNameLbl.Position = UDim2.new(0, 10, 0, 0); cNameLbl.Size = UDim2.new(0.65, -10, 1, 0)
+    cNameLbl.BackgroundTransparency = 1
+    cNameLbl.Text = cur.icon .. "  " .. cur.key
+    cNameLbl.TextColor3 = cur.color; cNameLbl.TextSize = 11; cNameLbl.Font = Enum.Font.GothamSemibold
+    cNameLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local cValLbl = Instance.new("TextLabel", cRow)
+    cValLbl.Position = UDim2.new(0.65, 0, 0, 0); cValLbl.Size = UDim2.new(0.35, -8, 1, 0)
+    cValLbl.BackgroundTransparency = 1; cValLbl.Text = "–"
+    cValLbl.TextColor3 = D.TextHi; cValLbl.TextSize = 12; cValLbl.Font = Enum.Font.GothamBold
+    cValLbl.TextXAlignment = Enum.TextXAlignment.Right
+
+    H.UI.Lbl.Currencies[cur.key] = cValLbl
+end
+
+local function RebuildCurrencies()
+    for _, cur in ipairs(CURRENCIES) do
+        local lbl = H.UI.Lbl.Currencies[cur.key]
+        if not lbl then continue end
+        local val = nil
+        pcall(function()
+            local dataFolder = Svc.RS:WaitForChild("Player_Data", 3)
+                :WaitForChild(Svc.Player.Name, 3)
+                :WaitForChild("Data", 3)
+            local child = dataFolder:FindFirstChild(cur.key)
+            if child then
+                val = child.Value
+            end
+        end)
+        if val ~= nil then
+            lbl.Text = FmtNum(val)
+            lbl.TextColor3 = D.TextHi
+        else
+            lbl.Text = "–"
+            lbl.TextColor3 = D.TextLow
+        end
+    end
+end
+
+local currRefBtn = NeonBtn(currencyCard, "🔄 Währungen aktualisieren", D.CyanDim, 28)
+currRefBtn.MouseButton1Click:Connect(function()
+    task.spawn(function() pcall(RebuildCurrencies) end)
+end)
+
+-- ★ ════════════════════════════════════════════════════════ ★
+--  SEKTION 3: INVENTAR (Items)
+-- ★ ════════════════════════════════════════════════════════ ★
+MkLbl(InvPage, "📦 GEGENSTÄNDE", 10, D.TextLow, true).Size = UDim2.new(1, 0, 0, 14)
 MkLbl(InvPage, "Alphabetisch  ·  Klick = Ziel setzen", 11, D.TextLow).Size = UDim2.new(1, 0, 0, 20)
 H.UI.Fr.InvList = Card(InvPage); Pad(H.UI.Fr.InvList, 6, 8, 6, 8); VList(H.UI.Fr.InvList, 4)
 H.UI.Lbl.InvEmpty = MkLbl(H.UI.Fr.InvList, "Inventar wird geladen...", 12, D.TextLow)
@@ -1269,6 +1532,305 @@ invRefBtn.MouseButton1Click:Connect(function()
     task.spawn(function() pcall(RebuildInventory) end)
 end)
 
+-- Auto-Refresh für Inventory Tab (alle 30s wenn aktiv)
+task.spawn(function()
+    while S.Running do
+        task.wait(30)
+        if S.ActiveTab == "Inventory" then
+            pcall(RebuildCurrencies)
+            pcall(RefreshPlayerStats)
+        end
+    end
+end)
+
+-- ============================================================
+--  ===  QUESTS TAB  ===
+-- ★ Neuer Tab: Easy/Normal/Hard + Weekly + Daily
+-- ============================================================
+MkLbl(QuestPage, "📋  Quests", 14, D.Cyan, true)
+
+local questRefBtn = NeonBtn(QuestPage, "🔄  Quests aktualisieren", D.CyanDim, 28)
+
+-- Farben für die Kategorien
+local QUEST_COLORS = {
+    Easy    = D.Green,
+    Normal  = D.Yellow,
+    Hard    = D.Red,
+    Weekly  = D.Purple,
+    Daily   = D.Teal,
+}
+
+-- Hilfsfunktion: Quest-Attribut lesen (des)
+local function GetQuestDes(questFolder)
+    local des = ""
+    pcall(function()
+        local attr = questFolder:GetAttribute("des")
+        if attr then des = tostring(attr); return end
+        local desCh = questFolder:FindFirstChild("des")
+        if desCh then des = tostring(desCh.Value) end
+    end)
+    return des
+end
+
+-- Hilfsfunktion: Fortschritt aus quest-Folder lesen
+local function GetQuestProgress(questFolder)
+    local progress, questneed = 0, 1
+    pcall(function()
+        local prog = questFolder:FindFirstChild("progress")
+        local need = questFolder:FindFirstChild("questneed")
+        if prog then progress  = tonumber(prog.Value)  or 0 end
+        if need then questneed = tonumber(need.Value) or 1 end
+    end)
+    return progress, questneed
+end
+
+-- Hilfsfunktion: Quest-Row bauen
+local function BuildQuestRow(parent, title, des, progress, questneed, isClaimed, accentColor)
+    local pct = math.min(1, progress / math.max(1, questneed))
+    local rowH = (des and des ~= "") and 60 or 44
+    local row = Instance.new("Frame", parent)
+    row.Size = UDim2.new(1, 0, 0, rowH); row.BorderSizePixel = 0; Corner(row, 8)
+    if isClaimed then
+        row.BackgroundColor3 = Color3.fromRGB(0, 35, 18); Stroke(row, D.GreenBright, 1, 0.3)
+    else
+        row.BackgroundColor3 = D.CardHover; Stroke(row, accentColor or D.Cyan, 1, 0.55)
+    end
+
+    local acBar = Instance.new("Frame", row)
+    acBar.Size = UDim2.new(0, 3, 0.7, 0); acBar.Position = UDim2.new(0, 0, 0.15, 0)
+    acBar.BackgroundColor3 = isClaimed and D.GreenBright or (accentColor or D.Cyan)
+    acBar.BorderSizePixel = 0; Corner(acBar, 2)
+
+    local titleLbl = Instance.new("TextLabel", row)
+    titleLbl.Position = UDim2.new(0, 10, 0, 4); titleLbl.Size = UDim2.new(1, -14, 0, 16)
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Text = (isClaimed and "✅ " or "") .. title
+    titleLbl.TextColor3 = isClaimed and D.GreenBright or D.TextHi
+    titleLbl.TextSize = 11; titleLbl.Font = Enum.Font.GothamBold
+    titleLbl.TextXAlignment = Enum.TextXAlignment.Left; titleLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+    if des and des ~= "" then
+        local desLbl = Instance.new("TextLabel", row)
+        desLbl.Position = UDim2.new(0, 10, 0, 20); desLbl.Size = UDim2.new(1, -14, 0, 14)
+        desLbl.BackgroundTransparency = 1; desLbl.Text = des
+        desLbl.TextColor3 = D.TextLow; desLbl.TextSize = 9; desLbl.Font = Enum.Font.Gotham
+        desLbl.TextXAlignment = Enum.TextXAlignment.Left; desLbl.TextTruncate = Enum.TextTruncate.AtEnd
+    end
+
+    local progressY = (des and des ~= "") and -6 or -5
+    local pgBg = Instance.new("Frame", row)
+    pgBg.Size = UDim2.new(1, -14, 0, 4); pgBg.Position = UDim2.new(0, 10, 1, progressY)
+    pgBg.BackgroundColor3 = Color3.fromRGB(20, 28, 50); pgBg.BorderSizePixel = 0; Corner(pgBg, 2)
+    local pgF = Instance.new("Frame", pgBg)
+    pgF.Size = UDim2.new(pct, 0, 1, 0); pgF.BackgroundColor3 = isClaimed and D.GreenBright or (accentColor or D.Cyan)
+    pgF.BorderSizePixel = 0; Corner(pgF, 2)
+
+    local pctLbl = Instance.new("TextLabel", row)
+    pctLbl.Position = UDim2.new(1, -50, 0, 4); pctLbl.Size = UDim2.new(0, 44, 0, 16)
+    pctLbl.BackgroundTransparency = 1
+    pctLbl.Text = string.format("%d/%d", progress, questneed)
+    pctLbl.TextColor3 = isClaimed and D.GreenBright or D.TextLow
+    pctLbl.TextSize = 9; pctLbl.Font = Enum.Font.GothamSemibold
+    pctLbl.TextXAlignment = Enum.TextXAlignment.Right
+
+    return row
+end
+
+-- Quest-Container
+local questContainer = Instance.new("Frame", QuestPage)
+questContainer.Size = UDim2.new(1, 0, 0, 0); questContainer.AutomaticSize = Enum.AutomaticSize.Y
+questContainer.BackgroundTransparency = 1; VList(questContainer, 8)
+
+H.UI.Fr.QuestContainer = questContainer
+
+local function RebuildQuestsUI()
+    for _, v in pairs(questContainer:GetChildren()) do
+        if v:IsA("Frame") or v:IsA("TextLabel") then v:Destroy() end
+    end
+
+    local playerQuestRoot = nil
+    pcall(function()
+        playerQuestRoot = Svc.RS:WaitForChild("Player_Data", 3)
+            :WaitForChild(Svc.Player.Name, 3)
+            :WaitForChild("PlayerQuest", 3)
+    end)
+
+    if not playerQuestRoot then
+        local errLbl = MkLbl(questContainer, "⚠ PlayerQuest-Pfad nicht gefunden!", 11, D.Orange)
+        errLbl.Size = UDim2.new(1, 0, 0, 28); return
+    end
+
+    -- ────────────────────────────────────────────────────────
+    --  Easy / Normal / Hard Kategorien
+    -- ────────────────────────────────────────────────────────
+    for _, qType in ipairs({"Easy", "Normal", "Hard"}) do
+        local color = QUEST_COLORS[qType]
+        local qTypeFolder = nil
+        pcall(function() qTypeFolder = playerQuestRoot:WaitForChild(qType, 2) end)
+
+        -- Kategorie-Header Card
+        local catCard = Card(questContainer); Pad(catCard, 10, 12, 10, 12); VList(catCard, 6)
+        Stroke(catCard, color, 1.5, 0.3)
+
+        -- Header-Zeile
+        local hRow = Instance.new("Frame", catCard)
+        hRow.Size = UDim2.new(1, 0, 0, 22); hRow.BackgroundTransparency = 1; HList(hRow, 8)
+        local hLbl = Instance.new("TextLabel", hRow)
+        hLbl.Size = UDim2.new(0.7, 0, 1, 0); hLbl.BackgroundTransparency = 1
+        hLbl.Text = (qType == "Easy" and "🟢" or qType == "Normal" and "🟡" or "🔴") .. "  " .. qType:upper() .. " QUESTS"
+        hLbl.TextColor3 = color; hLbl.TextSize = 12; hLbl.Font = Enum.Font.GothamBold
+        hLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+        if not qTypeFolder then
+            MkLbl(catCard, "Pfad nicht gefunden: PlayerQuest." .. qType, 10, D.TextLow).Size = UDim2.new(1, 0, 0, 18)
+            continue
+        end
+
+        -- Prüfe ob gesamte Kategorie claimed ist
+        local catClaimed = false
+        pcall(function()
+            local claimedVal = qTypeFolder:FindFirstChild("claimed")
+            if claimedVal and claimedVal.Value == true then catClaimed = true end
+        end)
+
+        if catClaimed then
+            local allDoneLbl = Instance.new("Frame", catCard)
+            allDoneLbl.Size = UDim2.new(1, 0, 0, 30); allDoneLbl.BackgroundColor3 = D.GreenDark
+            allDoneLbl.BorderSizePixel = 0; Corner(allDoneLbl, 7); Stroke(allDoneLbl, D.GreenBright, 1.5, 0.2)
+            local dLbl = Instance.new("TextLabel", allDoneLbl)
+            dLbl.Size = UDim2.new(1, 0, 1, 0); dLbl.BackgroundTransparency = 1
+            dLbl.Text = "✅ ALLE BELOHNUNGEN ABGEHOLT!"; dLbl.TextColor3 = D.GreenBright
+            dLbl.TextSize = 12; dLbl.Font = Enum.Font.GothamBold
+            dLbl.TextXAlignment = Enum.TextXAlignment.Center
+            continue
+        end
+
+        -- Unter-Quests listen (easy_quest_1 bis easy_quest_4, Fallback: alle Kinder)
+        local typeLower = qType:lower()
+        local subQuests = {}
+        for i = 1, 4 do
+            local qName = typeLower .. "_quest_" .. i
+            local qf = qTypeFolder:FindFirstChild(qName)
+            if qf then table.insert(subQuests, qf) end
+        end
+        -- Fallback: alle Folder-Kinder
+        if #subQuests == 0 then
+            for _, ch in ipairs(qTypeFolder:GetChildren()) do
+                if ch:IsA("Folder") and ch.Name ~= "claimed" then
+                    table.insert(subQuests, ch)
+                end
+            end
+        end
+
+        if #subQuests == 0 then
+            MkLbl(catCard, "Keine Unter-Quests gefunden.", 10, D.TextLow).Size = UDim2.new(1, 0, 0, 18)
+        else
+            for _, sqFolder in ipairs(subQuests) do
+                local sqClaimed = false
+                pcall(function()
+                    local cl = sqFolder:FindFirstChild("claimed")
+                    if cl and cl.Value == true then sqClaimed = true end
+                end)
+                local des = GetQuestDes(sqFolder)
+                local prog, need = GetQuestProgress(sqFolder)
+                BuildQuestRow(catCard, sqFolder.Name, des, prog, need, sqClaimed, color)
+            end
+        end
+    end
+
+    -- ────────────────────────────────────────────────────────
+    --  Weekly Quests
+    -- ────────────────────────────────────────────────────────
+    do
+        local weeklyRoot = nil
+        pcall(function() weeklyRoot = playerQuestRoot:WaitForChild("WeeklyQuest", 2) end)
+
+        local wCard = Card(questContainer); Pad(wCard, 10, 12, 10, 12); VList(wCard, 6)
+        Stroke(wCard, D.Purple, 1.5, 0.3)
+
+        local wHdr = Instance.new("TextLabel", wCard)
+        wHdr.Size = UDim2.new(1, 0, 0, 22); wHdr.BackgroundTransparency = 1
+        wHdr.Text = "🟣  WEEKLY QUESTS"; wHdr.TextColor3 = D.Purple
+        wHdr.TextSize = 12; wHdr.Font = Enum.Font.GothamBold
+        wHdr.TextXAlignment = Enum.TextXAlignment.Left
+
+        if not weeklyRoot then
+            MkLbl(wCard, "WeeklyQuest-Pfad nicht gefunden.", 10, D.TextLow).Size = UDim2.new(1, 0, 0, 18)
+        else
+            local wFound = false
+            for _, qFolder in ipairs(weeklyRoot:GetChildren()) do
+                if not qFolder:IsA("Folder") then continue end
+                local isClaimed = false
+                pcall(function()
+                    local cl = qFolder:FindFirstChild("claimed")
+                    if cl and cl.Value == true then isClaimed = true end
+                end)
+                if isClaimed then continue end -- Claimed quests ausblenden
+                local des = GetQuestDes(qFolder)
+                local prog, need = GetQuestProgress(qFolder)
+                BuildQuestRow(wCard, qFolder.Name, des, prog, need, false, D.Purple)
+                wFound = true
+            end
+            if not wFound then
+                MkLbl(wCard, "✅ Alle wöchentlichen Quests abgeschlossen.", 10, D.GreenBright).Size = UDim2.new(1, 0, 0, 18)
+            end
+        end
+    end
+
+    -- ────────────────────────────────────────────────────────
+    --  Daily Quests
+    -- ────────────────────────────────────────────────────────
+    do
+        local dailyRoot = nil
+        pcall(function() dailyRoot = playerQuestRoot:WaitForChild("DailyQuest", 2) end)
+
+        local dCard = Card(questContainer); Pad(dCard, 10, 12, 10, 12); VList(dCard, 6)
+        Stroke(dCard, D.Teal, 1.5, 0.3)
+
+        local dHdr = Instance.new("TextLabel", dCard)
+        dHdr.Size = UDim2.new(1, 0, 0, 22); dHdr.BackgroundTransparency = 1
+        dHdr.Text = "🔵  DAILY QUESTS"; dHdr.TextColor3 = D.Teal
+        dHdr.TextSize = 12; dHdr.Font = Enum.Font.GothamBold
+        dHdr.TextXAlignment = Enum.TextXAlignment.Left
+
+        if not dailyRoot then
+            MkLbl(dCard, "DailyQuest-Pfad nicht gefunden.", 10, D.TextLow).Size = UDim2.new(1, 0, 0, 18)
+        else
+            local dFound = false
+            for _, qFolder in ipairs(dailyRoot:GetChildren()) do
+                if not qFolder:IsA("Folder") then continue end
+                local isClaimed = false
+                pcall(function()
+                    local cl = qFolder:FindFirstChild("claimed")
+                    if cl and cl.Value == true then isClaimed = true end
+                end)
+                if isClaimed then continue end -- Claimed quests ausblenden
+                local des = GetQuestDes(qFolder)
+                local prog, need = GetQuestProgress(qFolder)
+                BuildQuestRow(dCard, qFolder.Name, des, prog, need, false, D.Teal)
+                dFound = true
+            end
+            if not dFound then
+                MkLbl(dCard, "✅ Alle täglichen Quests abgeschlossen.", 10, D.GreenBright).Size = UDim2.new(1, 0, 0, 18)
+            end
+        end
+    end
+end
+
+questRefBtn.MouseButton1Click:Connect(function()
+    task.spawn(function() pcall(RebuildQuestsUI) end)
+end)
+
+-- Auto-Refresh für Quests Tab (alle 30s wenn aktiv)
+task.spawn(function()
+    while S.Running do
+        task.wait(30)
+        if S.ActiveTab == "Quests" then
+            pcall(RebuildQuestsUI)
+        end
+    end
+end)
+
 -- ============================================================
 --  ===  SETTINGS TAB  ===
 -- ============================================================
@@ -1281,17 +1843,14 @@ H.UI.Btn.MobBtn = Instance.new("TextButton", szRow); H.UI.Btn.MobBtn.Size = UDim
 H.UI.Btn.PCBtn.MouseButton1Click:Connect(function()  SetGUISize("PC");     Stroke(H.UI.Btn.PCBtn,  D.Cyan,   1, 0.3); Stroke(H.UI.Btn.MobBtn, D.Border, 1, 0.3) end)
 H.UI.Btn.MobBtn.MouseButton1Click:Connect(function() SetGUISize("Mobile"); Stroke(H.UI.Btn.MobBtn, D.Cyan,   1, 0.3); Stroke(H.UI.Btn.PCBtn,  D.Border, 1, 0.3) end)
 
--- ★ BACK TO LOBBY (TeleportService)
 local lobCard = Card(SettPage); Pad(lobCard, 10, 10, 10, 10); VList(lobCard, 8); SecLbl(lobCard, "LOBBY-TELEPORT")
 MkLbl(lobCard, "Teleportiert zur Lobby (Place ID: " .. K.LOBBY_ID .. ")", 9, D.TextLow).Size = UDim2.new(1, 0, 0, 14)
 local backBtn = NeonBtn(lobCard, "🏠  Back to Lobby", D.Orange, 38)
 backBtn.MouseButton1Click:Connect(function()
-    -- AutoFarm-Flag löschen beim manuellen Exit
     H.Config.AutoFarm = false; SaveConfig(); SaveSettings()
     TeleportToLobby()
 end)
 
--- Keybind
 local kbCard = Card(SettPage); Pad(kbCard, 10, 10, 10, 10); VList(kbCard, 8); SecLbl(kbCard, "GUI KEYBIND")
 local kbRow = Instance.new("Frame", kbCard); kbRow.Size = UDim2.new(1, 0, 0, 34); kbRow.BackgroundTransparency = 1; HList(kbRow, 8)
 MkLbl(kbRow, "Toggle-Taste:", 12, D.TextMid).Size = UDim2.new(0.52, 0, 1, 0)
@@ -1323,7 +1882,6 @@ H.UI.Btn.KeyBtn.MouseButton1Click:Connect(function()
 end)
 MkLbl(kbCard, "Klicke, dann drücke die gewünschte Taste.", 10, D.TextLow).Size = UDim2.new(1, 0, 0, 14)
 
--- Webhook
 local whCard = Card(SettPage); Pad(whCard, 12, 12, 12, 12); VList(whCard, 8); SecLbl(whCard, "DISCORD WEBHOOK")
 local whOuter, whBox = MkInput(whCard, "https://discord.com/api/webhooks/..."); whOuter.Size = UDim2.new(1, 0, 0, 36)
 H.UI.Inp.Webhook = whBox
@@ -1412,7 +1970,7 @@ _G.HazeShared.FireCreateAndStart  = FireCreateAndStart
 _G.HazeShared.FireVoteRetry       = FireVoteRetry
 _G.HazeShared.GetInvAmt           = GetInvAmt
 _G.HazeShared.IsInLobby           = IsInLobby
-_G.HazeShared.TeleportToLobby     = TeleportToLobby   -- ★ exportiert
+_G.HazeShared.TeleportToLobby     = TeleportToLobby
 _G.HazeShared.SaveConfig          = SaveConfig
 _G.HazeShared.SaveSettings        = SaveSettings
 _G.HazeShared.SendWebhook         = SendWebhook
@@ -1462,7 +2020,6 @@ if not H.Config.WebhookURL   then H.Config.WebhookURL = ""      end
 if not H.Config.UISize       then H.Config.UISize     = "PC"    end
 if H.Config.AutoFarm == nil  then H.Config.AutoFarm   = false   end
 
--- Früh-Check Ergebnis übernehmen
 if _earlyAutoFarm then H.Config.AutoFarm = true end
 
 SetKeyDisplay(H.Config.ToggleKey)
@@ -1474,7 +2031,13 @@ SelectTab("Game")
 UpdateSessionUI()
 UpdateGoalsUI()
 
-task.delay(2, function() task.spawn(function() pcall(RebuildInventory) end) end)
+-- Startup-Ladevorgänge mit Delay
+task.delay(2, function()
+    task.spawn(function() pcall(RebuildInventory) end)
+    task.spawn(function() pcall(RebuildCurrencies) end)
+    task.spawn(function() pcall(RefreshPlayerStats) end)
+    task.spawn(function() pcall(RebuildQuestsUI) end)
+end)
 
 task.spawn(function()
     local f = GetChapterFolder()
