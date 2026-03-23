@@ -363,6 +363,8 @@ local function ScanChapterFolder(folder)
     for wid in pairs(S.WorldData) do table.insert(ids, wid) end
     table.sort(ids, function(a, b) return a:lower() < b:lower() end)
     S.WorldIds = ids; S.ScanDone = true
+    -- ★ Cache automatisch speichern nach Scan
+    task.spawn(function() pcall(SaveWorldData) end)
 end
 
 local function GetChapterFolder()
@@ -397,8 +399,45 @@ local function ApplyFallback()
 end
 
 -- ============================================================
---  ANTI-AFK
+--  WORLD CACHE  (HazeHUB_WorldCache.json)
+--  Speichert/lädt WorldData lokal – vermeidet Re-Scan bei Start
 -- ============================================================
+local WORLD_CACHE_FILE = "HazeHUB/HazeHUB_WorldCache.json"
+
+local function SaveWorldData()
+    if not writefile then return end
+    if not S.ScanDone or next(S.WorldData) == nil then return end
+    pcall(function()
+        writefile(WORLD_CACHE_FILE, Svc.Http:JSONEncode({
+            worlds = S.WorldData,
+            ids    = S.WorldIds,
+            ts     = os.time(),
+        }))
+        print("[HazeHUB] WorldCache gespeichert: " .. #S.WorldIds .. " Welten")
+    end)
+end
+
+local function LoadWorldCache()
+    if not (isfile and isfile(WORLD_CACHE_FILE)) then return false end
+    local ok, data = pcall(function()
+        return Svc.Http:JSONDecode(readfile(WORLD_CACHE_FILE))
+    end)
+    if not ok or not data or type(data.worlds) ~= "table" then return false end
+    local count = 0; for _ in pairs(data.worlds) do count = count + 1 end
+    if count == 0 then return false end
+    S.WorldData  = data.worlds
+    S.WorldIds   = data.ids or {}
+    -- Sicherstellen dass ids sortiert ist falls leer
+    if #S.WorldIds == 0 then
+        for wid in pairs(S.WorldData) do table.insert(S.WorldIds, wid) end
+        table.sort(S.WorldIds, function(a,b) return a:lower() < b:lower() end)
+    end
+    S.ScanDone = true
+    print("[HazeHUB] WorldCache geladen: " .. count .. " Welten (cached)")
+    return true
+end
+
+
 task.spawn(function()
     while true do
         task.wait(60)
@@ -1007,15 +1046,23 @@ H.UI.Btn.CreateStart.MouseButton1Click:Connect(function()
     end) end)
 end)
 
-local refreshBtn = NeonBtn(wCard, "🔄  Welten neu laden", D.CyanDim, 26)
+local refreshBtn = NeonBtn(wCard, "🔄  Welten neu scannen", D.CyanDim, 26)
 refreshBtn.MouseButton1Click:Connect(function()
-    H.UI.Lbl.WorldStatus.Text = "⏳ Scanne..."; H.UI.Lbl.WorldStatus.TextColor3 = D.Yellow
+    H.UI.Lbl.WorldStatus.Text = "⏳ Scanne (Cache wird aktualisiert)..."; H.UI.Lbl.WorldStatus.TextColor3 = D.Yellow
     S.ChapFolderRef = nil
+    -- ★ Cache-Datei löschen damit frisch gescannt wird
+    pcall(function() if isfile and isfile(WORLD_CACHE_FILE) then delfile(WORLD_CACHE_FILE) end end)
     task.spawn(function()
         local f = GetChapterFolder()
-        if f then ScanChapterFolder(f)
-            pcall(function() H.UI.Lbl.ScanStatus.Text = "✅ " .. #S.WorldIds .. " Welten"; H.UI.Lbl.ScanStatus.TextColor3 = D.Green end)
-        else ApplyFallback() end
+        if f then
+            ScanChapterFolder(f)   -- speichert Cache automatisch
+            pcall(function()
+                H.UI.Lbl.ScanStatus.Text = "✅ " .. #S.WorldIds .. " Welten (neu gescannt)"
+                H.UI.Lbl.ScanStatus.TextColor3 = D.Green
+            end)
+        else
+            ApplyFallback()
+        end
         pcall(RebuildWorldList)
     end)
 end)
@@ -1400,43 +1447,66 @@ local function RefreshPlayerStats()
             local lbls = H.UI.Lbl.UpgradeStats[statDef.key]
             if not lbls then return end
 
-            -- Aktueller Stat-Wert aus RS
+            -- Aktueller Stat-Wert aus RS (WaitForChild für jeden Knoten)
             local statVal = nil
             pcall(function()
-                statVal = Svc.RS:WaitForChild("Player_Data", 3)
-                    :WaitForChild(Svc.Player.Name, 3)
-                    :WaitForChild("Stats", 3)
-                    :WaitForChild(statDef.key, 3).Value
+                local pd  = Svc.RS:WaitForChild("Player_Data", 3)
+                local pn  = pd:WaitForChild(Svc.Player.Name, 3)
+                local st  = pn:WaitForChild("Stats", 3)
+                local key = st:WaitForChild(statDef.key, 3)
+                statVal = key.Value
             end)
 
-            -- Level-Text aus PlayerGui (.ContentText)
+            -- Level-Text aus PlayerGui mit WaitForChild-Kette
             local lvlTxt = nil
             pcall(function()
-                lvlTxt = Svc.Player.PlayerGui.PlayerStats.Main[statDef.key].Frame.Level.ContentText
+                local pg   = Svc.Player:WaitForChild("PlayerGui", 5)
+                local ps   = pg:WaitForChild("PlayerStats", 5)
+                local main = ps:WaitForChild("Main", 3)
+                local sn   = main:WaitForChild(statDef.key, 3)
+                local fr   = sn:WaitForChild("Frame", 3)
+                local lv   = fr:WaitForChild("Level", 3)
+                lvlTxt = lv.ContentText
             end)
 
-            -- Kosten-Text aus PlayerGui (.ContentText)
+            -- Kosten-Text aus PlayerGui mit WaitForChild-Kette
             local costTxt = nil
             pcall(function()
-                costTxt = Svc.Player.PlayerGui.PlayerStats.Main[statDef.key].Frame.Cost.Numbers.ContentText
+                local pg   = Svc.Player:WaitForChild("PlayerGui", 5)
+                local ps   = pg:WaitForChild("PlayerStats", 5)
+                local main = ps:WaitForChild("Main", 3)
+                local sn   = main:WaitForChild(statDef.key, 3)
+                local fr   = sn:WaitForChild("Frame", 3)
+                local co   = fr:WaitForChild("Cost", 3)
+                local nm   = co:WaitForChild("Numbers", 3)
+                costTxt = nm.ContentText
             end)
 
+            -- ★ MAX prüfen: ContentText kann "(MAX)", "MAX", "max" enthalten
+            local isMax = lvlTxt and (
+                lvlTxt:upper():find("MAX") ~= nil or
+                lvlTxt:find("%(MAX%)") ~= nil
+            )
+
+            -- ★ Level-Zahl extrahieren: erste Zahl im ContentText
+            local curLvl = nil
+            if lvlTxt and not isMax then
+                curLvl = tonumber(lvlTxt:match("(%d+)"))
+            end
+
             -- Level-Label aufbauen
-            if lvlTxt and lvlTxt ~= "" then
-                if lvlTxt:find("MAX") or lvlTxt:find("max") then
-                    lbls.level.Text = "✅ MAX"
-                    lbls.level.TextColor3 = D.GreenBright
-                else
-                    -- Stat-Wert anhängen wenn verfügbar
-                    local valStr = statVal ~= nil and ("  [" .. FmtNum(statVal) .. "]") or ""
-                    lbls.level.Text = "Lv. " .. lvlTxt .. valStr
-                    lbls.level.TextColor3 = D.TextMid
-                end
+            if isMax then
+                lbls.level.Text = "✅ MAX"
+                lbls.level.TextColor3 = D.GreenBright
+            elseif curLvl then
+                local valStr = statVal ~= nil and ("  [" .. FmtNum(statVal) .. "]") or ""
+                lbls.level.Text = "Lv. " .. tostring(curLvl) .. valStr
+                lbls.level.TextColor3 = D.TextMid
             elseif statVal ~= nil then
                 lbls.level.Text = "Wert: " .. FmtNum(statVal)
                 lbls.level.TextColor3 = D.TextMid
             else
-                lbls.level.Text = "Lv. –"
+                lbls.level.Text = "Lv. –  (GUI nicht offen?)"
                 lbls.level.TextColor3 = D.TextLow
             end
 
@@ -1449,41 +1519,43 @@ local function RefreshPlayerStats()
                 lbls.cost.TextColor3 = D.TextLow
             end
 
-            -- ★ Gold bis Max Berechnung
+            -- ★ Gold bis Max Berechnung (arithmetische Reihe)
             if lbls.gold then
-                local curLvl = nil
-                if lvlTxt then
-                    -- Versuche Zahl aus Level-Text zu parsen (z.B. "5", "Level 5", "5/50")
-                    curLvl = tonumber(lvlTxt:match("(%d+)")) or nil
-                end
-                local isMax = lvlTxt and (lvlTxt:find("MAX") or lvlTxt:find("max"))
                 if isMax then
-                    lbls.gold.Text = "🪙 Gold bis Max: bereits MAX"
+                    lbls.gold.Text = "🪙 Gold bis Max: ✅ MAX"
                     lbls.gold.TextColor3 = D.GreenBright
                 elseif curLvl then
                     local goldNeeded = 0
                     if statDef.key == "YenGenarate" then
-                        -- Max LVL 50, konstant 500 Gold pro Upgrade
-                        local remaining = math.max(0, 50 - curLvl)
-                        goldNeeded = remaining * 500
+                        -- Max LVL 50, konstant 500 Gold/Upgrade
+                        -- Formel: (50 − curLvl) × 500
+                        goldNeeded = math.max(0, 50 - curLvl) * 500
                     elseif statDef.key == "YenMax" then
-                        -- Max LVL 100, erstes Upgrade kostet 250, jedes weitere +250
-                        -- Upgrade von LVL n auf n+1 kostet: n * 250
-                        -- Gesamt von curLvl bis 100: Summe(n * 250, n = curLvl..99)
-                        for n = curLvl, 99 do
-                            goldNeeded = goldNeeded + (n * 250)
+                        -- Max LVL 100, Level n kostet n×250
+                        -- Summe von curLvl bis 99: Σ(n×250) = 250 × Σn
+                        -- Σn von a bis b = (a+b)*(b-a+1)/2
+                        local a, b = curLvl, 99
+                        if a <= b then
+                            goldNeeded = 250 * (a + b) * (b - a + 1) / 2
                         end
                     elseif statDef.key == "BaseHealth" then
-                        -- Max LVL 100, erstes Upgrade kostet 200, jedes weitere +200
-                        -- Upgrade von LVL n auf n+1 kostet: n * 200
-                        for n = curLvl, 99 do
-                            goldNeeded = goldNeeded + (n * 200)
+                        -- Max LVL 100, Level n kostet n×200
+                        -- Summe von curLvl bis 99: Σ(n×200) = 200 × Σn
+                        local a, b = curLvl, 99
+                        if a <= b then
+                            goldNeeded = 200 * (a + b) * (b - a + 1) / 2
                         end
                     end
-                    lbls.gold.Text = "🪙 Gold bis Max: " .. FmtNum(goldNeeded)
-                    lbls.gold.TextColor3 = goldNeeded == 0 and D.GreenBright or D.TextLow
+                    goldNeeded = math.floor(goldNeeded)
+                    if goldNeeded == 0 then
+                        lbls.gold.Text = "🪙 Gold bis Max: ✅ Fertig"
+                        lbls.gold.TextColor3 = D.GreenBright
+                    else
+                        lbls.gold.Text = "🪙 Gold bis Max: " .. FmtNum(goldNeeded)
+                        lbls.gold.TextColor3 = D.TextLow
+                    end
                 else
-                    lbls.gold.Text = "🪙 Gold bis Max: –"
+                    lbls.gold.Text = "🪙 Gold bis Max: –  (Stats öffnen)"
                     lbls.gold.TextColor3 = D.TextLow
                 end
             end
@@ -2217,29 +2289,44 @@ task.delay(2, function()
 end)
 
 task.spawn(function()
+    -- ★ Zuerst Cache versuchen
+    local cacheLoaded = LoadWorldCache()
+    if cacheLoaded then
+        pcall(function()
+            H.UI.Lbl.ScanStatus.Text = "✅ " .. #S.WorldIds .. " Welten (Cache)"
+            H.UI.Lbl.ScanStatus.TextColor3 = D.Cyan
+        end)
+        pcall(RebuildWorldList)
+    end
+
+    -- Live-Scan (auch wenn Cache geladen – für ChildAdded Listener)
     local f = GetChapterFolder()
     if f then
-        ScanChapterFolder(f)
-        pcall(function()
-            H.UI.Lbl.ScanStatus.Text = "✅ " .. #S.WorldIds .. " Welten"
-            H.UI.Lbl.ScanStatus.TextColor3 = D.Green
-        end)
-        S.ChildConn = f.ChildAdded:Connect(function()
-            task.wait(0.5); ScanChapterFolder(f)
+        if not cacheLoaded then
+            ScanChapterFolder(f)
             pcall(function()
                 H.UI.Lbl.ScanStatus.Text = "✅ " .. #S.WorldIds .. " Welten"
+                H.UI.Lbl.ScanStatus.TextColor3 = D.Green
+            end)
+        end
+        S.ChildConn = f.ChildAdded:Connect(function()
+            task.wait(0.5); ScanChapterFolder(f)   -- auch hier wird Cache gespeichert
+            pcall(function()
+                H.UI.Lbl.ScanStatus.Text = "✅ " .. #S.WorldIds .. " Welten (aktualisiert)"
                 H.UI.Lbl.ScanStatus.TextColor3 = D.Green
             end)
             pcall(RebuildWorldList)
         end)
     else
-        ApplyFallback()
-        pcall(function()
-            H.UI.Lbl.ScanStatus.Text = "⚠ Fallback-Daten"
-            H.UI.Lbl.ScanStatus.TextColor3 = D.Orange
-        end)
+        if not cacheLoaded then
+            ApplyFallback()
+            pcall(function()
+                H.UI.Lbl.ScanStatus.Text = "⚠ Fallback-Daten"
+                H.UI.Lbl.ScanStatus.TextColor3 = D.Orange
+            end)
+        end
     end
-    pcall(RebuildWorldList)
+    if not cacheLoaded then pcall(RebuildWorldList) end
 end)
 
 -- Externes Modul laden (Autofarm)
@@ -2261,16 +2348,30 @@ end)
 _G.HazeShared.ShopContainer = ShopPage   -- Shop-Modul schreibt direkt in diesen Tab
 task.spawn(function()
     task.wait(2)
-    local ok, err = pcall(function()
-        loadstring(game:HttpGet(K.SHOP_URL))()
+    -- ★ Doppeltes pcall: äußeres fängt HttpGet-Fehler, inneres den loadstring
+    local httpOk, rawScript = pcall(function()
+        return game:HttpGet(K.SHOP_URL)
     end)
-    if not ok then
-        warn("[HazeHUB] Shop-Modul Fehler:", err)
-        -- Fallback-Hinweis im Shop-Tab
+    if not httpOk or not rawScript or #rawScript < 10 then
+        warn("[HazeHUB] Shop-Modul: HttpGet fehlgeschlagen – " .. tostring(rawScript):sub(1, 80))
         pcall(function()
             local errLbl = Instance.new("TextLabel", ShopPage)
             errLbl.Size = UDim2.new(1, 0, 0, 40); errLbl.BackgroundTransparency = 1
-            errLbl.Text = "🔴  Shop-Modul konnte nicht geladen werden."
+            errLbl.Text = "🔴  Shop-Modul nicht erreichbar. URL prüfen."
+            errLbl.TextColor3 = D.Red; errLbl.TextSize = 11; errLbl.Font = Enum.Font.GothamBold
+            errLbl.TextXAlignment = Enum.TextXAlignment.Left
+        end)
+        return
+    end
+    local execOk, execErr = pcall(function()
+        loadstring(rawScript)()
+    end)
+    if not execOk then
+        warn("[HazeHUB] Shop-Modul Ausführungsfehler: " .. tostring(execErr):sub(1, 100))
+        pcall(function()
+            local errLbl = Instance.new("TextLabel", ShopPage)
+            errLbl.Size = UDim2.new(1, 0, 0, 40); errLbl.BackgroundTransparency = 1
+            errLbl.Text = "🔴  Shop-Modul Fehler: " .. tostring(execErr):sub(1, 60)
             errLbl.TextColor3 = D.Red; errLbl.TextSize = 11; errLbl.Font = Enum.Font.GothamBold
             errLbl.TextXAlignment = Enum.TextXAlignment.Left
         end)
