@@ -411,7 +411,11 @@ local function BuildRecipeCard(parent,itemName,recipeData,craftAmt)
                     AutoBuyItem(mCap.name,missing,mCap.shopType)
                 else
                     local pushed = false
-                    if HS.AddAutoFarmQueueItem then
+                    if HS.AddToQueue then
+                        pushed = HS.AddToQueue(mCap.name, missing) == true
+                    elseif _G.AddToQueue then
+                        pushed = _G.AddToQueue(mCap.name, missing) == true
+                    elseif HS.AddAutoFarmQueueItem then
                         pushed = HS.AddAutoFarmQueueItem(mCap.name, missing) == true
                     end
                     if pushed then
@@ -491,8 +495,9 @@ local function BuildRecipeCard(parent,itemName,recipeData,craftAmt)
                         AutoBuyItem(ml.name,missing,ml.shopType); shopBought=shopBought+1; task.wait(0.3)
                     else
                         local missing=math.max(0,ml.need-ml.have)
-                        if missing>0 and HS.AddAutoFarmQueueItem then
-                            if HS.AddAutoFarmQueueItem(ml.name, missing) then
+                        if missing>0 and (HS.AddToQueue or _G.AddToQueue or HS.AddAutoFarmQueueItem) then
+                            local addFn = HS.AddToQueue or _G.AddToQueue or HS.AddAutoFarmQueueItem
+                            if addFn(ml.name, missing) then
                                 added=added+1
                             end
                         else
