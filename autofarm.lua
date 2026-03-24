@@ -893,6 +893,7 @@ end)
 -- ============================================================
 --  GUI AUFBAUEN
 -- ============================================================
+VList(Container,5)
 
 -- STATUS
 local sCard=Card(Container,36); Pad(sCard,6,10,6,10)
@@ -964,7 +965,7 @@ local qAmtOuter,qAmtBox=MkInput(qRow,"Anzahl"); qAmtOuter.Size=UDim2.new(0.28,0,
 local qAddBtn=Instance.new("TextButton",qRow); qAddBtn.Size=UDim2.new(0.19,0,0,30); qAddBtn.BackgroundColor3=D.Green; qAddBtn.Text="+ Add"; qAddBtn.TextColor3=Color3.new(1,1,1); qAddBtn.TextSize=11; qAddBtn.Font=Enum.Font.GothamBold; qAddBtn.AutoButtonColor=false; qAddBtn.BorderSizePixel=0; Corner(qAddBtn,7); Stroke(qAddBtn,D.Green,1,0.2)
 qAddBtn.MouseEnter:Connect(function() Tw(qAddBtn,{BackgroundColor3=Color3.fromRGB(0,160,80)}) end)
 qAddBtn.MouseLeave:Connect(function() Tw(qAddBtn,{BackgroundColor3=D.Green}) end)
-AF.UI.Fr.List=Instance.new("Frame",qCard); AF.UI.Fr.List.Size=UDim2.new(1,0,0,0); AF.UI.Fr.List.AutomaticSize=Enum.AutomaticSize.Y; AF.UI.Fr.List.BackgroundTransparency=1; VList(AF.UI.Fr.List,4)
+AF.UI.Fr.List=Instance.new("ScrollingFrame",qCard); AF.UI.Fr.List.Size=UDim2.new(1,0,0,190); AF.UI.Fr.List.CanvasSize=UDim2.new(0,0,0,0); AF.UI.Fr.List.AutomaticCanvasSize=Enum.AutomaticSize.Y; AF.UI.Fr.List.ScrollBarThickness=4; AF.UI.Fr.List.ScrollBarImageColor3=D.CyanDim; AF.UI.Fr.List.BackgroundTransparency=1; AF.UI.Fr.List.BorderSizePixel=0; VList(AF.UI.Fr.List,4)
 AF.UI.Lbl.QueueEmpty=MkLbl(AF.UI.Fr.List,"Queue leer.",11,D.TextLow); AF.UI.Lbl.QueueEmpty.Size=UDim2.new(1,0,0,24)
 qAddBtn.MouseButton1Click:Connect(function()
     local iname=(qItemBox.Text or ""):match("^%s*(.-)%s*$"); local iamt=tonumber(qAmtBox.Text)
@@ -1095,4 +1096,11 @@ HS.TriggerResetRescan = function(onProgress)
 end
 
 HS.SetModuleLoaded(VERSION)
+pcall(function()
+    for _, gui in ipairs(Container:GetDescendants()) do
+        if gui:IsA("GuiObject") then
+            gui.ZIndex = 1
+        end
+    end
+end)
 print(string.format("[HazeHub] autofarm.lua v%s geladen | Spieler: %s | DB: %d Chapters", VERSION, LP.Name, DBCount()))
