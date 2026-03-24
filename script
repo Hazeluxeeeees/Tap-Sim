@@ -379,6 +379,46 @@ local function GetItemTextureId(itemName)
 end
 _G.HazeShared.GetItemTextureId = GetItemTextureId
 
+local function GetItemModelBounds(itemName)
+    local foundModel=nil
+    local maxDim=nil
+    pcall(function()
+        local modelsRoot = Svc.RS.Assets.ItemModels.Models
+        for _, catFolder in pairs(modelsRoot:GetChildren()) do
+            if catFolder:IsA("Folder") or catFolder:IsA("Model") then
+                local itemFolder = catFolder:FindFirstChild(itemName)
+                if not itemFolder then
+                    for _, ch in pairs(catFolder:GetChildren()) do
+                        if ch.Name:lower() == itemName:lower() then itemFolder = ch; break end
+                    end
+                end
+                if itemFolder then
+                    foundModel = itemFolder
+                    break
+                end
+            end
+        end
+        if not foundModel then return end
+        local minX,minY,minZ=math.huge,math.huge,math.huge
+        local maxX,maxY,maxZ=-math.huge,-math.huge,-math.huge
+        local count=0
+        for _, d in pairs(foundModel:GetDescendants()) do
+            if d:IsA("BasePart") then
+                count=count+1
+                local p=d.Position; local s=d.Size
+                minX=math.min(minX,p.X-s.X*0.5); maxX=math.max(maxX,p.X+s.X*0.5)
+                minY=math.min(minY,p.Y-s.Y*0.5); maxY=math.max(maxY,p.Y+s.Y*0.5)
+                minZ=math.min(minZ,p.Z-s.Z*0.5); maxZ=math.max(maxZ,p.Z+s.Z*0.5)
+            end
+        end
+        if count > 0 then
+            local sx=maxX-minX; local sy=maxY-minY; local sz=maxZ-minZ
+            maxDim = math.max(sx, sy, sz, 0.05)
+        end
+    end)
+    return foundModel, maxDim
+end
+
 -- ── ★ VIEWPORT LOADER – Multi-Part zentriert aus Assets ──
 local function LoadItemViewport(vp, itemName)
     pcall(function()
@@ -442,7 +482,24 @@ local function BuildItemPreview(parent, itemName, size)
         local texId = GetItemTextureId(itemName)
         if texId and texId ~= "" and texId ~= "rbxassetid://0" then
             local img = Instance.new("ImageLabel", frame)
-            img.Size = UDim2.new(1,0,1,0)
+            local _, maxDim = GetItemModelBounds(itemName)
+            local scale = 1
+            if maxDim then
+                if maxDim < 0.35 then
+                    scale = 1.08
+                elseif maxDim < 0.7 then
+                    scale = 1.02
+                elseif maxDim > 3.2 then
+                    scale = 0.86
+                elseif maxDim > 2.2 then
+                    scale = 0.92
+                else
+                    scale = 0.98
+                end
+            end
+            img.AnchorPoint = Vector2.new(0.5,0.5)
+            img.Position = UDim2.new(0.5,0,0.5,0)
+            img.Size = UDim2.new(scale,0,scale,0)
             img.BackgroundTransparency = 1
             img.Image = texId
             img.ScaleType = Enum.ScaleType.Fit
@@ -1452,11 +1509,6 @@ task.spawn(function()
         if f then
             ScanChapterFolder(f)
             pcall(function() if H.UI.Lbl.ScanStatus then H.UI.Lbl.ScanStatus.Text="✅ "..#S.WorldIds.." Welten"; H.UI.Lbl.ScanStatus.TextColor3=D.Green end end)
-            S.ChildConn=f.ChildAdded:Connect(function()
-                task.wait(0.5); ScanChapterFolder(f)
-                pcall(function() if H.UI.Lbl.ScanStatus then H.UI.Lbl.ScanStatus.Text="✅ "..#S.WorldIds.." Welten (aktualisiert)"; H.UI.Lbl.ScanStatus.TextColor3=D.Green end end)
-                pcall(RebuildWorldList)
-            end)
         else
             ApplyFallback()
             pcall(function() if H.UI.Lbl.ScanStatus then H.UI.Lbl.ScanStatus.Text="⚠ Fallback-Daten"; H.UI.Lbl.ScanStatus.TextColor3=D.Orange end end)
