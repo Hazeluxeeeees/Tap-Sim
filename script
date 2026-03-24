@@ -936,37 +936,14 @@ local function ShowDBConfirm(msg)
     end)
     S.DBReady=true
     pcall(function()
-        if H.UI.Btn.StartAutoFarm then
-            H.UI.Btn.StartAutoFarm.BackgroundColor3=Color3.fromRGB(0,40,20); H.UI.Btn.StartAutoFarm.TextColor3=D.GreenBright
-            H.UI.Btn.StartAutoFarm.Text="▶  Start Auto-Farm"; Stroke(H.UI.Btn.StartAutoFarm,D.GreenBright,2,0)
-            if H.UI.Lbl.AFDBHint then H.UI.Lbl.AFDBHint.Text="✅  DB geladen – bereit"; H.UI.Lbl.AFDBHint.TextColor3=D.Green end
+        if H.UI.Lbl.ModulStatus then
+            H.UI.Lbl.ModulStatus.Text = "🟢  Autofarm-Modul aktiv | Datenbank geladen"
+            H.UI.Lbl.ModulStatus.TextColor3 = D.GreenBright
         end
     end)
 end
 _G._ShowDBConfirm=ShowDBConfirm
 
-local afStartCard=Card(GamePage); Pad(afStartCard,8,10,8,10); VList(afStartCard,6); SecLbl(afStartCard,"AUTO-FARM STEUERUNG")
-H.UI.Lbl.AFDBHint=Instance.new("TextLabel",afStartCard)
-H.UI.Lbl.AFDBHint.Size=UDim2.new(1,0,0,16); H.UI.Lbl.AFDBHint.BackgroundTransparency=1
-H.UI.Lbl.AFDBHint.Text="⚠  DB muss geladen sein"; H.UI.Lbl.AFDBHint.TextColor3=D.Yellow
-H.UI.Lbl.AFDBHint.TextSize=10; H.UI.Lbl.AFDBHint.Font=Enum.Font.GothamSemibold; H.UI.Lbl.AFDBHint.TextXAlignment=Enum.TextXAlignment.Left
-H.UI.Btn.StartAutoFarm=Instance.new("TextButton",afStartCard)
-H.UI.Btn.StartAutoFarm.Size=UDim2.new(1,0,0,40); H.UI.Btn.StartAutoFarm.BackgroundColor3=Color3.fromRGB(14,18,34)
-H.UI.Btn.StartAutoFarm.Text="🔒  Start Auto-Farm (DB benötigt)"; H.UI.Btn.StartAutoFarm.TextColor3=D.TextLow
-H.UI.Btn.StartAutoFarm.TextSize=13; H.UI.Btn.StartAutoFarm.Font=Enum.Font.GothamBold
-H.UI.Btn.StartAutoFarm.AutoButtonColor=false; H.UI.Btn.StartAutoFarm.BorderSizePixel=0
-Corner(H.UI.Btn.StartAutoFarm,9); Stroke(H.UI.Btn.StartAutoFarm,D.TextLow,1,0.5)
-H.UI.Btn.StartAutoFarm.MouseButton1Click:Connect(function()
-    if not S.DBReady then
-        H.UI.Lbl.AFDBHint.Text="❌  Bitte zuerst DB scannen!"; H.UI.Lbl.AFDBHint.TextColor3=D.Red
-        task.delay(3,function() pcall(function() H.UI.Lbl.AFDBHint.Text="⚠  DB muss geladen sein"; H.UI.Lbl.AFDBHint.TextColor3=D.Yellow end) end)
-        return
-    end
-    H.Config.AutoFarm=true; SaveConfig(); SaveSettings()
-    if _G.HazeShared and _G.HazeShared.StartFarmFromMain then _G.HazeShared.StartFarmFromMain() end
-    H.UI.Btn.StartAutoFarm.Text="⏳  Starte..."; H.UI.Lbl.AFDBHint.Text="✅  Farm wird gestartet..."; H.UI.Lbl.AFDBHint.TextColor3=D.Green
-    task.delay(3,function() pcall(function() H.UI.Btn.StartAutoFarm.Text="▶  Start Auto-Farm" end) end)
-end)
 H.UI.Fr.AutofarmInjection=Instance.new("Frame",GamePage)
 H.UI.Fr.AutofarmInjection.Name="AutofarmInjection"; H.UI.Fr.AutofarmInjection.Size=UDim2.new(1,0,0,0)
 H.UI.Fr.AutofarmInjection.AutomaticSize=Enum.AutomaticSize.Y; H.UI.Fr.AutofarmInjection.BackgroundTransparency=1; H.UI.Fr.AutofarmInjection.BorderSizePixel=0
@@ -1536,9 +1513,9 @@ task.delay(8,function()
         if _G.HazeHUB_Database and type(_G.HazeHUB_Database) == "table" then
             hasDb = hasDb or (next(_G.HazeHUB_Database) ~= nil)
         end
-        if H.UI.Lbl.AFDBHint and (not S.DBReady or not hasDb) then
-            H.UI.Lbl.AFDBHint.Text="⚠ Datenbank fehlt"
-            H.UI.Lbl.AFDBHint.TextColor3=D.Orange
+        if H.UI.Lbl.ModulStatus and (not S.DBReady or not hasDb) then
+            H.UI.Lbl.ModulStatus.Text = "🟠  Autofarm-Modul aktiv | Datenbank fehlt"
+            H.UI.Lbl.ModulStatus.TextColor3 = D.Orange
         end
     end)
 end)
