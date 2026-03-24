@@ -618,13 +618,11 @@ local function AddOrUpdateQueueItem(itemName, amount)
 
     for _, q in ipairs(AF.Queue) do
         if q.item == iname then
-            if iamt > q.amount then
-                q.amount = iamt
-                q.done = false
-                SaveQueueFile()
-                pcall(UpdateQueueUI)
-                pcall(function() HS.UpdateGoalsUI() end)
-            end
+            q.amount = math.max(1, q.amount + iamt)
+            q.done = false
+            SaveQueueFile()
+            pcall(UpdateQueueUI)
+            pcall(function() HS.UpdateGoalsUI() end)
             return true
         end
     end
@@ -691,6 +689,7 @@ HS.StartFarmFromMain = function()
     else task.spawn(FarmLoop) end
 end
 HS.AddAutoFarmQueueItem = AddOrUpdateQueueItem
+_G.AddAutoFarmQueueItem = AddOrUpdateQueueItem
 
 -- ============================================================
 --  SCAN-TASK HELPER
