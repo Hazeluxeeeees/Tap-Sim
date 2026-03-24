@@ -557,7 +557,7 @@ local function ScanAllRewards(onProgress)
         Tw(AF.UI.Fr.ScanBarFill, { Size=UDim2.new(ok and 1 or 0,0,1,0), BackgroundColor3=col }, TM)
         AF.UI.Lbl.DBStatus.Text=msg; AF.UI.Lbl.DBStatus.TextColor3=col
         if AF.UI.Btn.ForceRescan then AF.UI.Btn.ForceRescan.Text="DATENBANK NEU SCANNEN"; AF.UI.Btn.ForceRescan.TextColor3=Color3.new(1,1,1) end
-        if AF.UI.Btn.UpdateDB   then AF.UI.Btn.UpdateDB.Text="Update Database";           AF.UI.Btn.UpdateDB.TextColor3=D.Cyan             end
+        if AF.UI.Btn.UpdateDB   then AF.UI.Btn.UpdateDB.Text="Update Database";           AF.UI.Btn.UpdateDB.TextColor3=D.Accent or D.Cyan             end
     end)
     if ok then NotifyDBReady(c, string.format("Datenbank aktualisiert! (%d Chapters, %d Fehler)", c, failed)) end
     return ok
@@ -596,13 +596,13 @@ UpdateQueueUI = function()
         if q.done then continue end
         local inv=GetLiveInvAmt(q.item); local pct=math.min(1,inv/math.max(1,q.amount)); local isNext=(NextItem()==q)
         local row=Instance.new("Frame",AF.UI.Fr.List); row.Size=UDim2.new(1,0,0,44); row.BorderSizePixel=0; Corner(row,8)
-        if isNext then row.BackgroundColor3=Color3.fromRGB(0,30,55); Stroke(row,D.Cyan,1.5,0)
+        if isNext then row.BackgroundColor3=D.RowSelect or D.TabActive; Stroke(row,D.Accent or D.Cyan,1.5,0)
         else            row.BackgroundColor3=D.Card;                 Stroke(row,D.Border,1,0.4) end
-        local barC=isNext and D.Cyan or D.Purple
+        local barC=isNext and (D.Accent or D.Cyan) or D.Purple
         local bar=Instance.new("Frame",row); bar.Size=UDim2.new(0,3,0.65,0); bar.Position=UDim2.new(0,0,0.175,0); bar.BackgroundColor3=barC; bar.BorderSizePixel=0; Corner(bar,2)
-        local pgBg=Instance.new("Frame",row); pgBg.Size=UDim2.new(1,-52,0,3); pgBg.Position=UDim2.new(0,8,1,-6); pgBg.BackgroundColor3=Color3.fromRGB(28,38,62); pgBg.BorderSizePixel=0; Corner(pgBg,2)
+        local pgBg=Instance.new("Frame",row); pgBg.Size=UDim2.new(1,-52,0,3); pgBg.Position=UDim2.new(0,8,1,-6); pgBg.BackgroundColor3=D.Input; pgBg.BackgroundTransparency=D.GlassPane or 0.18; pgBg.BorderSizePixel=0; Corner(pgBg,2)
         local pgF=Instance.new("Frame",pgBg); pgF.Size=UDim2.new(pct,0,1,0); pgF.BackgroundColor3=barC; pgF.BorderSizePixel=0; Corner(pgF,2)
-        local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,12,0,5); nL.Size=UDim2.new(1,-52,0.5,-3); nL.BackgroundTransparency=1; nL.Text=(isNext and "▶ " or "")..q.item; nL.TextColor3=isNext and D.Cyan or D.TextHi; nL.TextSize=11; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
+        local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,12,0,5); nL.Size=UDim2.new(1,-52,0.5,-3); nL.BackgroundTransparency=1; nL.Text=(isNext and "▶ " or "")..q.item; nL.TextColor3=isNext and (D.Accent or D.Cyan) or D.TextHi; nL.TextSize=11; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
         local pL=Instance.new("TextLabel",row); pL.Position=UDim2.new(0,12,0.5,1); pL.Size=UDim2.new(1,-52,0.5,-5); pL.BackgroundTransparency=1; pL.Text=string.format("%d / %d  (%.0f%%)",inv,q.amount,pct*100); pL.TextColor3=D.TextMid; pL.TextSize=10; pL.Font=Enum.Font.GothamSemibold; pL.TextXAlignment=Enum.TextXAlignment.Left
         local ci=i
         local xBtn=Instance.new("TextButton",row); xBtn.Size=UDim2.new(0,34,0,34); xBtn.Position=UDim2.new(1,-38,0.5,-17); xBtn.BackgroundColor3=Color3.fromRGB(50,12,12); xBtn.Text="✕"; xBtn.TextColor3=D.Red; xBtn.TextSize=13; xBtn.Font=Enum.Font.GothamBold; xBtn.AutoButtonColor=false; xBtn.BorderSizePixel=0; Corner(xBtn,7); Stroke(xBtn,D.Red,1,0.4)
@@ -923,12 +923,12 @@ AF.UI.Lbl.DBStatus=MkLbl(dbCard,"Keine DB geladen.",11,D.TextLow); AF.UI.Lbl.DBS
 local spLbl=Instance.new("TextLabel",dbCard); spLbl.Size=UDim2.new(1,0,0,16); spLbl.BackgroundTransparency=1
 spLbl.Text=""; spLbl.TextColor3=D.Yellow; spLbl.TextSize=10; spLbl.Font=Enum.Font.Gotham
 spLbl.TextXAlignment=Enum.TextXAlignment.Left; spLbl.TextTruncate=Enum.TextTruncate.AtEnd; AF.UI.Lbl.ScanProgress=spLbl
-local barBg=Instance.new("Frame",dbCard); barBg.Size=UDim2.new(1,0,0,7); barBg.BackgroundColor3=Color3.fromRGB(18,26,48); barBg.BorderSizePixel=0; barBg.Visible=false; Corner(barBg,3); AF.UI.Fr.ScanBar=barBg
+local barBg=Instance.new("Frame",dbCard); barBg.Size=UDim2.new(1,0,0,7); barBg.BackgroundColor3=D.Input; barBg.BackgroundTransparency=D.GlassPane or 0.18; barBg.BorderSizePixel=0; barBg.Visible=false; Corner(barBg,3); AF.UI.Fr.ScanBar=barBg
 local barFill=Instance.new("Frame",barBg); barFill.Size=UDim2.new(0,0,1,0); barFill.BackgroundColor3=D.Purple; barFill.BorderSizePixel=0; Corner(barFill,3); AF.UI.Fr.ScanBarFill=barFill
 
 -- DB LADEN
-local loadDbBtn=Instance.new("TextButton",dbCard); loadDbBtn.Size=UDim2.new(1,0,0,28); loadDbBtn.BackgroundColor3=D.CardHover; loadDbBtn.Text="DB laden"; loadDbBtn.TextColor3=D.CyanDim; loadDbBtn.TextSize=11; loadDbBtn.Font=Enum.Font.GothamBold; loadDbBtn.AutoButtonColor=false; loadDbBtn.BorderSizePixel=0; Corner(loadDbBtn,7); Stroke(loadDbBtn,D.CyanDim,1,0.3)
-loadDbBtn.MouseEnter:Connect(function() Tw(loadDbBtn,{BackgroundColor3=Color3.fromRGB(0,45,75)}) end)
+local loadDbBtn=Instance.new("TextButton",dbCard); loadDbBtn.Size=UDim2.new(1,0,0,28); loadDbBtn.BackgroundColor3=D.CardHover; loadDbBtn.BackgroundTransparency=D.GlassPane or 0.18; loadDbBtn.Text="DB laden"; loadDbBtn.TextColor3=D.CyanDim; loadDbBtn.TextSize=11; loadDbBtn.Font=Enum.Font.GothamBold; loadDbBtn.AutoButtonColor=false; loadDbBtn.BorderSizePixel=0; Corner(loadDbBtn,8); Stroke(loadDbBtn,D.CyanDim,1,0.3)
+loadDbBtn.MouseEnter:Connect(function() Tw(loadDbBtn,{BackgroundColor3=D.TabActive}) end)
 loadDbBtn.MouseLeave:Connect(function() Tw(loadDbBtn,{BackgroundColor3=D.CardHover}) end)
 loadDbBtn.MouseButton1Click:Connect(function()
     if LoadDB() or BuildDBFromModuleData() then
@@ -939,11 +939,11 @@ loadDbBtn.MouseButton1Click:Connect(function()
 end)
 
 -- UPDATE DATABASE
-local updateDbBtn=Instance.new("TextButton",dbCard); updateDbBtn.Size=UDim2.new(1,0,0,34); updateDbBtn.BackgroundColor3=Color3.fromRGB(0,50,90); updateDbBtn.Text="Update Database"; updateDbBtn.TextColor3=D.Cyan; updateDbBtn.TextSize=12; updateDbBtn.Font=Enum.Font.GothamBold; updateDbBtn.AutoButtonColor=false; updateDbBtn.BorderSizePixel=0; Corner(updateDbBtn,8); Stroke(updateDbBtn,D.Cyan,1.5,0.2); AF.UI.Btn.UpdateDB=updateDbBtn
-updateDbBtn.MouseEnter:Connect(function() Tw(updateDbBtn,{BackgroundColor3=Color3.fromRGB(0,70,120)}) end)
-updateDbBtn.MouseLeave:Connect(function() Tw(updateDbBtn,{BackgroundColor3=Color3.fromRGB(0,50,90)}) end)
+local updateDbBtn=Instance.new("TextButton",dbCard); updateDbBtn.Size=UDim2.new(1,0,0,34); updateDbBtn.BackgroundColor3=D.CardHover; updateDbBtn.BackgroundTransparency=D.GlassPane or 0.18; updateDbBtn.Text="Update Database"; updateDbBtn.TextColor3=D.Accent or D.Cyan; updateDbBtn.TextSize=12; updateDbBtn.Font=Enum.Font.GothamBold; updateDbBtn.AutoButtonColor=false; updateDbBtn.BorderSizePixel=0; Corner(updateDbBtn,8); Stroke(updateDbBtn,D.Accent or D.Cyan,1.5,0.2); AF.UI.Btn.UpdateDB=updateDbBtn
+updateDbBtn.MouseEnter:Connect(function() Tw(updateDbBtn,{BackgroundColor3=D.TabActive}) end)
+updateDbBtn.MouseLeave:Connect(function() Tw(updateDbBtn,{BackgroundColor3=D.CardHover}) end)
 updateDbBtn.MouseButton1Click:Connect(function()
-    if not CheckIsLobby() then SetStatus("Update DB: Nur in Lobby!",D.Orange); Tw(updateDbBtn,{BackgroundColor3=D.RedDark}); task.wait(0.5); Tw(updateDbBtn,{BackgroundColor3=Color3.fromRGB(0,50,90)}); return end
+    if not CheckIsLobby() then SetStatus("Update DB: Nur in Lobby!",D.Orange); Tw(updateDbBtn,{BackgroundColor3=D.RedDark}); task.wait(0.5); Tw(updateDbBtn,{BackgroundColor3=D.CardHover}); return end
     if AF.Scanning then SetStatus("Scan läuft!",D.Yellow); return end
     updateDbBtn.Text="Scannt..."; updateDbBtn.TextColor3=D.Yellow; RunScanTask(true,false)
 end)
@@ -988,7 +988,7 @@ end)
 stopBtn.MouseButton1Click:Connect(function() StopFarm(); startBtn.Text="Start Queue"; startBtn.TextColor3=Color3.new(1,1,1) end)
 task.spawn(function() while true do task.wait(1); if not AF.Scanning then pcall(function()
     if startBtn.Text=="Scannt..." then startBtn.Text="Start Queue"; startBtn.TextColor3=Color3.new(1,1,1) end
-    if updateDbBtn.Text=="Scannt..." then updateDbBtn.Text="Update Database"; updateDbBtn.TextColor3=D.Cyan end
+    if updateDbBtn.Text=="Scannt..." then updateDbBtn.Text="Update Database"; updateDbBtn.TextColor3=D.Accent or D.Cyan end
 end) end end end)
 task.spawn(function() while true do task.wait(8); pcall(UpdateQueueUI) end end)
 local clearBtn=NeonBtn(qCard,"Queue leeren",D.Red,28)
@@ -1087,7 +1087,7 @@ HS.TriggerResetRescan = function(onProgress)
             end
             if AF.UI.Btn.UpdateDB then
                 AF.UI.Btn.UpdateDB.Text       = "Update Database"
-                AF.UI.Btn.UpdateDB.TextColor3 = D.Cyan
+                AF.UI.Btn.UpdateDB.TextColor3 = D.Accent or D.Cyan
             end
         end)
 
