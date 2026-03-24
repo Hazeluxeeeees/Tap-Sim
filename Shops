@@ -1,8 +1,9 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB – Shops.lua  v1.1.0
+--  HazeHUB – Shops.lua  v1.2.0
 --  GitHub: Hazeluxeeeees/HazeHub-Modules  (main/Shops)
 --
 --  Shops: Ghoul Hunt · Merchant · Calamity · Raid Shop
+--  v1.2: Glas-Schwarz-Theme (D.*), keine blauen Flächen
 --  v1.1 Fixes:
 --    + Robusterer Shared-Wait (wartet auf ShopContainer)
 --    + Währungs-Header zeigt Live-Balance (alle 3s)
@@ -13,7 +14,7 @@
 --    + Alle Pfade dynamisch via LP.Name
 -- ╚══════════════════════════════════════════════════════════╝
 
-local VERSION = "1.1.0"
+local VERSION = "1.2.0"
 
 -- ============================================================
 --  WARTEN BIS SHARED BEREIT
@@ -145,7 +146,8 @@ local ShopPage = HS.ShopContainer
 local verLbl = Instance.new("TextLabel", ShopPage)
 verLbl.Size = UDim2.new(1,0,0,13); verLbl.BackgroundTransparency = 1
 verLbl.Text = "🟢  Shop-Modul v" .. VERSION .. " | Spieler: " .. LP.Name
-verLbl.TextColor3 = D.Green; verLbl.TextSize = 9; verLbl.Font = Enum.Font.Gotham
+verLbl.TextColor3 = D.Green; verLbl.TextSize = 9; verLbl.Font = Enum.Font.GothamMedium
+verLbl.TextScaled = false; verLbl.RichText = true; verLbl.TextStrokeTransparency = 1
 verLbl.TextXAlignment = Enum.TextXAlignment.Left
 
 -- ============================================================
@@ -153,8 +155,9 @@ verLbl.TextXAlignment = Enum.TextXAlignment.Left
 -- ============================================================
 local function BuildResetTimer(parent, timerType)
     local tc = Instance.new("Frame", parent)
-    tc.Size = UDim2.new(1,0,0,32); tc.BackgroundColor3 = Color3.fromRGB(12,18,36)
-    tc.BorderSizePixel = 0; Corner(tc,6); Stroke(tc,D.CyanDim,1,0.5)
+    tc.Size = UDim2.new(1,0,0,32); tc.BackgroundColor3 = D.Input
+    tc.BackgroundTransparency = D.GlassPane or 0.18
+    tc.BorderSizePixel = 0; Corner(tc,8); Stroke(tc,D.Border,1,0.45)
 
     local labelTxt = timerType == "hourly15"
         and "⏰ Reset: stündlich :15"
@@ -163,22 +166,24 @@ local function BuildResetTimer(parent, timerType)
     local tLbl = Instance.new("TextLabel", tc)
     tLbl.Position = UDim2.new(0,8,0,2); tLbl.Size = UDim2.new(0.5,0,0,14)
     tLbl.BackgroundTransparency = 1; tLbl.Text = labelTxt
-    tLbl.TextColor3 = D.TextLow; tLbl.TextSize = 9; tLbl.Font = Enum.Font.Gotham
+    tLbl.TextColor3 = D.TextLow; tLbl.TextSize = 9; tLbl.Font = Enum.Font.GothamMedium
+    tLbl.TextScaled = false; tLbl.RichText = true; tLbl.TextStrokeTransparency = 1
     tLbl.TextXAlignment = Enum.TextXAlignment.Left
 
     local cLbl = Instance.new("TextLabel", tc)
     cLbl.Position = UDim2.new(0.5,0,0,2); cLbl.Size = UDim2.new(0.49,0,0,14)
     cLbl.BackgroundTransparency = 1; cLbl.Text = "–"
-    cLbl.TextColor3 = D.Cyan; cLbl.TextSize = 10; cLbl.Font = Enum.Font.GothamBold
+    cLbl.TextColor3 = D.Accent or D.Cyan; cLbl.TextSize = 10; cLbl.Font = Enum.Font.GothamBold
+    cLbl.TextScaled = false; cLbl.RichText = true; cLbl.TextStrokeTransparency = 1
     cLbl.TextXAlignment = Enum.TextXAlignment.Right
 
     local barBg = Instance.new("Frame",tc)
     barBg.Position = UDim2.new(0,8,0,18); barBg.Size = UDim2.new(1,-16,0,6)
-    barBg.BackgroundColor3 = Color3.fromRGB(20,28,50); barBg.BorderSizePixel=0; Corner(barBg,3)
+    barBg.BackgroundColor3 = D.Input; barBg.BackgroundTransparency = D.GlassPane or 0.18; barBg.BorderSizePixel=0; Corner(barBg,4)
 
     local barFill = Instance.new("Frame",barBg)
-    barFill.Size = UDim2.new(0,0,1,0); barFill.BackgroundColor3 = D.CyanDim
-    barFill.BorderSizePixel=0; Corner(barFill,3)
+    barFill.Size = UDim2.new(0,0,1,0); barFill.BackgroundColor3 = D.AccentDim or D.CyanDim
+    barFill.BorderSizePixel=0; Corner(barFill,4)
 
     task.spawn(function()
         while tc.Parent do
@@ -186,7 +191,7 @@ local function BuildResetTimer(parent, timerType)
                 local remain, total = SecsUntilReset(timerType)
                 local elapsed = total - remain
                 local pct = math.max(0, math.min(1, elapsed / total))
-                local col = pct > 0.9 and D.Red or (pct > 0.6 and D.Yellow or D.CyanDim)
+                local col = pct > 0.9 and D.Red or (pct > 0.6 and D.Yellow or (D.AccentDim or D.CyanDim))
                 cLbl.Text = FmtCountdown(remain)
                 Tw(barFill, { Size = UDim2.new(pct,0,1,0), BackgroundColor3 = col }, TF)
             end)
@@ -217,7 +222,7 @@ local function BuildShopHeader(parent, shopName, currencyKey, acc)
             math.clamp(math.floor(r*0.25),0,255),
             math.clamp(math.floor(g*0.25),0,255),
             math.clamp(math.floor(b*0.25),0,255))),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(10,14,28)),
+        ColorSequenceKeypoint.new(1, D.BG),
     })
     grad.Rotation = 90
 
@@ -300,9 +305,7 @@ local function BuildItemList(parent, folderGetter, shopDef, acc)
         table.sort(items, function(a,b) return a.Name < b.Name end)
         statusLbl.Visible = false
 
-        local r,g,b = math.floor(acc.R*255), math.floor(acc.G*255), math.floor(acc.B*255)
-
-        for _, item in ipairs(items) do
+            for _, item in ipairs(items) do
             local iName = item.Name
             local rawQty, rawCost = 0, 0
             local qtyStr, costStr = "–", "–"
@@ -321,6 +324,7 @@ local function BuildItemList(parent, folderGetter, shopDef, acc)
 
             local row = Instance.new("Frame", container)
             row.Size = UDim2.new(1,0,0,72); row.BackgroundColor3 = D.Card
+            row.BackgroundTransparency = D.GlassPane or 0.18
             row.BorderSizePixel=0; Corner(row,8); Stroke(row,acc,1,0.6)
 
             local acBar = Instance.new("Frame",row)
@@ -342,8 +346,8 @@ local function BuildItemList(parent, folderGetter, shopDef, acc)
 
             local inOuter = Instance.new("Frame",row)
             inOuter.Position = UDim2.new(0,10,0,40); inOuter.Size = UDim2.new(0.36,-14,0,24)
-            inOuter.BackgroundColor3=D.Input; inOuter.BorderSizePixel=0
-            Corner(inOuter,5); Stroke(inOuter,acc,1,0.4)
+            inOuter.BackgroundColor3=D.Input; inOuter.BackgroundTransparency=D.GlassPane or 0.18; inOuter.BorderSizePixel=0
+            Corner(inOuter,8); Stroke(inOuter,acc,1,0.4)
 
             local inBox = Instance.new("TextBox",inOuter)
             inBox.Size = UDim2.new(1,0,1,0); inBox.BackgroundTransparency=1
@@ -371,26 +375,19 @@ local function BuildItemList(parent, folderGetter, shopDef, acc)
 
             local buyBtn = Instance.new("TextButton",row)
             buyBtn.Position = UDim2.new(0.65,2,0,38); buyBtn.Size = UDim2.new(0.35,-8,0,26)
-            buyBtn.BackgroundColor3 = Color3.fromRGB(
-                math.clamp(math.floor(r*0.22),0,255),
-                math.clamp(math.floor(g*0.22),0,255),
-                math.clamp(math.floor(b*0.22),0,255))
+            buyBtn.BackgroundColor3 = D.CardHover
+            buyBtn.BackgroundTransparency = D.GlassPane or 0.18
             buyBtn.Text = "🛒 Kaufen"; buyBtn.TextColor3=acc
             buyBtn.TextSize=10; buyBtn.Font=Enum.Font.GothamBold
+            buyBtn.TextScaled=false; buyBtn.RichText=true; buyBtn.TextStrokeTransparency=1
             buyBtn.AutoButtonColor=false; buyBtn.BorderSizePixel=0
-            Corner(buyBtn,6); Stroke(buyBtn,acc,1,0.25)
+            Corner(buyBtn,8); Stroke(buyBtn,acc,1,0.25)
 
             buyBtn.MouseEnter:Connect(function()
-                Tw(buyBtn,{BackgroundColor3=Color3.fromRGB(
-                    math.clamp(math.floor(r*0.38),0,255),
-                    math.clamp(math.floor(g*0.38),0,255),
-                    math.clamp(math.floor(b*0.38),0,255))})
+                Tw(buyBtn,{BackgroundColor3=D.TabActive,BackgroundTransparency=D.GlassPane or 0.18})
             end)
             buyBtn.MouseLeave:Connect(function()
-                Tw(buyBtn,{BackgroundColor3=Color3.fromRGB(
-                    math.clamp(math.floor(r*0.22),0,255),
-                    math.clamp(math.floor(g*0.22),0,255),
-                    math.clamp(math.floor(b*0.22),0,255))})
+                Tw(buyBtn,{BackgroundColor3=D.CardHover,BackgroundTransparency=D.GlassPane or 0.18})
             end)
 
             local capName = iName
@@ -564,11 +561,11 @@ do
         { remoteName="Calamity_Shop",
           extraArgs=function(n,q) return {"FireForce",n,q} end },
         D.Orange)
-    local rfFF = NeonBtn(calCard,"🔄 FireForce neu laden",Color3.fromRGB(150,75,0),24)
+    local rfFF = NeonBtn(calCard,"🔄 FireForce neu laden",D.Orange,24)
     rfFF.MouseButton1Click:Connect(function()
         rfFF.Text="⏳..."; rfFF.TextColor3=D.Yellow
         task.spawn(function() pcall(rebFF)
-            pcall(function() rfFF.Text="🔄 FireForce neu laden"; rfFF.TextColor3=Color3.fromRGB(150,75,0) end)
+            pcall(function() rfFF.Text="🔄 FireForce neu laden"; rfFF.TextColor3=D.Orange end)
         end)
     end)
 
