@@ -1,16 +1,13 @@
 -- ╔══════════════════════════════════════════════════════════╗
 --  HazeHUB – trait.lua  v2.2.0
 --
---  v2.2.0:
---    ✓ Feste Grid-Zellen 150×180, inneres List-ScrollingFrame
---    ✓ Viewport 70% Höhe, kein Aspect-Stretch; TraitPageRoot clips
---    ✓ Sticky-Leiste: Trait-Reroll + Start/Stop (TraitSticky)
---    ✓ Kamera FOV 60, fester Abstand, Kopf-Fokus; Shiny/Evo/Unit
---    ✓ Remote: TraitAck → RerollTrait (Währung + Traits in [5])
---    ✓ HS.GetItemObjectTextures (Objects.Front / .Back)
+--  v2.3.0:
+--    ✓ Typografie: GothamMedium/Bold, feste TextSize, RichText, kein TextStroke-Glow
+--    ✓ Reroll: Start/Stop in „Reroll Einstellungen“; Währung fest Shards
+--    ✓ (v2.2) Grid 150×180, TraitSticky nur Trait-Reroll-Anzeige
 -- ╚══════════════════════════════════════════════════════════╝
 
-local VERSION = "2.2.0"
+local VERSION = "2.3.0"
 
 local _w = 0
 while not (_G.HazeShared and _G.HazeShared.D and _G.HazeShared.Card and _G.HazeShared.TraitPage) do
@@ -93,8 +90,8 @@ pcall(function()
     end
 end)
 
-MkLbl(TraitPage, "✨  Traits", 14, D.Cyan, true)
-MkLbl(TraitPage, "Trait-Modul v" .. VERSION .. " | " .. LP.Name, 9, D.TextLow).Size = UDim2.new(1, 0, 0, 13)
+MkLbl(TraitPage, "✨  Traits", 18, D.Cyan, true)
+MkLbl(TraitPage, "Trait-Modul v" .. VERSION .. " | " .. LP.Name, 14, D.TextLow).Size = UDim2.new(1, 0, 0, 18)
 
 local statusCard = Card(TraitPage, 28); Pad(statusCard, 4, 10, 4, 10)
 TR.UI.Lbl.Status = Instance.new("TextLabel", statusCard)
@@ -102,8 +99,11 @@ TR.UI.Lbl.Status.Size = UDim2.new(1, 0, 1, 0)
 TR.UI.Lbl.Status.BackgroundTransparency = 1
 TR.UI.Lbl.Status.Text = "⏳ Lade Einheiten..."
 TR.UI.Lbl.Status.TextColor3 = D.Yellow
-TR.UI.Lbl.Status.TextSize = 11
-TR.UI.Lbl.Status.Font = Enum.Font.GothamSemibold
+TR.UI.Lbl.Status.TextSize = 14
+TR.UI.Lbl.Status.Font = Enum.Font.GothamMedium
+TR.UI.Lbl.Status.TextScaled = false
+TR.UI.Lbl.Status.RichText = true
+TR.UI.Lbl.Status.TextStrokeTransparency = 1
 TR.UI.Lbl.Status.TextXAlignment = Enum.TextXAlignment.Left
 
 local function SetStatus(txt, col)
@@ -116,15 +116,18 @@ if not stickyParent then
     warn("[HazeHub-Trait] TraitSticky fehlt – Reroll-Leiste im Scrollbereich (Hub updaten).")
 end
 
-local stickyCard = Card(stickyParent, 30); Pad(stickyCard, 4, 10, 4, 10)
-local rollRow = Instance.new("Frame", stickyCard); rollRow.Size = UDim2.new(1, 0, 0, 22); rollRow.BackgroundTransparency = 1
+local stickyCard = Card(stickyParent, 26); Pad(stickyCard, 4, 10, 4, 10)
+local rollRow = Instance.new("Frame", stickyCard); rollRow.Size = UDim2.new(1, 0, 0, 26); rollRow.BackgroundTransparency = 1
 TR.UI.Lbl.RollCount = Instance.new("TextLabel", rollRow)
 TR.UI.Lbl.RollCount.Size = UDim2.new(0.55, 0, 1, 0)
 TR.UI.Lbl.RollCount.BackgroundTransparency = 1
 TR.UI.Lbl.RollCount.Text = "Trait Reroll: –"
 TR.UI.Lbl.RollCount.TextColor3 = D.Gold
-TR.UI.Lbl.RollCount.TextSize = 12
+TR.UI.Lbl.RollCount.TextSize = 14
 TR.UI.Lbl.RollCount.Font = Enum.Font.GothamBold
+TR.UI.Lbl.RollCount.TextScaled = false
+TR.UI.Lbl.RollCount.RichText = true
+TR.UI.Lbl.RollCount.TextStrokeTransparency = 1
 TR.UI.Lbl.RollCount.TextXAlignment = Enum.TextXAlignment.Left
 TR.UI.Lbl.RollRate = Instance.new("TextLabel", rollRow)
 TR.UI.Lbl.RollRate.Position = UDim2.new(0.55, 0, 0, 0)
@@ -132,40 +135,14 @@ TR.UI.Lbl.RollRate.Size = UDim2.new(0.45, 0, 1, 0)
 TR.UI.Lbl.RollRate.BackgroundTransparency = 1
 TR.UI.Lbl.RollRate.Text = ""
 TR.UI.Lbl.RollRate.TextColor3 = D.TextLow
-TR.UI.Lbl.RollRate.TextSize = 10
-TR.UI.Lbl.RollRate.Font = Enum.Font.Gotham
+TR.UI.Lbl.RollRate.TextSize = 14
+TR.UI.Lbl.RollRate.Font = Enum.Font.GothamMedium
+TR.UI.Lbl.RollRate.TextScaled = false
+TR.UI.Lbl.RollRate.RichText = true
+TR.UI.Lbl.RollRate.TextStrokeTransparency = 1
 TR.UI.Lbl.RollRate.TextXAlignment = Enum.TextXAlignment.Right
 
-local stickyBtnRow = Instance.new("Frame", stickyCard); stickyBtnRow.Size = UDim2.new(1, 0, 0, 34); stickyBtnRow.BackgroundTransparency = 1
-HList(stickyBtnRow, 6)
-
-local startRerollBtn = Instance.new("TextButton", stickyBtnRow)
-startRerollBtn.Size = UDim2.new(0.58, 0, 1, 0)
-startRerollBtn.BackgroundColor3 = Color3.fromRGB(50, 35, 0)
-startRerollBtn.Text = "🎲  Start Reroll"
-startRerollBtn.TextColor3 = D.Gold
-startRerollBtn.TextSize = 11
-startRerollBtn.Font = Enum.Font.GothamBold
-startRerollBtn.AutoButtonColor = false
-startRerollBtn.BorderSizePixel = 0
-Corner(startRerollBtn, 8)
-Stroke(startRerollBtn, D.Gold, 2, 0)
-startRerollBtn.MouseEnter:Connect(function() Tw(startRerollBtn, { BackgroundColor3 = Color3.fromRGB(75, 55, 0) }) end)
-startRerollBtn.MouseLeave:Connect(function() Tw(startRerollBtn, { BackgroundColor3 = Color3.fromRGB(50, 35, 0) }) end)
-
-local stopRerollBtn = Instance.new("TextButton", stickyBtnRow)
-stopRerollBtn.Size = UDim2.new(0.4, 0, 1, 0)
-stopRerollBtn.BackgroundColor3 = D.RedDark
-stopRerollBtn.Text = "⏹ STOP"
-stopRerollBtn.TextColor3 = D.Red
-stopRerollBtn.TextSize = 11
-stopRerollBtn.Font = Enum.Font.GothamBold
-stopRerollBtn.AutoButtonColor = false
-stopRerollBtn.BorderSizePixel = 0
-Corner(stopRerollBtn, 8)
-Stroke(stopRerollBtn, D.Red, 1.5, 0.2)
-stopRerollBtn.MouseEnter:Connect(function() Tw(stopRerollBtn, { BackgroundColor3 = D.Red }) end)
-stopRerollBtn.MouseLeave:Connect(function() Tw(stopRerollBtn, { BackgroundColor3 = D.RedDark }) end)
+local startRerollBtn, stopRerollBtn
 
 local unitCard = Card(TraitPage); Pad(unitCard, 10, 12, 10, 12); VList(unitCard, 7)
 SecLbl(unitCard, "👤 EINHEIT AUSWÄHLEN")
@@ -212,24 +189,23 @@ TR.UI.Lbl.UnitEmpty = unitEmptyLbl
 
 local currentTraitCard = Card(TraitPage); Pad(currentTraitCard, 10, 12, 10, 12); VList(currentTraitCard, 8)
 SecLbl(currentTraitCard, "🔍 AKTUELLER TRAIT (Live)")
-TR.UI.Lbl.UnitName = MkLbl(currentTraitCard, "Keine Einheit gewählt", 12, D.TextHi, true)
-TR.UI.Lbl.UnitName.Size = UDim2.new(1, 0, 0, 18)
+TR.UI.Lbl.UnitName = MkLbl(currentTraitCard, "Keine Einheit gewählt", 16, D.TextHi, true)
+TR.UI.Lbl.UnitName.Size = UDim2.new(1, 0, 0, 22)
 
-local mainRow = Instance.new("Frame", currentTraitCard); mainRow.Size = UDim2.new(1, 0, 0, 44); mainRow.BackgroundColor3 = Color3.fromRGB(15, 22, 40); mainRow.BorderSizePixel = 0; Corner(mainRow, 8); Stroke(mainRow, D.Gold, 1, 0.4)
+local mainRow = Instance.new("Frame", currentTraitCard); mainRow.Size = UDim2.new(1, 0, 0, 48); mainRow.BackgroundColor3 = Color3.fromRGB(15, 22, 40); mainRow.BorderSizePixel = 0; Corner(mainRow, 8); Stroke(mainRow, D.Gold, 1, 0.4)
 local mainBarLine = Instance.new("Frame", mainRow); mainBarLine.Size = UDim2.new(0, 3, 1, 0); mainBarLine.BackgroundColor3 = D.Gold; mainBarLine.BorderSizePixel = 0; Corner(mainBarLine, 2)
-local mainLabelL = Instance.new("TextLabel", mainRow); mainLabelL.Position = UDim2.new(0, 10, 0, 3); mainLabelL.Size = UDim2.new(0.35, 0, 0, 14); mainLabelL.BackgroundTransparency = 1; mainLabelL.Text = "MAIN TRAIT"; mainLabelL.TextColor3 = D.Gold; mainLabelL.TextSize = 9; mainLabelL.Font = Enum.Font.GothamBold; mainLabelL.TextXAlignment = Enum.TextXAlignment.Left
-TR.UI.Lbl.MainTrait = Instance.new("TextLabel", mainRow); TR.UI.Lbl.MainTrait.Position = UDim2.new(0, 10, 0, 18); TR.UI.Lbl.MainTrait.Size = UDim2.new(1, -14, 0, 20); TR.UI.Lbl.MainTrait.BackgroundTransparency = 1; TR.UI.Lbl.MainTrait.Text = "–"; TR.UI.Lbl.MainTrait.TextColor3 = D.TextHi; TR.UI.Lbl.MainTrait.TextSize = 13; TR.UI.Lbl.MainTrait.Font = Enum.Font.GothamBold; TR.UI.Lbl.MainTrait.TextXAlignment = Enum.TextXAlignment.Left
-TR.UI.Lbl.MainRarity = Instance.new("TextLabel", mainRow); TR.UI.Lbl.MainRarity.Position = UDim2.new(0.6, 0, 0, 3); TR.UI.Lbl.MainRarity.Size = UDim2.new(0.39, -4, 0, 14); TR.UI.Lbl.MainRarity.BackgroundTransparency = 1; TR.UI.Lbl.MainRarity.Text = ""; TR.UI.Lbl.MainRarity.TextColor3 = D.Gold; TR.UI.Lbl.MainRarity.TextSize = 9; TR.UI.Lbl.MainRarity.Font = Enum.Font.GothamSemibold; TR.UI.Lbl.MainRarity.TextXAlignment = Enum.TextXAlignment.Right
+local mainLabelL = Instance.new("TextLabel", mainRow); mainLabelL.Position = UDim2.new(0, 10, 0, 3); mainLabelL.Size = UDim2.new(0.35, 0, 0, 16); mainLabelL.BackgroundTransparency = 1; mainLabelL.Text = "MAIN TRAIT"; mainLabelL.TextColor3 = D.Gold; mainLabelL.TextSize = 12; mainLabelL.Font = Enum.Font.GothamBold; mainLabelL.TextScaled = false; mainLabelL.RichText = true; mainLabelL.TextStrokeTransparency = 1; mainLabelL.TextXAlignment = Enum.TextXAlignment.Left
+TR.UI.Lbl.MainTrait = Instance.new("TextLabel", mainRow); TR.UI.Lbl.MainTrait.Position = UDim2.new(0, 10, 0, 20); TR.UI.Lbl.MainTrait.Size = UDim2.new(1, -14, 0, 22); TR.UI.Lbl.MainTrait.BackgroundTransparency = 1; TR.UI.Lbl.MainTrait.Text = "–"; TR.UI.Lbl.MainTrait.TextColor3 = D.TextHi; TR.UI.Lbl.MainTrait.TextSize = 16; TR.UI.Lbl.MainTrait.Font = Enum.Font.GothamBold; TR.UI.Lbl.MainTrait.TextScaled = false; TR.UI.Lbl.MainTrait.RichText = true; TR.UI.Lbl.MainTrait.TextStrokeTransparency = 1; TR.UI.Lbl.MainTrait.TextXAlignment = Enum.TextXAlignment.Left
+TR.UI.Lbl.MainRarity = Instance.new("TextLabel", mainRow); TR.UI.Lbl.MainRarity.Position = UDim2.new(0.6, 0, 0, 3); TR.UI.Lbl.MainRarity.Size = UDim2.new(0.39, -4, 0, 16); TR.UI.Lbl.MainRarity.BackgroundTransparency = 1; TR.UI.Lbl.MainRarity.Text = ""; TR.UI.Lbl.MainRarity.TextColor3 = D.Gold; TR.UI.Lbl.MainRarity.TextSize = 12; TR.UI.Lbl.MainRarity.Font = Enum.Font.GothamMedium; TR.UI.Lbl.MainRarity.TextScaled = false; TR.UI.Lbl.MainRarity.RichText = true; TR.UI.Lbl.MainRarity.TextStrokeTransparency = 1; TR.UI.Lbl.MainRarity.TextXAlignment = Enum.TextXAlignment.Right
 
-local subRow = Instance.new("Frame", currentTraitCard); subRow.Size = UDim2.new(1, 0, 0, 44); subRow.BackgroundColor3 = Color3.fromRGB(15, 18, 38); subRow.BorderSizePixel = 0; Corner(subRow, 8); Stroke(subRow, D.Purple, 1, 0.4)
+local subRow = Instance.new("Frame", currentTraitCard); subRow.Size = UDim2.new(1, 0, 0, 48); subRow.BackgroundColor3 = Color3.fromRGB(15, 18, 38); subRow.BorderSizePixel = 0; Corner(subRow, 8); Stroke(subRow, D.Purple, 1, 0.4)
 local subBarLine = Instance.new("Frame", subRow); subBarLine.Size = UDim2.new(0, 3, 1, 0); subBarLine.BackgroundColor3 = D.Purple; subBarLine.BorderSizePixel = 0; Corner(subBarLine, 2)
-local subLabelL = Instance.new("TextLabel", subRow); subLabelL.Position = UDim2.new(0, 10, 0, 3); subLabelL.Size = UDim2.new(0.35, 0, 0, 14); subLabelL.BackgroundTransparency = 1; subLabelL.Text = "SUB TRAIT"; subLabelL.TextColor3 = D.Purple; subLabelL.TextSize = 9; subLabelL.Font = Enum.Font.GothamBold; subLabelL.TextXAlignment = Enum.TextXAlignment.Left
-TR.UI.Lbl.SubTrait = Instance.new("TextLabel", subRow); TR.UI.Lbl.SubTrait.Position = UDim2.new(0, 10, 0, 18); TR.UI.Lbl.SubTrait.Size = UDim2.new(1, -14, 0, 20); TR.UI.Lbl.SubTrait.BackgroundTransparency = 1; TR.UI.Lbl.SubTrait.Text = "–"; TR.UI.Lbl.SubTrait.TextColor3 = D.TextHi; TR.UI.Lbl.SubTrait.TextSize = 13; TR.UI.Lbl.SubTrait.Font = Enum.Font.GothamBold; TR.UI.Lbl.SubTrait.TextXAlignment = Enum.TextXAlignment.Left
-TR.UI.Lbl.SubRarity = Instance.new("TextLabel", subRow); TR.UI.Lbl.SubRarity.Position = UDim2.new(0.6, 0, 0, 3); TR.UI.Lbl.SubRarity.Size = UDim2.new(0.39, -4, 0, 14); TR.UI.Lbl.SubRarity.BackgroundTransparency = 1; TR.UI.Lbl.SubRarity.Text = ""; TR.UI.Lbl.SubRarity.TextColor3 = D.Purple; TR.UI.Lbl.SubRarity.TextSize = 9; TR.UI.Lbl.SubRarity.Font = Enum.Font.GothamSemibold; TR.UI.Lbl.SubRarity.TextXAlignment = Enum.TextXAlignment.Right
+local subLabelL = Instance.new("TextLabel", subRow); subLabelL.Position = UDim2.new(0, 10, 0, 3); subLabelL.Size = UDim2.new(0.35, 0, 0, 16); subLabelL.BackgroundTransparency = 1; subLabelL.Text = "SUB TRAIT"; subLabelL.TextColor3 = D.Purple; subLabelL.TextSize = 12; subLabelL.Font = Enum.Font.GothamBold; subLabelL.TextScaled = false; subLabelL.RichText = true; subLabelL.TextStrokeTransparency = 1; subLabelL.TextXAlignment = Enum.TextXAlignment.Left
+TR.UI.Lbl.SubTrait = Instance.new("TextLabel", subRow); TR.UI.Lbl.SubTrait.Position = UDim2.new(0, 10, 0, 20); TR.UI.Lbl.SubTrait.Size = UDim2.new(1, -14, 0, 22); TR.UI.Lbl.SubTrait.BackgroundTransparency = 1; TR.UI.Lbl.SubTrait.Text = "–"; TR.UI.Lbl.SubTrait.TextColor3 = D.TextHi; TR.UI.Lbl.SubTrait.TextSize = 16; TR.UI.Lbl.SubTrait.Font = Enum.Font.GothamBold; TR.UI.Lbl.SubTrait.TextScaled = false; TR.UI.Lbl.SubTrait.RichText = true; TR.UI.Lbl.SubTrait.TextStrokeTransparency = 1; TR.UI.Lbl.SubTrait.TextXAlignment = Enum.TextXAlignment.Left
+TR.UI.Lbl.SubRarity = Instance.new("TextLabel", subRow); TR.UI.Lbl.SubRarity.Position = UDim2.new(0.6, 0, 0, 3); TR.UI.Lbl.SubRarity.Size = UDim2.new(0.39, -4, 0, 16); TR.UI.Lbl.SubRarity.BackgroundTransparency = 1; TR.UI.Lbl.SubRarity.Text = ""; TR.UI.Lbl.SubRarity.TextColor3 = D.Purple; TR.UI.Lbl.SubRarity.TextSize = 12; TR.UI.Lbl.SubRarity.Font = Enum.Font.GothamMedium; TR.UI.Lbl.SubRarity.TextScaled = false; TR.UI.Lbl.SubRarity.RichText = true; TR.UI.Lbl.SubRarity.TextStrokeTransparency = 1; TR.UI.Lbl.SubRarity.TextXAlignment = Enum.TextXAlignment.Right
 
-TR.UI.Lbl.TraitInfo = MkLbl(currentTraitCard, "", 9, D.TextLow)
-TR.UI.Lbl.TraitInfo.Size = UDim2.new(1, 0, 0, 30)
-TR.UI.Lbl.TraitInfo.TextWrapped = true
+TR.UI.Lbl.TraitInfo = MkLbl(currentTraitCard, "", 14, D.TextLow)
+TR.UI.Lbl.TraitInfo.Size = UDim2.new(1, 0, 0, 40)
 
 local function GetUnitTraits(unitInstance)
     local main, sub = nil, nil
@@ -466,15 +442,16 @@ local function BuildUnitList(filter)
                 fb.TextColor3 = D.TextLow
                 fb.TextSize = 18
                 fb.Font = Enum.Font.GothamBold
+                fb.TextScaled = false; fb.RichText = true; fb.TextStrokeTransparency = 1
             end
         end)
 
         local main, sub = GetUnitTraits(u.instance)
         local mainColor = main and AllTraits[main] and GetRarityColor(AllTraits[main].Rarity) or D.TextLow
-        local nL = Instance.new("TextLabel", row); nL.Position = UDim2.new(0, 4, 0.72, 0); nL.Size = UDim2.new(1, -8, 0, 14); nL.BackgroundTransparency = 1
-        nL.Text = u.displayName; nL.TextColor3 = isSelected and D.Cyan or D.TextHi; nL.TextSize = 10; nL.Font = Enum.Font.GothamBold; nL.TextXAlignment = Enum.TextXAlignment.Left; nL.TextTruncate = Enum.TextTruncate.AtEnd
+        local nL = Instance.new("TextLabel", row); nL.Position = UDim2.new(0, 4, 0.72, 0); nL.Size = UDim2.new(1, -8, 0, 16); nL.BackgroundTransparency = 1
+        nL.Text = u.displayName; nL.TextColor3 = isSelected and D.Cyan or D.TextHi; nL.TextSize = 13; nL.Font = Enum.Font.GothamBold; nL.TextScaled = false; nL.RichText = true; nL.TextStrokeTransparency = 1; nL.TextXAlignment = Enum.TextXAlignment.Left; nL.TextTruncate = Enum.TextTruncate.AtEnd
         local tL = Instance.new("TextLabel", row); tL.Position = UDim2.new(0, 4, 0.86, 0); tL.Size = UDim2.new(1, -8, 0, 13); tL.BackgroundTransparency = 1
-        tL.Text = (main or "?") .. " / " .. (sub or "?"); tL.TextColor3 = mainColor; tL.TextSize = 9; tL.Font = Enum.Font.GothamSemibold; tL.TextXAlignment = Enum.TextXAlignment.Left; tL.TextTruncate = Enum.TextTruncate.AtEnd
+        tL.Text = (main or "?") .. " / " .. (sub or "?"); tL.TextColor3 = mainColor; tL.TextSize = 12; tL.Font = Enum.Font.GothamMedium; tL.TextScaled = false; tL.RichText = true; tL.TextStrokeTransparency = 1; tL.TextXAlignment = Enum.TextXAlignment.Left; tL.TextTruncate = Enum.TextTruncate.AtEnd
 
         local clickBtn = Instance.new("TextButton", row); clickBtn.Size = UDim2.new(1, 0, 1, 0); clickBtn.BackgroundTransparency = 1; clickBtn.Text = ""; clickBtn.BorderSizePixel = 0; clickBtn.ZIndex = 2
         local capU = u
@@ -514,10 +491,10 @@ SecLbl(targetCard, "🎯 ZIEL-TRAITS (Auto-Reroll stoppt hier)")
 
 local function BuildMultiSelectDropdown(parent, title, accent, targetSet)
     local wrap = Instance.new("Frame", parent); wrap.Size = UDim2.new(1, 0, 0, 0); wrap.AutomaticSize = Enum.AutomaticSize.Y; wrap.BackgroundTransparency = 1; VList(wrap, 4)
-    local head = Instance.new("Frame", wrap); head.Size = UDim2.new(1, 0, 0, 28); head.BackgroundColor3 = D.CardHover; head.BorderSizePixel = 0; Corner(head, 7); Stroke(head, accent, 1, 0.4)
-    local ttl = Instance.new("TextLabel", head); ttl.Position = UDim2.new(0, 10, 0, 0); ttl.Size = UDim2.new(0.68, 0, 1, 0); ttl.BackgroundTransparency = 1; ttl.Text = title; ttl.TextColor3 = accent; ttl.TextSize = 10; ttl.Font = Enum.Font.GothamBold; ttl.TextXAlignment = Enum.TextXAlignment.Left
-    local sum = Instance.new("TextLabel", head); sum.Position = UDim2.new(0.55, 0, 0, 0); sum.Size = UDim2.new(0.27, 0, 1, 0); sum.BackgroundTransparency = 1; sum.Text = "0 gewählt"; sum.TextColor3 = D.TextLow; sum.TextSize = 9; sum.Font = Enum.Font.Gotham; sum.TextXAlignment = Enum.TextXAlignment.Right
-    local tog = Instance.new("TextButton", head); tog.Position = UDim2.new(0.84, 0, 0, 2); tog.Size = UDim2.new(0.14, 0, 0, 24); tog.BackgroundColor3 = Color3.fromRGB(20, 28, 50); tog.Text = "▼"; tog.TextColor3 = accent; tog.TextSize = 10; tog.Font = Enum.Font.GothamBold; tog.AutoButtonColor = false; tog.BorderSizePixel = 0; Corner(tog, 6)
+    local head = Instance.new("Frame", wrap); head.Size = UDim2.new(1, 0, 0, 32); head.BackgroundColor3 = D.CardHover; head.BorderSizePixel = 0; Corner(head, 7); Stroke(head, accent, 1, 0.4)
+    local ttl = Instance.new("TextLabel", head); ttl.Position = UDim2.new(0, 10, 0, 0); ttl.Size = UDim2.new(0.68, 0, 1, 0); ttl.BackgroundTransparency = 1; ttl.Text = title; ttl.TextColor3 = accent; ttl.TextSize = 14; ttl.Font = Enum.Font.GothamBold; ttl.TextScaled = false; ttl.RichText = true; ttl.TextStrokeTransparency = 1; ttl.TextXAlignment = Enum.TextXAlignment.Left
+    local sum = Instance.new("TextLabel", head); sum.Position = UDim2.new(0.55, 0, 0, 0); sum.Size = UDim2.new(0.27, 0, 1, 0); sum.BackgroundTransparency = 1; sum.Text = "0 gewählt"; sum.TextColor3 = D.TextLow; sum.TextSize = 14; sum.Font = Enum.Font.GothamMedium; sum.TextScaled = false; sum.RichText = true; sum.TextStrokeTransparency = 1; sum.TextXAlignment = Enum.TextXAlignment.Right
+    local tog = Instance.new("TextButton", head); tog.Position = UDim2.new(0.84, 0, 0, 2); tog.Size = UDim2.new(0.14, 0, 0, 26); tog.BackgroundColor3 = Color3.fromRGB(20, 28, 50); tog.Text = "▼"; tog.TextColor3 = accent; tog.TextSize = 14; tog.Font = Enum.Font.GothamBold; tog.TextScaled = false; tog.RichText = true; tog.TextStrokeTransparency = 1; tog.AutoButtonColor = false; tog.BorderSizePixel = 0; Corner(tog, 6)
     local body = Instance.new("Frame", wrap); body.Size = UDim2.new(1, 0, 0, 0); body.AutomaticSize = Enum.AutomaticSize.Y; body.BackgroundTransparency = 1; body.Visible = false; VList(body, 3)
     local sorted = {}
     for name, data in pairs(AllTraits) do table.insert(sorted, { name = name, rarity = (data and data.Rarity) or "Common" }) end
@@ -533,9 +510,9 @@ local function BuildMultiSelectDropdown(parent, title, accent, targetSet)
     end
     for _, ent in ipairs(sorted) do
         local col = GetRarityColor(ent.rarity)
-        local row = Instance.new("TextButton", body); row.Size = UDim2.new(1, 0, 0, 24); row.BackgroundColor3 = D.Card; row.AutoButtonColor = false; row.BorderSizePixel = 0; Corner(row, 6); Stroke(row, col, 1, 0.7); row.Text = ""
-        local nL = Instance.new("TextLabel", row); nL.Position = UDim2.new(0, 8, 0, 0); nL.Size = UDim2.new(0.78, 0, 1, 0); nL.BackgroundTransparency = 1; nL.Text = ent.name; nL.TextColor3 = col; nL.TextSize = 9; nL.Font = Enum.Font.GothamSemibold; nL.TextXAlignment = Enum.TextXAlignment.Left
-        local cL = Instance.new("TextLabel", row); cL.Position = UDim2.new(0.78, 0, 0, 0); cL.Size = UDim2.new(0.2, -6, 1, 0); cL.BackgroundTransparency = 1; cL.TextColor3 = D.TextLow; cL.TextSize = 9; cL.Font = Enum.Font.GothamBold; cL.TextXAlignment = Enum.TextXAlignment.Right
+        local row = Instance.new("TextButton", body); row.Size = UDim2.new(1, 0, 0, 28); row.BackgroundColor3 = D.Card; row.AutoButtonColor = false; row.BorderSizePixel = 0; Corner(row, 6); Stroke(row, col, 1, 0.7); row.Text = ""
+        local nL = Instance.new("TextLabel", row); nL.Position = UDim2.new(0, 8, 0, 0); nL.Size = UDim2.new(0.78, 0, 1, 0); nL.BackgroundTransparency = 1; nL.Text = ent.name; nL.TextColor3 = col; nL.TextSize = 14; nL.Font = Enum.Font.GothamMedium; nL.TextScaled = false; nL.RichText = true; nL.TextStrokeTransparency = 1; nL.TextXAlignment = Enum.TextXAlignment.Left
+        local cL = Instance.new("TextLabel", row); cL.Position = UDim2.new(0.78, 0, 0, 0); cL.Size = UDim2.new(0.2, -6, 1, 0); cL.BackgroundTransparency = 1; cL.TextColor3 = D.TextLow; cL.TextSize = 14; cL.Font = Enum.Font.GothamBold; cL.TextScaled = false; cL.RichText = true; cL.TextStrokeTransparency = 1; cL.TextXAlignment = Enum.TextXAlignment.Right
         local function draw()
             local selected = targetSet[ent.name] == true
             cL.Text = selected and "✅" or "⬜"
@@ -560,12 +537,12 @@ do
     local quickCard = Card(targetCard); Pad(quickCard, 6, 8, 6, 8); VList(quickCard, 4)
     SecLbl(quickCard, "⚡ SCHNELL-ZIELE (Divine/Mythic)")
     local qGrid = Instance.new("Frame", quickCard); qGrid.Size = UDim2.new(1, 0, 0, 0); qGrid.AutomaticSize = Enum.AutomaticSize.Y; qGrid.BackgroundTransparency = 1
-    local qLayout = Instance.new("UIGridLayout", qGrid); qLayout.CellSize = UDim2.new(0.24, -3, 0, 24); qLayout.CellPadding = UDim2.new(0, 3, 0, 3); qLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+    local qLayout = Instance.new("UIGridLayout", qGrid); qLayout.CellSize = UDim2.new(0.24, -3, 0, 30); qLayout.CellPadding = UDim2.new(0, 3, 0, 3); qLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
     local QUICK_TRAITS = { "Sovereign", "Seraph", "Duplicator", "Capitalist", "Blitz", "Violent", "Juggernaut", "Millionaire" }
     for _, tn in ipairs(QUICK_TRAITS) do
         local td = AllTraits[tn]
         local col = td and td.Rarity and GetRarityColor(td.Rarity) or D.TextMid
-        local qBtn = Instance.new("TextButton", qGrid); qBtn.BackgroundColor3 = D.CardHover; qBtn.Text = tn; qBtn.TextColor3 = col; qBtn.TextSize = 9; qBtn.Font = Enum.Font.GothamBold; qBtn.AutoButtonColor = false; qBtn.BorderSizePixel = 0; Corner(qBtn, 5); Stroke(qBtn, col, 1, 0.3)
+        local qBtn = Instance.new("TextButton", qGrid); qBtn.BackgroundColor3 = D.CardHover; qBtn.Text = tn; qBtn.TextColor3 = col; qBtn.TextSize = 13; qBtn.Font = Enum.Font.GothamBold; qBtn.TextScaled = false; qBtn.RichText = true; qBtn.TextStrokeTransparency = 1; qBtn.AutoButtonColor = false; qBtn.BorderSizePixel = 0; Corner(qBtn, 5); Stroke(qBtn, col, 1, 0.3)
         qBtn.MouseEnter:Connect(function() Tw(qBtn, { BackgroundColor3 = Color3.fromRGB(35, 42, 68) }) end); qBtn.MouseLeave:Connect(function() Tw(qBtn, { BackgroundColor3 = D.CardHover }) end)
         qBtn.MouseButton1Click:Connect(function()
             if not TR.TargetTraits[tn] then
@@ -582,27 +559,50 @@ end
 local rerollCard = Card(TraitPage); Pad(rerollCard, 10, 12, 10, 12); VList(rerollCard, 8); Stroke(rerollCard, D.Gold, 1.5, 0.2)
 SecLbl(rerollCard, "⚙ REROLL EINSTELLUNGEN")
 
-local currencyRow = Instance.new("Frame", rerollCard); currencyRow.Size = UDim2.new(1, 0, 0, 28); currencyRow.BackgroundTransparency = 1; HList(currencyRow, 6)
-MkLbl(currencyRow, "Währung:", 10, D.TextLow).Size = UDim2.new(0.35, 0, 1, 0)
-local CURRENCIES_REROLL = { "Shards", "Gems", "Tokens" }
-TR.SelectedCurrency = "Shards"
-local currBtns = {}
-for _, cur in ipairs(CURRENCIES_REROLL) do
-    local cb = Instance.new("TextButton", currencyRow); cb.Size = UDim2.new(0.21, 0, 0, 26); cb.BackgroundColor3 = D.CardHover; cb.Text = cur; cb.TextColor3 = D.TextMid; cb.TextSize = 9; cb.Font = Enum.Font.GothamBold; cb.AutoButtonColor = false; cb.BorderSizePixel = 0; Corner(cb, 6); Stroke(cb, D.Border, 1, 0.5)
-    currBtns[cur] = cb
-    local capCur = cur
-    cb.MouseButton1Click:Connect(function()
-        TR.SelectedCurrency = capCur
-        for _, b in pairs(currBtns) do Tw(b, { BackgroundColor3 = D.CardHover }); local s = b:FindFirstChildOfClass("UIStroke"); if s then s.Color = D.Border; s.Transparency = 0.5 end end
-        Tw(cb, { BackgroundColor3 = Color3.fromRGB(0, 28, 52) }); Stroke(cb, D.Cyan, 1.5, 0); cb.TextColor3 = D.Cyan
-    end)
-end
-Tw(currBtns["Shards"], { BackgroundColor3 = Color3.fromRGB(0, 28, 52) }); Stroke(currBtns["Shards"], D.Cyan, 1.5, 0); currBtns["Shards"].TextColor3 = D.Cyan
+local TR_SELECTED_CURRENCY = "Shards"
+MkLbl(rerollCard, "💎 Währung: Shards (fest gesperrt – keine Gems/Tokens)", 14, D.Cyan, true).Size = UDim2.new(1, 0, 0, 22)
+
+local rerollCtrlRow = Instance.new("Frame", rerollCard); rerollCtrlRow.Size = UDim2.new(1, 0, 0, 40); rerollCtrlRow.BackgroundTransparency = 1
+HList(rerollCtrlRow, 8)
+
+startRerollBtn = Instance.new("TextButton", rerollCtrlRow)
+startRerollBtn.Size = UDim2.new(0.58, 0, 1, 0)
+startRerollBtn.BackgroundColor3 = Color3.fromRGB(50, 35, 0)
+startRerollBtn.Text = "🎲  Start Reroll"
+startRerollBtn.TextColor3 = D.Gold
+startRerollBtn.TextSize = 14
+startRerollBtn.Font = Enum.Font.GothamBold
+startRerollBtn.TextScaled = false
+startRerollBtn.RichText = true
+startRerollBtn.TextStrokeTransparency = 1
+startRerollBtn.AutoButtonColor = false
+startRerollBtn.BorderSizePixel = 0
+Corner(startRerollBtn, 8)
+Stroke(startRerollBtn, D.Gold, 2, 0)
+startRerollBtn.MouseEnter:Connect(function() Tw(startRerollBtn, { BackgroundColor3 = Color3.fromRGB(75, 55, 0) }) end)
+startRerollBtn.MouseLeave:Connect(function() Tw(startRerollBtn, { BackgroundColor3 = Color3.fromRGB(50, 35, 0) }) end)
+
+stopRerollBtn = Instance.new("TextButton", rerollCtrlRow)
+stopRerollBtn.Size = UDim2.new(0.38, 0, 1, 0)
+stopRerollBtn.BackgroundColor3 = D.RedDark
+stopRerollBtn.Text = "⏹ STOP"
+stopRerollBtn.TextColor3 = D.Red
+stopRerollBtn.TextSize = 14
+stopRerollBtn.Font = Enum.Font.GothamBold
+stopRerollBtn.TextScaled = false
+stopRerollBtn.RichText = true
+stopRerollBtn.TextStrokeTransparency = 1
+stopRerollBtn.AutoButtonColor = false
+stopRerollBtn.BorderSizePixel = 0
+Corner(stopRerollBtn, 8)
+Stroke(stopRerollBtn, D.Red, 1.5, 0.2)
+stopRerollBtn.MouseEnter:Connect(function() Tw(stopRerollBtn, { BackgroundColor3 = D.Red }) end)
+stopRerollBtn.MouseLeave:Connect(function() Tw(stopRerollBtn, { BackgroundColor3 = D.RedDark }) end)
 
 local delayRow = Instance.new("Frame", rerollCard); delayRow.Size = UDim2.new(1, 0, 0, 28); delayRow.BackgroundTransparency = 1; HList(delayRow, 6)
-MkLbl(delayRow, "Delay (s):", 10, D.TextLow).Size = UDim2.new(0.45, 0, 1, 0)
+MkLbl(delayRow, "Delay (s):", 14, D.TextLow).Size = UDim2.new(0.45, 0, 1, 0)
 local delayOuter, delayBox = MkInput(delayRow, "0.5", 28); delayOuter.Size = UDim2.new(0.30, 0, 0, 28); delayBox.Text = "0.5"
-MkLbl(delayRow, "zwischen Rolls", 9, D.TextLow).Size = UDim2.new(0.22, 0, 1, 0)
+MkLbl(delayRow, "zwischen Rolls", 14, D.TextLow).Size = UDim2.new(0.22, 0, 1, 0)
 
 local singleRollBtn = NeonBtn(rerollCard, "🎲  Einmal Rollen (Main)", D.CyanDim, 30)
 
@@ -629,7 +629,7 @@ local function DoSingleReroll()
     end)
     task.wait(0.06)
     local ok = pcall(function()
-        RerollRemote:FireServer(TR.SelectedUnit, "Reroll", "Main", TR.SelectedCurrency, { curMain, curSub })
+        RerollRemote:FireServer(TR.SelectedUnit, "Reroll", "Main", TR_SELECTED_CURRENCY, { curMain, curSub })
     end)
     if ok then TR.RollCount = TR.RollCount + 1 end
     return ok
@@ -718,10 +718,10 @@ local function BuildTraitOverview(filter)
         row.BackgroundColor3 = D.Card; Stroke(row, col, 1, 0.5)
         local inner = Instance.new("Frame", row); inner.Size = UDim2.new(1, 0, 1, 0); inner.BackgroundTransparency = 1; Pad(inner, 5, 8, 5, 8)
         local acBar = Instance.new("Frame", row); acBar.Size = UDim2.new(0, 3, 1, 0); acBar.BackgroundColor3 = col; acBar.BorderSizePixel = 0; Corner(acBar, 2)
-        local nL = Instance.new("TextLabel", inner); nL.Size = UDim2.new(0.65, 0, 0, 16); nL.BackgroundTransparency = 1; nL.Text = entry.name; nL.TextColor3 = col; nL.TextSize = 11; nL.Font = Enum.Font.GothamBold; nL.TextXAlignment = Enum.TextXAlignment.Left
-        local rL = Instance.new("TextLabel", inner); rL.Position = UDim2.new(0.65, 0, 0, 0); rL.Size = UDim2.new(0.35, 0, 0, 16); rL.BackgroundTransparency = 1; rL.Text = (td and td.Rarity) or ""; rL.TextColor3 = col; rL.TextSize = 9; rL.Font = Enum.Font.GothamSemibold; rL.TextXAlignment = Enum.TextXAlignment.Right
+        local nL = Instance.new("TextLabel", inner); nL.Size = UDim2.new(0.65, 0, 0, 18); nL.BackgroundTransparency = 1; nL.Text = entry.name; nL.TextColor3 = col; nL.TextSize = 16; nL.Font = Enum.Font.GothamBold; nL.TextScaled = false; nL.RichText = true; nL.TextStrokeTransparency = 1; nL.TextXAlignment = Enum.TextXAlignment.Left
+        local rL = Instance.new("TextLabel", inner); rL.Position = UDim2.new(0.65, 0, 0, 0); rL.Size = UDim2.new(0.35, 0, 0, 18); rL.BackgroundTransparency = 1; rL.Text = (td and td.Rarity) or ""; rL.TextColor3 = col; rL.TextSize = 14; rL.Font = Enum.Font.GothamMedium; rL.TextScaled = false; rL.RichText = true; rL.TextStrokeTransparency = 1; rL.TextXAlignment = Enum.TextXAlignment.Right
         if td and td.Description then
-            local dL = Instance.new("TextLabel", inner); dL.Size = UDim2.new(1, 0, 0, 13); dL.Position = UDim2.new(0, 0, 0, 18); dL.BackgroundTransparency = 1; dL.Text = td.Description; dL.TextColor3 = D.TextLow; dL.TextSize = 9; dL.Font = Enum.Font.Gotham; dL.TextXAlignment = Enum.TextXAlignment.Left; dL.TextWrapped = true
+            local dL = Instance.new("TextLabel", inner); dL.Size = UDim2.new(1, 0, 0, 16); dL.Position = UDim2.new(0, 0, 0, 20); dL.BackgroundTransparency = 1; dL.Text = td.Description; dL.TextColor3 = D.TextLow; dL.TextSize = 14; dL.Font = Enum.Font.GothamMedium; dL.TextScaled = false; dL.RichText = true; dL.TextStrokeTransparency = 1; dL.TextXAlignment = Enum.TextXAlignment.Left; dL.TextWrapped = true
         end
         if td and td.Stats then
             local statParts = {}
@@ -729,7 +729,7 @@ local function BuildTraitOverview(filter)
                 local sign = val >= 0 and "+" or ""; table.insert(statParts, sign .. val .. "% " .. stat)
             end
             if #statParts > 0 then
-                local sL = Instance.new("TextLabel", inner); sL.Size = UDim2.new(1, 0, 0, 13); sL.Position = UDim2.new(0, 0, 0, td and td.Description and 32 or 18); sL.BackgroundTransparency = 1; sL.Text = table.concat(statParts, ", "); sL.TextColor3 = col; sL.TextSize = 9; sL.Font = Enum.Font.GothamBold; sL.TextXAlignment = Enum.TextXAlignment.Left; sL.TextWrapped = true
+                local sL = Instance.new("TextLabel", inner); sL.Size = UDim2.new(1, 0, 0, 16); sL.Position = UDim2.new(0, 0, 0, td and td.Description and 38 or 20); sL.BackgroundTransparency = 1; sL.Text = table.concat(statParts, ", "); sL.TextColor3 = col; sL.TextSize = 14; sL.Font = Enum.Font.GothamBold; sL.TextScaled = false; sL.RichText = true; sL.TextStrokeTransparency = 1; sL.TextXAlignment = Enum.TextXAlignment.Left; sL.TextWrapped = true
             end
         end
     end
@@ -772,6 +772,13 @@ task.delay(1, function()
         ScanUnits(); BuildUnitList("")
         BuildTraitOverview("")
     end)
+end)
+
+pcall(function()
+    if HS.ApplySharpTypography then
+        local r = TraitPageRoot or TraitPage
+        if r then for _, o in ipairs(r:GetDescendants()) do HS.ApplySharpTypography(o) end end
+    end
 end)
 
 print(string.format("[HazeHub-Trait] v%s geladen | %s", VERSION, LP.Name))
