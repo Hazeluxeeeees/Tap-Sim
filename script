@@ -261,9 +261,11 @@ end)
 -- ╚══════════════════════════════════════════════════════════╝
 -- Logo: Emblem-PNG nach Roblox hochladen → LogoRbx setzen (GUI + Mobile).
 -- LogoHttps: gleiche Datei öffentlich hosten (z. B. raw.githubusercontent.com/.../haze_emblem_logo.png).
+local HAZE_LOGO_ASSET_ID = "107582349721093"
 local HAZE_ASSETS = {
-    LogoRbx = "rbxassetid://0",
-    LogoHttps = "https://raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/main/assets/haze_emblem_logo.png",
+    LogoRbx = "rbxassetid://" .. HAZE_LOGO_ASSET_ID,
+    -- Discord kann keine rbxassetid://-Links; Roblox-Thumbnail derselben ID (fallback: GitHub raw)
+    LogoHttps = "https://www.roblox.com/asset-thumbnail/image?assetId=" .. HAZE_LOGO_ASSET_ID .. "&width=420&height=420&format=png",
 }
 local D={
     GlassPane=0.18, GlassDeep=0.22, GlassStroke=0.35,
