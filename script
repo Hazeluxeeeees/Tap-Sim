@@ -300,14 +300,27 @@ local function HList(p,gap)
     l.FillDirection=Enum.FillDirection.Horizontal; l.VerticalAlignment=Enum.VerticalAlignment.Center
     l.Padding=UDim.new(0,gap or 6); l.SortOrder=Enum.SortOrder.LayoutOrder; return l
 end
+local function ApplySharpTypography(o)
+    if not (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) then return end
+    o.TextScaled = false
+    o.RichText = true
+    o.TextStrokeTransparency = 1
+    if o.TextSize > 0 and o.TextSize < 12 then o.TextSize = 12 end
+    if o:IsA("TextBox") then
+        if o.Font == Enum.Font.Gotham or o.Font == Enum.Font.GothamSemibold then o.Font = Enum.Font.GothamMedium end
+        return
+    end
+    if o.Font == Enum.Font.Gotham or o.Font == Enum.Font.GothamSemibold then o.Font = Enum.Font.GothamMedium end
+end
 local function MkLbl(parent,text,size,color,bold,xa)
     local l=Instance.new("TextLabel",parent); l.BackgroundTransparency=1; l.Text=text or ""
-    l.TextSize=size or 13; l.TextColor3=color or D.TextHi
-    l.Font=bold and Enum.Font.GothamBold or Enum.Font.GothamSemibold
+    l.TextSize=size or 14; l.TextColor3=color or D.TextHi
+    l.Font=bold and Enum.Font.GothamBold or Enum.Font.GothamMedium
     l.TextXAlignment=xa or Enum.TextXAlignment.Left; l.TextWrapped=true
-    l.Size=UDim2.new(1,0,0,(size or 13)+8); return l
+    l.TextScaled=false; l.RichText=true; l.TextStrokeTransparency=1
+    l.Size=UDim2.new(1,0,0,(size or 14)+8); return l
 end
-local function SecLbl(p,t) local l=MkLbl(p,t,10,D.TextLow,true); l.Size=UDim2.new(1,0,0,14); return l end
+local function SecLbl(p,t) local l=MkLbl(p,t,12,D.TextLow,true); l.Size=UDim2.new(1,0,0,16); return l end
 local function Card(parent,fh)
     local f=Instance.new("Frame",parent); f.BackgroundColor3=D.Card; f.BackgroundTransparency=0; f.BorderSizePixel=0
     if fh then f.Size=UDim2.new(1,0,0,fh) else f.Size=UDim2.new(1,0,0,0); f.AutomaticSize=Enum.AutomaticSize.Y end
@@ -316,7 +329,8 @@ end
 local function NeonBtn(parent,text,accent,h)
     local acc=accent or D.Cyan
     local b=Instance.new("TextButton",parent); b.Size=UDim2.new(1,0,0,h or 34); b.BackgroundColor3=D.CardHover
-    b.Text=text; b.TextColor3=acc; b.TextSize=13; b.Font=Enum.Font.GothamBold
+    b.Text=text; b.TextColor3=acc; b.TextSize=14; b.Font=Enum.Font.GothamBold
+    b.TextScaled=false; b.RichText=true; b.TextStrokeTransparency=1
     b.AutoButtonColor=false; b.BorderSizePixel=0; Corner(b,8); Stroke(b,acc,1,0.4)
     local function ct(f) return Color3.fromRGB(math.clamp(math.floor(acc.R*255*f),0,255),math.clamp(math.floor(acc.G*255*f),0,255),math.clamp(math.floor(acc.B*255*f),0,255)) end
     b.MouseEnter:Connect(function() Tw(b,{BackgroundColor3=ct(0.25)}) end)
@@ -330,7 +344,8 @@ local function MkInput(parent,ph,h)
     Corner(outer,7); Stroke(outer,D.Border,1,0.2)
     local box=Instance.new("TextBox",outer); box.Size=UDim2.new(1,0,1,0); box.BackgroundTransparency=1
     box.PlaceholderText=ph or ""; box.PlaceholderColor3=D.TextLow; box.Text=""; box.TextColor3=D.TextHi
-    box.TextSize=11; box.Font=Enum.Font.Gotham; box.ClearTextOnFocus=false; Pad(box,0,8,0,8)
+    box.TextSize=14; box.Font=Enum.Font.GothamMedium; box.ClearTextOnFocus=false; Pad(box,0,8,0,8)
+    box.TextScaled=false; box.RichText=true; box.TextStrokeTransparency=1
     return outer,box
 end
 
@@ -649,9 +664,10 @@ local function SelectTab(name)
 end
 local function MakeTab(name,icon)
     local B=Instance.new("TextButton",H.UI.Fr.TabHolder)
-    B.Size=UDim2.new(1,0,0,28); B.BackgroundColor3=D.TabInactive
-    B.Text=icon.."  "..name; B.TextColor3=D.TextMid; B.TextSize=10
-    B.Font=Enum.Font.GothamSemibold; B.AutoButtonColor=false; B.BorderSizePixel=0
+    B.Size=UDim2.new(1,0,0,30); B.BackgroundColor3=D.TabInactive
+    B.Text=icon.."  "..name; B.TextColor3=D.TextMid; B.TextSize=14
+    B.Font=Enum.Font.GothamMedium; B.TextScaled=false; B.RichText=true; B.TextStrokeTransparency=1
+    B.AutoButtonColor=false; B.BorderSizePixel=0
     Corner(B,7); Stroke(B,D.Cyan,1,1)
     B.MouseEnter:Connect(function() if S.ActiveTab~=name then Tw(B,{BackgroundColor3=D.CardHover}) end end)
     B.MouseLeave:Connect(function() if S.ActiveTab~=name then Tw(B,{BackgroundColor3=D.TabInactive}) end end)
@@ -666,12 +682,13 @@ end
 
 local function MakeTraitsTab(name, icon)
     local B = Instance.new("TextButton", H.UI.Fr.TabHolder)
-    B.Size = UDim2.new(1, 0, 0, 28)
+    B.Size = UDim2.new(1, 0, 0, 30)
     B.BackgroundColor3 = D.TabInactive
     B.Text = icon .. "  " .. name
     B.TextColor3 = D.TextMid
-    B.TextSize = 10
-    B.Font = Enum.Font.GothamSemibold
+    B.TextSize = 14
+    B.Font = Enum.Font.GothamMedium
+    B.TextScaled = false; B.RichText = true; B.TextStrokeTransparency = 1
     B.AutoButtonColor = false
     B.BorderSizePixel = 0
     Corner(B, 7)
@@ -1493,6 +1510,12 @@ if R.Remote then
     end)
 end
 ScreenGui.AncestryChanged:Connect(function() if not ScreenGui.Parent then S.WhEnabled=false end end)
+ScreenGui.DescendantAdded:Connect(function(ch)
+    task.defer(function() ApplySharpTypography(ch) end)
+end)
+task.defer(function()
+    pcall(function() for _, ch in ipairs(ScreenGui:GetDescendants()) do ApplySharpTypography(ch) end end)
+end)
 
 -- ── HazeShared vollständig befüllen ──────────────────────────
 _G.HazeShared.Config             = H.Config
@@ -1523,6 +1546,7 @@ _G.HazeShared.MkInput=MkInput; _G.HazeShared.VList=VList
 _G.HazeShared.HList=HList; _G.HazeShared.Pad=Pad
 _G.HazeShared.Corner=Corner; _G.HazeShared.Stroke=Stroke
 _G.HazeShared.FmtNum=FmtNum
+_G.HazeShared.ApplySharpTypography=ApplySharpTypography
 _G.HazeShared.StopFarm=nil; _G.HazeShared.StartFarmFromMain=nil; _G.HazeShared.TriggerResetRescan=nil
 _G.HazeShared.ShopContainer = ShopPage
 _G.HazeShared.CraftPage     = CraftPage
@@ -1631,4 +1655,7 @@ LoadModule(K.TRAIT_URL,"Traits",    4, function(err)
     pcall(function()
         if _G._TraitWaitLbl then _G._TraitWaitLbl.Text="❌ Trait-Fehler: "..err; _G._TraitWaitLbl.TextColor3=D.Red end
     end)
+end)
+task.delay(6,function()
+    pcall(function() for _, ch in ipairs(ScreenGui:GetDescendants()) do ApplySharpTypography(ch) end end)
 end)
