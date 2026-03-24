@@ -412,10 +412,10 @@ local function BuildRecipeCard(parent,itemName,recipeData,craftAmt)
                 else
                     local pushed = false
                     if HS.AddAutoFarmQueueItem then
-                        pushed = HS.AddAutoFarmQueueItem(mCap.name, mCap.need) == true
+                        pushed = HS.AddAutoFarmQueueItem(mCap.name, missing) == true
                     end
                     if pushed then
-                        SetStatus(string.format("➕ %s (%d) zur Auto-Farm Queue hinzugefügt",mCap.name,mCap.need),D.Purple)
+                        SetStatus(string.format("➕ %s (+%d) zur Auto-Farm Queue hinzugefügt",mCap.name,missing),D.Purple)
                     else
                         local already=false
                         for _,e in ipairs(Craft.Queue) do
@@ -426,7 +426,7 @@ local function BuildRecipeCard(parent,itemName,recipeData,craftAmt)
                             table.insert(Craft.Queue,{matName=mCap.name,needed=mCap.need,chapId=chapId,worldId=worldId,mode=mode or "Story"})
                         end
                         UpdateQueueUI()
-                        SetStatus(string.format("➕ %s (%d) zur Craft-Queue hinzugefügt",mCap.name,mCap.need),D.Purple)
+                        SetStatus(string.format("➕ %s (+%d) zur Craft-Queue hinzugefügt",mCap.name,missing),D.Purple)
                     end
                 end
                 task.spawn(function() pcall(RebuildCraftList) end)
@@ -490,12 +490,19 @@ local function BuildRecipeCard(parent,itemName,recipeData,craftAmt)
                         SetStatus(string.format("🛒 Kaufe %d × %s...",missing,ml.name),D.Gold)
                         AutoBuyItem(ml.name,missing,ml.shopType); shopBought=shopBought+1; task.wait(0.3)
                     else
-                        -- Nicht kaufbar → in Farm-Queue
-                        local already=false; for _,e in ipairs(Craft.Queue) do if e.matName==ml.name then already=true; if e.needed<ml.need then e.needed=ml.need end; break end end
-                        if not already then
-                            local chapId,worldId,mode=FindBestWorld(ml.name)
-                            table.insert(Craft.Queue,{matName=ml.name,needed=ml.need,chapId=chapId,worldId=worldId,mode=mode or "Story"})
-                            added=added+1
+                        local missing=math.max(0,ml.need-ml.have)
+                        if missing>0 and HS.AddAutoFarmQueueItem then
+                            if HS.AddAutoFarmQueueItem(ml.name, missing) then
+                                added=added+1
+                            end
+                        else
+                            -- Fallback lokal, falls Autofarm-Modul nicht verfügbar
+                            local already=false; for _,e in ipairs(Craft.Queue) do if e.matName==ml.name then already=true; if e.needed<ml.need then e.needed=ml.need end; break end end
+                            if not already then
+                                local chapId,worldId,mode=FindBestWorld(ml.name)
+                                table.insert(Craft.Queue,{matName=ml.name,needed=ml.need,chapId=chapId,worldId=worldId,mode=mode or "Story"})
+                                added=added+1
+                            end
                         end
                     end
                 end
