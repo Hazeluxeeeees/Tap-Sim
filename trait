@@ -1,13 +1,13 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB – trait.lua  v2.2.0
+--  HazeHUB – trait.lua  v2.3.1
 --
---  v2.3.0:
+--  v2.3.1:
 --    ✓ Typografie: GothamMedium/Bold, feste TextSize, RichText, kein TextStroke-Glow
 --    ✓ Reroll: Start/Stop in „Reroll Einstellungen“; Währung fest Shards
 --    ✓ (v2.2) Grid 150×180, TraitSticky nur Trait-Reroll-Anzeige
 -- ╚══════════════════════════════════════════════════════════╝
 
-local VERSION = "2.3.0"
+local VERSION = "2.3.1"
 
 local _w = 0
 while not (_G.HazeShared and _G.HazeShared.D and _G.HazeShared.Card and _G.HazeShared.TraitPage) do
@@ -192,13 +192,13 @@ SecLbl(currentTraitCard, "🔍 AKTUELLER TRAIT (Live)")
 TR.UI.Lbl.UnitName = MkLbl(currentTraitCard, "Keine Einheit gewählt", 16, D.TextHi, true)
 TR.UI.Lbl.UnitName.Size = UDim2.new(1, 0, 0, 22)
 
-local mainRow = Instance.new("Frame", currentTraitCard); mainRow.Size = UDim2.new(1, 0, 0, 48); mainRow.BackgroundColor3 = Color3.fromRGB(15, 22, 40); mainRow.BorderSizePixel = 0; Corner(mainRow, 8); Stroke(mainRow, D.Gold, 1, 0.4)
+local mainRow = Instance.new("Frame", currentTraitCard); mainRow.Size = UDim2.new(1, 0, 0, 48); mainRow.BackgroundColor3 = D.Input; mainRow.BackgroundTransparency = D.GlassPane or 0.18; mainRow.BorderSizePixel = 0; Corner(mainRow, 8); Stroke(mainRow, D.Gold, 1, 0.4)
 local mainBarLine = Instance.new("Frame", mainRow); mainBarLine.Size = UDim2.new(0, 3, 1, 0); mainBarLine.BackgroundColor3 = D.Gold; mainBarLine.BorderSizePixel = 0; Corner(mainBarLine, 2)
 local mainLabelL = Instance.new("TextLabel", mainRow); mainLabelL.Position = UDim2.new(0, 10, 0, 3); mainLabelL.Size = UDim2.new(0.35, 0, 0, 16); mainLabelL.BackgroundTransparency = 1; mainLabelL.Text = "MAIN TRAIT"; mainLabelL.TextColor3 = D.Gold; mainLabelL.TextSize = 12; mainLabelL.Font = Enum.Font.GothamBold; mainLabelL.TextScaled = false; mainLabelL.RichText = true; mainLabelL.TextStrokeTransparency = 1; mainLabelL.TextXAlignment = Enum.TextXAlignment.Left
 TR.UI.Lbl.MainTrait = Instance.new("TextLabel", mainRow); TR.UI.Lbl.MainTrait.Position = UDim2.new(0, 10, 0, 20); TR.UI.Lbl.MainTrait.Size = UDim2.new(1, -14, 0, 22); TR.UI.Lbl.MainTrait.BackgroundTransparency = 1; TR.UI.Lbl.MainTrait.Text = "–"; TR.UI.Lbl.MainTrait.TextColor3 = D.TextHi; TR.UI.Lbl.MainTrait.TextSize = 16; TR.UI.Lbl.MainTrait.Font = Enum.Font.GothamBold; TR.UI.Lbl.MainTrait.TextScaled = false; TR.UI.Lbl.MainTrait.RichText = true; TR.UI.Lbl.MainTrait.TextStrokeTransparency = 1; TR.UI.Lbl.MainTrait.TextXAlignment = Enum.TextXAlignment.Left
 TR.UI.Lbl.MainRarity = Instance.new("TextLabel", mainRow); TR.UI.Lbl.MainRarity.Position = UDim2.new(0.6, 0, 0, 3); TR.UI.Lbl.MainRarity.Size = UDim2.new(0.39, -4, 0, 16); TR.UI.Lbl.MainRarity.BackgroundTransparency = 1; TR.UI.Lbl.MainRarity.Text = ""; TR.UI.Lbl.MainRarity.TextColor3 = D.Gold; TR.UI.Lbl.MainRarity.TextSize = 12; TR.UI.Lbl.MainRarity.Font = Enum.Font.GothamMedium; TR.UI.Lbl.MainRarity.TextScaled = false; TR.UI.Lbl.MainRarity.RichText = true; TR.UI.Lbl.MainRarity.TextStrokeTransparency = 1; TR.UI.Lbl.MainRarity.TextXAlignment = Enum.TextXAlignment.Right
 
-local subRow = Instance.new("Frame", currentTraitCard); subRow.Size = UDim2.new(1, 0, 0, 48); subRow.BackgroundColor3 = Color3.fromRGB(15, 18, 38); subRow.BorderSizePixel = 0; Corner(subRow, 8); Stroke(subRow, D.Purple, 1, 0.4)
+local subRow = Instance.new("Frame", currentTraitCard); subRow.Size = UDim2.new(1, 0, 0, 48); subRow.BackgroundColor3 = D.Input; subRow.BackgroundTransparency = (D.GlassPane or 0.18) + 0.04; subRow.BorderSizePixel = 0; Corner(subRow, 8); Stroke(subRow, D.Purple, 1, 0.4)
 local subBarLine = Instance.new("Frame", subRow); subBarLine.Size = UDim2.new(0, 3, 1, 0); subBarLine.BackgroundColor3 = D.Purple; subBarLine.BorderSizePixel = 0; Corner(subBarLine, 2)
 local subLabelL = Instance.new("TextLabel", subRow); subLabelL.Position = UDim2.new(0, 10, 0, 3); subLabelL.Size = UDim2.new(0.35, 0, 0, 16); subLabelL.BackgroundTransparency = 1; subLabelL.Text = "SUB TRAIT"; subLabelL.TextColor3 = D.Purple; subLabelL.TextSize = 12; subLabelL.Font = Enum.Font.GothamBold; subLabelL.TextScaled = false; subLabelL.RichText = true; subLabelL.TextStrokeTransparency = 1; subLabelL.TextXAlignment = Enum.TextXAlignment.Left
 TR.UI.Lbl.SubTrait = Instance.new("TextLabel", subRow); TR.UI.Lbl.SubTrait.Position = UDim2.new(0, 10, 0, 20); TR.UI.Lbl.SubTrait.Size = UDim2.new(1, -14, 0, 22); TR.UI.Lbl.SubTrait.BackgroundTransparency = 1; TR.UI.Lbl.SubTrait.Text = "–"; TR.UI.Lbl.SubTrait.TextColor3 = D.TextHi; TR.UI.Lbl.SubTrait.TextSize = 16; TR.UI.Lbl.SubTrait.Font = Enum.Font.GothamBold; TR.UI.Lbl.SubTrait.TextScaled = false; TR.UI.Lbl.SubTrait.RichText = true; TR.UI.Lbl.SubTrait.TextStrokeTransparency = 1; TR.UI.Lbl.SubTrait.TextXAlignment = Enum.TextXAlignment.Left
@@ -417,7 +417,7 @@ local function BuildUnitList(filter)
         row.Size = UDim2.new(0, 150, 0, 180)
         row.BorderSizePixel = 0
         Corner(row, 8)
-        if isSelected then row.BackgroundColor3 = Color3.fromRGB(0, 30, 60); Stroke(row, D.Cyan, 1.5, 0)
+        if isSelected then row.BackgroundColor3 = D.RowSelect or Color3.fromRGB(48, 50, 58); Stroke(row, D.Accent or D.Cyan, 1.5, 0)
         else row.BackgroundColor3 = D.CardHover; Stroke(row, D.Border, 1, 0.4) end
 
         local bar = Instance.new("Frame", row); bar.Size = UDim2.new(0, 3, 0.92, 0); bar.Position = UDim2.new(0, 0, 0.04, 0); bar.BackgroundColor3 = isSelected and D.Cyan or D.Border; bar.BorderSizePixel = 0; Corner(bar, 2)
@@ -425,7 +425,7 @@ local function BuildUnitList(filter)
         local vp = Instance.new("ViewportFrame", row)
         vp.Size = UDim2.new(1, -8, 0.7, 0)
         vp.Position = UDim2.new(0, 5, 0, 4)
-        vp.BackgroundColor3 = Color3.fromRGB(12, 18, 34)
+        vp.BackgroundColor3 = D.Input
         vp.BorderSizePixel = 0
         Corner(vp, 4)
         vp.LightDirection = Vector3.new(-1, -1, -1)
@@ -460,7 +460,7 @@ local function BuildUnitList(filter)
             BuildUnitList(filter)
             UpdateLiveTraitDisplay()
         end)
-        clickBtn.MouseEnter:Connect(function() if TR.SelectedUnit ~= capU.instance then Tw(row, { BackgroundColor3 = Color3.fromRGB(30, 40, 65) }) end end)
+        clickBtn.MouseEnter:Connect(function() if TR.SelectedUnit ~= capU.instance then Tw(row, { BackgroundColor3 = D.CardHover }) end end)
         clickBtn.MouseLeave:Connect(function() if TR.SelectedUnit ~= capU.instance then Tw(row, { BackgroundColor3 = D.CardHover }) end end)
     end
     TR.UI.Lbl.UnitEmpty.Visible = (shown == 0)
@@ -491,10 +491,10 @@ SecLbl(targetCard, "🎯 ZIEL-TRAITS (Auto-Reroll stoppt hier)")
 
 local function BuildMultiSelectDropdown(parent, title, accent, targetSet)
     local wrap = Instance.new("Frame", parent); wrap.Size = UDim2.new(1, 0, 0, 0); wrap.AutomaticSize = Enum.AutomaticSize.Y; wrap.BackgroundTransparency = 1; VList(wrap, 4)
-    local head = Instance.new("Frame", wrap); head.Size = UDim2.new(1, 0, 0, 32); head.BackgroundColor3 = D.CardHover; head.BorderSizePixel = 0; Corner(head, 7); Stroke(head, accent, 1, 0.4)
+    local head = Instance.new("Frame", wrap); head.Size = UDim2.new(1, 0, 0, 32); head.BackgroundColor3 = D.CardHover; head.BackgroundTransparency = D.GlassPane or 0.18; head.BorderSizePixel = 0; Corner(head, 8); Stroke(head, accent, 1, 0.4)
     local ttl = Instance.new("TextLabel", head); ttl.Position = UDim2.new(0, 10, 0, 0); ttl.Size = UDim2.new(0.68, 0, 1, 0); ttl.BackgroundTransparency = 1; ttl.Text = title; ttl.TextColor3 = accent; ttl.TextSize = 14; ttl.Font = Enum.Font.GothamBold; ttl.TextScaled = false; ttl.RichText = true; ttl.TextStrokeTransparency = 1; ttl.TextXAlignment = Enum.TextXAlignment.Left
     local sum = Instance.new("TextLabel", head); sum.Position = UDim2.new(0.55, 0, 0, 0); sum.Size = UDim2.new(0.27, 0, 1, 0); sum.BackgroundTransparency = 1; sum.Text = "0 gewählt"; sum.TextColor3 = D.TextLow; sum.TextSize = 14; sum.Font = Enum.Font.GothamMedium; sum.TextScaled = false; sum.RichText = true; sum.TextStrokeTransparency = 1; sum.TextXAlignment = Enum.TextXAlignment.Right
-    local tog = Instance.new("TextButton", head); tog.Position = UDim2.new(0.84, 0, 0, 2); tog.Size = UDim2.new(0.14, 0, 0, 26); tog.BackgroundColor3 = Color3.fromRGB(20, 28, 50); tog.Text = "▼"; tog.TextColor3 = accent; tog.TextSize = 14; tog.Font = Enum.Font.GothamBold; tog.TextScaled = false; tog.RichText = true; tog.TextStrokeTransparency = 1; tog.AutoButtonColor = false; tog.BorderSizePixel = 0; Corner(tog, 6)
+    local tog = Instance.new("TextButton", head); tog.Position = UDim2.new(0.84, 0, 0, 2); tog.Size = UDim2.new(0.14, 0, 0, 26); tog.BackgroundColor3 = D.Input; tog.BackgroundTransparency = D.GlassPane or 0.18; tog.Text = "▼"; tog.TextColor3 = accent; tog.TextSize = 14; tog.Font = Enum.Font.GothamBold; tog.TextScaled = false; tog.RichText = true; tog.TextStrokeTransparency = 1; tog.AutoButtonColor = false; tog.BorderSizePixel = 0; Corner(tog, 8)
     local body = Instance.new("Frame", wrap); body.Size = UDim2.new(1, 0, 0, 0); body.AutomaticSize = Enum.AutomaticSize.Y; body.BackgroundTransparency = 1; body.Visible = false; VList(body, 3)
     local sorted = {}
     for name, data in pairs(AllTraits) do table.insert(sorted, { name = name, rarity = (data and data.Rarity) or "Common" }) end
@@ -516,7 +516,7 @@ local function BuildMultiSelectDropdown(parent, title, accent, targetSet)
         local function draw()
             local selected = targetSet[ent.name] == true
             cL.Text = selected and "✅" or "⬜"
-            row.BackgroundColor3 = selected and Color3.fromRGB(0, 35, 58) or D.Card
+            row.BackgroundColor3 = selected and (D.RowSelect or Color3.fromRGB(48, 50, 58)) or D.Card
         end
         draw()
         row.MouseButton1Click:Connect(function()
@@ -543,10 +543,11 @@ do
         local td = AllTraits[tn]
         local col = td and td.Rarity and GetRarityColor(td.Rarity) or D.TextMid
         local qBtn = Instance.new("TextButton", qGrid); qBtn.BackgroundColor3 = D.CardHover; qBtn.Text = tn; qBtn.TextColor3 = col; qBtn.TextSize = 13; qBtn.Font = Enum.Font.GothamBold; qBtn.TextScaled = false; qBtn.RichText = true; qBtn.TextStrokeTransparency = 1; qBtn.AutoButtonColor = false; qBtn.BorderSizePixel = 0; Corner(qBtn, 5); Stroke(qBtn, col, 1, 0.3)
-        qBtn.MouseEnter:Connect(function() Tw(qBtn, { BackgroundColor3 = Color3.fromRGB(35, 42, 68) }) end); qBtn.MouseLeave:Connect(function() Tw(qBtn, { BackgroundColor3 = D.CardHover }) end)
+        qBtn.MouseEnter:Connect(function() if not TR.TargetTraits[tn] then Tw(qBtn, { BackgroundColor3 = D.TabActive }) end end)
+        qBtn.MouseLeave:Connect(function() if not TR.TargetTraits[tn] then Tw(qBtn, { BackgroundColor3 = D.CardHover }) end end)
         qBtn.MouseButton1Click:Connect(function()
             if not TR.TargetTraits[tn] then
-                TR.TargetTraits[tn] = true; Stroke(qBtn, D.Cyan, 1.5, 0); Tw(qBtn, { BackgroundColor3 = Color3.fromRGB(0, 35, 58) })
+                TR.TargetTraits[tn] = true; Stroke(qBtn, D.Accent or D.Cyan, 1.5, 0); Tw(qBtn, { BackgroundColor3 = D.RowSelect or Color3.fromRGB(48, 50, 58) })
                 SetStatus("+ " .. tn .. " als Ziel gesetzt", D.Cyan)
             else
                 TR.TargetTraits[tn] = nil; Stroke(qBtn, col, 1, 0.3); Tw(qBtn, { BackgroundColor3 = D.CardHover })
@@ -560,16 +561,17 @@ local rerollCard = Card(TraitPage); Pad(rerollCard, 10, 12, 10, 12); VList(rerol
 SecLbl(rerollCard, "⚙ REROLL EINSTELLUNGEN")
 
 local TR_SELECTED_CURRENCY = "Shards"
-MkLbl(rerollCard, "💎 Währung: Shards", 14, D.Cyan, true).Size = UDim2.new(1, 0, 0, 22)
+MkLbl(rerollCard, "💎 Währung: Shards (fest gesperrt – keine Gems/Tokens)", 14, D.Cyan, true).Size = UDim2.new(1, 0, 0, 22)
 
 local rerollCtrlRow = Instance.new("Frame", rerollCard); rerollCtrlRow.Size = UDim2.new(1, 0, 0, 40); rerollCtrlRow.BackgroundTransparency = 1
 HList(rerollCtrlRow, 8)
 
 startRerollBtn = Instance.new("TextButton", rerollCtrlRow)
 startRerollBtn.Size = UDim2.new(0.58, 0, 1, 0)
-startRerollBtn.BackgroundColor3 = Color3.fromRGB(50, 35, 0)
-startRerollBtn.Text = "🎲  Start Reroll"
-startRerollBtn.TextColor3 = D.Gold
+startRerollBtn.BackgroundColor3 = Color3.fromRGB(14, 42, 28)
+startRerollBtn.BackgroundTransparency = 0.22
+startRerollBtn.Text = "▶  Start Reroll"
+startRerollBtn.TextColor3 = D.GreenBright
 startRerollBtn.TextSize = 14
 startRerollBtn.Font = Enum.Font.GothamBold
 startRerollBtn.TextScaled = false
@@ -578,14 +580,15 @@ startRerollBtn.TextStrokeTransparency = 1
 startRerollBtn.AutoButtonColor = false
 startRerollBtn.BorderSizePixel = 0
 Corner(startRerollBtn, 8)
-Stroke(startRerollBtn, D.Gold, 2, 0)
-startRerollBtn.MouseEnter:Connect(function() Tw(startRerollBtn, { BackgroundColor3 = Color3.fromRGB(75, 55, 0) }) end)
-startRerollBtn.MouseLeave:Connect(function() Tw(startRerollBtn, { BackgroundColor3 = Color3.fromRGB(50, 35, 0) }) end)
+Stroke(startRerollBtn, D.Green, 1.5, 0.3)
+startRerollBtn.MouseEnter:Connect(function() Tw(startRerollBtn, { BackgroundColor3 = Color3.fromRGB(22, 58, 38), BackgroundTransparency = 0.14 }) end)
+startRerollBtn.MouseLeave:Connect(function() Tw(startRerollBtn, { BackgroundColor3 = Color3.fromRGB(14, 42, 28), BackgroundTransparency = 0.22 }) end)
 
 stopRerollBtn = Instance.new("TextButton", rerollCtrlRow)
 stopRerollBtn.Size = UDim2.new(0.38, 0, 1, 0)
-stopRerollBtn.BackgroundColor3 = D.RedDark
-stopRerollBtn.Text = "⏹ STOP"
+stopRerollBtn.BackgroundColor3 = Color3.fromRGB(48, 16, 18)
+stopRerollBtn.BackgroundTransparency = 0.22
+stopRerollBtn.Text = "■  Stop"
 stopRerollBtn.TextColor3 = D.Red
 stopRerollBtn.TextSize = 14
 stopRerollBtn.Font = Enum.Font.GothamBold
@@ -595,9 +598,9 @@ stopRerollBtn.TextStrokeTransparency = 1
 stopRerollBtn.AutoButtonColor = false
 stopRerollBtn.BorderSizePixel = 0
 Corner(stopRerollBtn, 8)
-Stroke(stopRerollBtn, D.Red, 1.5, 0.2)
-stopRerollBtn.MouseEnter:Connect(function() Tw(stopRerollBtn, { BackgroundColor3 = D.Red }) end)
-stopRerollBtn.MouseLeave:Connect(function() Tw(stopRerollBtn, { BackgroundColor3 = D.RedDark }) end)
+Stroke(stopRerollBtn, D.Red, 1.5, 0.28)
+stopRerollBtn.MouseEnter:Connect(function() Tw(stopRerollBtn, { BackgroundColor3 = Color3.fromRGB(72, 24, 28), BackgroundTransparency = 0.12 }) end)
+stopRerollBtn.MouseLeave:Connect(function() Tw(stopRerollBtn, { BackgroundColor3 = Color3.fromRGB(48, 16, 18), BackgroundTransparency = 0.22 }) end)
 
 local delayRow = Instance.new("Frame", rerollCard); delayRow.Size = UDim2.new(1, 0, 0, 28); delayRow.BackgroundTransparency = 1; HList(delayRow, 6)
 MkLbl(delayRow, "Delay (s):", 14, D.TextLow).Size = UDim2.new(0.45, 0, 1, 0)
@@ -643,7 +646,7 @@ end)
 local function AutoRerollLoop()
     TR.Rolling = true
     TR.RollCount = 0
-    startRerollBtn.Text = "⏳ Rollt..."; startRerollBtn.TextColor3 = D.Yellow; Stroke(startRerollBtn, D.Yellow, 2, 0)
+    startRerollBtn.Text = "⏳ Rollt..."; startRerollBtn.TextColor3 = D.Yellow; Stroke(startRerollBtn, D.Yellow, 2, 0.15)
     SetStatus("🎲 Auto-Reroll läuft...", D.Gold)
     local rollStart = os.time()
     while TR.Rolling do
@@ -661,7 +664,8 @@ local function AutoRerollLoop()
         end
     end
     TR.Rolling = false
-    startRerollBtn.Text = "🎲  Start Reroll"; startRerollBtn.TextColor3 = D.Gold; Stroke(startRerollBtn, D.Gold, 2, 0)
+    startRerollBtn.Text = "▶  Start Reroll"; startRerollBtn.TextColor3 = D.GreenBright; Stroke(startRerollBtn, D.Green, 1.5, 0.3)
+    Tw(startRerollBtn, { BackgroundColor3 = Color3.fromRGB(14, 42, 28), BackgroundTransparency = 0.22 })
     pcall(UpdateLiveTraitDisplay)
 end
 
@@ -673,7 +677,8 @@ startRerollBtn.MouseButton1Click:Connect(function()
 end)
 stopRerollBtn.MouseButton1Click:Connect(function()
     TR.Rolling = false
-    startRerollBtn.Text = "🎲  Start Reroll"; startRerollBtn.TextColor3 = D.Gold; Stroke(startRerollBtn, D.Gold, 2, 0)
+    startRerollBtn.Text = "▶  Start Reroll"; startRerollBtn.TextColor3 = D.GreenBright; Stroke(startRerollBtn, D.Green, 1.5, 0.3)
+    Tw(startRerollBtn, { BackgroundColor3 = Color3.fromRGB(14, 42, 28), BackgroundTransparency = 0.22 })
     SetStatus("⏹ Auto-Reroll gestoppt.", D.TextMid)
 end)
 
