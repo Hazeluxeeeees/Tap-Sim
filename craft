@@ -339,18 +339,24 @@ local function BuildRecipeCard(parent,itemName,recipeData,craftAmt)
 
     local inner=Instance.new("Frame",card); inner.Size=UDim2.new(1,0,0,0); inner.AutomaticSize=Enum.AutomaticSize.Y; inner.BackgroundTransparency=1; Pad(inner,8,10,8,10); VList(inner,6)
 
-    -- Header: ViewportFrame + Name
+    -- Header: Item-Preview + Name
     local headerRow=Instance.new("Frame",inner); headerRow.Size=UDim2.new(1,0,0,56); headerRow.BackgroundTransparency=1
 
-    -- ★ ViewportFrame aus RS.Assets.ItemModels.Models
-    local vp=Instance.new("ViewportFrame",headerRow); vp.Size=UDim2.new(0,52,0,52); vp.Position=UDim2.new(0,0,0,0); vp.BackgroundColor3=Color3.fromRGB(12,18,36); vp.BorderSizePixel=0; vp.ImageColor3=Color3.new(1,1,1); Corner(vp,7)
-    if allMet then Stroke(vp,D.GreenBright,1,0.2) else Stroke(vp,D.Border,1,0.5) end
-    task.spawn(function()
-        local ok=LoadItemViewport(vp,itemName)
-        if not ok then
-            local fb=Instance.new("TextLabel",vp); fb.Size=UDim2.new(1,0,1,0); fb.BackgroundTransparency=1; fb.Text=itemName:sub(1,1):upper(); fb.TextColor3=D.TextMid; fb.TextSize=18; fb.Font=Enum.Font.GothamBold; fb.TextXAlignment=Enum.TextXAlignment.Center; fb.TextYAlignment=Enum.TextYAlignment.Center
-        end
-    end)
+    local preview=nil
+    if HS.BuildItemPreview then
+        preview=HS.BuildItemPreview(headerRow,itemName,52)
+        preview.Position=UDim2.new(0,0,0,0)
+    else
+        local vp=Instance.new("ViewportFrame",headerRow); vp.Size=UDim2.new(0,52,0,52); vp.Position=UDim2.new(0,0,0,0); vp.BackgroundColor3=Color3.fromRGB(12,18,36); vp.BorderSizePixel=0; vp.ImageColor3=Color3.new(1,1,1); Corner(vp,7)
+        task.spawn(function()
+            local ok=LoadItemViewport(vp,itemName)
+            if not ok then
+                local fb=Instance.new("TextLabel",vp); fb.Size=UDim2.new(1,0,1,0); fb.BackgroundTransparency=1; fb.Text=itemName:sub(1,1):upper(); fb.TextColor3=D.TextMid; fb.TextSize=18; fb.Font=Enum.Font.GothamBold; fb.TextXAlignment=Enum.TextXAlignment.Center; fb.TextYAlignment=Enum.TextYAlignment.Center
+            end
+        end)
+        preview=vp
+    end
+    if allMet then Stroke(preview,D.GreenBright,1,0.2) else Stroke(preview,D.Border,1,0.5) end
 
     local nameLbl=Instance.new("TextLabel",headerRow); nameLbl.Position=UDim2.new(0,60,0,2); nameLbl.Size=UDim2.new(1,-120,0,20); nameLbl.BackgroundTransparency=1; nameLbl.Text=itemName
     if allMet and anyShop then nameLbl.TextColor3=D.Gold
@@ -388,6 +394,43 @@ local function BuildRecipeCard(parent,itemName,recipeData,craftAmt)
                 local pgBg=Instance.new("Frame",mr); pgBg.Size=UDim2.new(0.35,0,0,4); pgBg.Position=UDim2.new(0.63,0,0.5,-2); pgBg.BackgroundColor3=Color3.fromRGB(20,28,50); pgBg.BorderSizePixel=0; Corner(pgBg,2)
                 local pgF=Instance.new("Frame",pgBg); pgF.Size=UDim2.new(pct,0,1,0); pgF.BackgroundColor3=ml.met and D.Green or D.Red; pgF.BorderSizePixel=0; Corner(pgF,2)
             end
+
+            local mCap = ml
+            local matClick = Instance.new("TextButton",mr)
+            matClick.Size=UDim2.new(1,0,1,0)
+            matClick.BackgroundTransparency=1
+            matClick.Text=""
+            matClick.BorderSizePixel=0
+            matClick.MouseButton1Click:Connect(function()
+                if mCap.met then return end
+                local missing = math.max(0, mCap.need - mCap.have)
+                if missing <= 0 then return end
+
+                if mCap.purchasable then
+                    SetStatus(string.format("🛒 Kaufe %d × %s...",missing,mCap.name),D.Gold)
+                    AutoBuyItem(mCap.name,missing,mCap.shopType)
+                else
+                    local pushed = false
+                    if HS.AddAutoFarmQueueItem then
+                        pushed = HS.AddAutoFarmQueueItem(mCap.name, mCap.need) == true
+                    end
+                    if pushed then
+                        SetStatus(string.format("➕ %s (%d) zur Auto-Farm Queue hinzugefügt",mCap.name,mCap.need),D.Purple)
+                    else
+                        local already=false
+                        for _,e in ipairs(Craft.Queue) do
+                            if e.matName==mCap.name then already=true; if e.needed<mCap.need then e.needed=mCap.need end; break end
+                        end
+                        if not already then
+                            local chapId,worldId,mode=FindBestWorld(mCap.name)
+                            table.insert(Craft.Queue,{matName=mCap.name,needed=mCap.need,chapId=chapId,worldId=worldId,mode=mode or "Story"})
+                        end
+                        UpdateQueueUI()
+                        SetStatus(string.format("➕ %s (%d) zur Craft-Queue hinzugefügt",mCap.name,mCap.need),D.Purple)
+                    end
+                end
+                task.spawn(function() pcall(RebuildCraftList) end)
+            end)
         end
     end
 
