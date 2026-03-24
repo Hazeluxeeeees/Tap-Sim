@@ -256,22 +256,31 @@ task.spawn(function()
 end)
 
 -- ╔══════════════════════════════════════════════════════════╗
---  DESIGN
+--  DESIGN – Glas-Schwarz (kein natives UI-Backdrop-Blur in Roblox:
+--  Effekt = dunkle Flächen + BackgroundTransparency + dezente Ränder)
 -- ╚══════════════════════════════════════════════════════════╝
+-- Logo: PNG nach Roblox hochladen → rbxassetid hier setzen.
+-- Discord-Webhooks brauchen eine öffentliche https://-URL (z. B. GitHub raw, Imgur).
+local HAZE_ASSETS = {
+    LogoRbx = "rbxassetid://0",
+    LogoHttps = "",
+}
 local D={
-    BG=Color3.fromRGB(13,15,25), Sidebar=Color3.fromRGB(9,11,20),
-    Card=Color3.fromRGB(22,28,48), CardHover=Color3.fromRGB(30,38,62),
-    Input=Color3.fromRGB(16,20,36), TabActive=Color3.fromRGB(18,26,50),
-    TabInactive=Color3.fromRGB(14,18,34), Cyan=Color3.fromRGB(0,200,255),
-    CyanDim=Color3.fromRGB(0,110,160), Green=Color3.fromRGB(0,220,120),
-    GreenDark=Color3.fromRGB(0,55,28), GreenBright=Color3.fromRGB(50,255,140),
-    Red=Color3.fromRGB(215,50,50), RedDark=Color3.fromRGB(60,10,10),
-    Yellow=Color3.fromRGB(255,210,0), Orange=Color3.fromRGB(255,145,30),
-    Purple=Color3.fromRGB(180,80,255), Gold=Color3.fromRGB(255,200,50),
-    Teal=Color3.fromRGB(0,220,180), Lavender=Color3.fromRGB(200,170,255),
-    TextHi=Color3.fromRGB(235,245,255), TextMid=Color3.fromRGB(155,175,215),
-    TextLow=Color3.fromRGB(80,100,148), Border=Color3.fromRGB(40,55,95),
-    BorderCyan=Color3.fromRGB(0,150,200),
+    GlassPane=0.18, GlassDeep=0.22, GlassStroke=0.35,
+    BG=Color3.fromRGB(14,14,16), Sidebar=Color3.fromRGB(10,10,12),
+    Card=Color3.fromRGB(26,26,30), CardHover=Color3.fromRGB(38,38,44),
+    Input=Color3.fromRGB(22,22,26), TabActive=Color3.fromRGB(44,44,52),
+    TabInactive=Color3.fromRGB(24,24,28),
+    Accent=Color3.fromRGB(120,220,200), AccentDim=Color3.fromRGB(72,140,124),
+    Cyan=Color3.fromRGB(120,220,200), CyanDim=Color3.fromRGB(72,140,124),
+    Green=Color3.fromRGB(90,220,140), GreenDark=Color3.fromRGB(18,52,32), GreenBright=Color3.fromRGB(120,255,170),
+    Red=Color3.fromRGB(220,72,72), RedDark=Color3.fromRGB(48,20,22),
+    Yellow=Color3.fromRGB(235,200,90), Orange=Color3.fromRGB(235,150,70),
+    Purple=Color3.fromRGB(180,120,235), Gold=Color3.fromRGB(230,195,120),
+    Teal=Color3.fromRGB(100,210,195), Lavender=Color3.fromRGB(190,175,235),
+    TextHi=Color3.fromRGB(236,236,240), TextMid=Color3.fromRGB(160,160,172),
+    TextLow=Color3.fromRGB(108,108,118), Border=Color3.fromRGB(58,58,66),
+    BorderCyan=Color3.fromRGB(150,170,175), RowSelect=Color3.fromRGB(48,50,58),
 }
 local TF=TweenInfo.new(0.15,Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
 local TM=TweenInfo.new(0.25,Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
@@ -321,27 +330,27 @@ local function MkLbl(parent,text,size,color,bold,xa)
     l.Size=UDim2.new(1,0,0,(size or 14)+8); return l
 end
 local function SecLbl(p,t) local l=MkLbl(p,t,12,D.TextLow,true); l.Size=UDim2.new(1,0,0,16); return l end
-local function Card(parent,fh)
-    local f=Instance.new("Frame",parent); f.BackgroundColor3=D.Card; f.BackgroundTransparency=0; f.BorderSizePixel=0
+local function Card(parent,fh,tGlass)
+    local f=Instance.new("Frame",parent); f.BackgroundColor3=D.Card; f.BackgroundTransparency=tGlass or D.GlassPane; f.BorderSizePixel=0
     if fh then f.Size=UDim2.new(1,0,0,fh) else f.Size=UDim2.new(1,0,0,0); f.AutomaticSize=Enum.AutomaticSize.Y end
-    Corner(f,9); Stroke(f,D.Border,1,0.3); return f
+    Corner(f,8); Stroke(f,D.Border,1,D.GlassStroke); return f
 end
 local function NeonBtn(parent,text,accent,h)
-    local acc=accent or D.Cyan
-    local b=Instance.new("TextButton",parent); b.Size=UDim2.new(1,0,0,h or 34); b.BackgroundColor3=D.CardHover
+    local acc=accent or D.Accent
+    local b=Instance.new("TextButton",parent); b.Size=UDim2.new(1,0,0,h or 34); b.BackgroundColor3=D.CardHover; b.BackgroundTransparency=D.GlassPane
     b.Text=text; b.TextColor3=acc; b.TextSize=14; b.Font=Enum.Font.GothamBold
     b.TextScaled=false; b.RichText=true; b.TextStrokeTransparency=1
     b.AutoButtonColor=false; b.BorderSizePixel=0; Corner(b,8); Stroke(b,acc,1,0.4)
     local function ct(f) return Color3.fromRGB(math.clamp(math.floor(acc.R*255*f),0,255),math.clamp(math.floor(acc.G*255*f),0,255),math.clamp(math.floor(acc.B*255*f),0,255)) end
-    b.MouseEnter:Connect(function() Tw(b,{BackgroundColor3=ct(0.25)}) end)
-    b.MouseLeave:Connect(function() Tw(b,{BackgroundColor3=D.CardHover}) end)
+    b.MouseEnter:Connect(function() Tw(b,{BackgroundColor3=ct(0.22),BackgroundTransparency=D.GlassPane}) end)
+    b.MouseLeave:Connect(function() Tw(b,{BackgroundColor3=D.CardHover,BackgroundTransparency=D.GlassPane}) end)
     b.MouseButton1Down:Connect(function() Tw(b,{BackgroundColor3=ct(0.40)}) end)
     b.MouseButton1Up:Connect(function() Tw(b,{BackgroundColor3=ct(0.25)}) end)
     return b
 end
 local function MkInput(parent,ph,h)
-    local outer=Instance.new("Frame",parent); outer.Size=UDim2.new(1,0,0,h or 30); outer.BackgroundColor3=D.Input; outer.BorderSizePixel=0
-    Corner(outer,7); Stroke(outer,D.Border,1,0.2)
+    local outer=Instance.new("Frame",parent); outer.Size=UDim2.new(1,0,0,h or 30); outer.BackgroundColor3=D.Input; outer.BackgroundTransparency=D.GlassPane; outer.BorderSizePixel=0
+    Corner(outer,8); Stroke(outer,D.Border,1,0.25)
     local box=Instance.new("TextBox",outer); box.Size=UDim2.new(1,0,1,0); box.BackgroundTransparency=1
     box.PlaceholderText=ph or ""; box.PlaceholderColor3=D.TextLow; box.Text=""; box.TextColor3=D.TextHi
     box.TextSize=14; box.Font=Enum.Font.GothamMedium; box.ClearTextOnFocus=false; Pad(box,0,8,0,8)
@@ -498,7 +507,8 @@ local function BuildItemPreview(parent, itemName, size)
     size = size or 44
     local frame = Instance.new("Frame", parent)
     frame.Size = UDim2.new(0,size,0,size)
-    frame.BackgroundColor3 = Color3.fromRGB(10,14,28)
+    frame.BackgroundColor3 = D.Input
+    frame.BackgroundTransparency = D.GlassPane
     frame.BorderSizePixel = 0
     Corner(frame, 6)
 
@@ -574,21 +584,63 @@ local function MakeDraggable(frame,handle)
     end)
 end
 
--- ── Logo ─────────────────────────────────────────────────────
-local function BuildLogo(parent,sz,lx,ly)
-    sz=sz or 32
-    local root=Instance.new("Frame",parent); root.Size=UDim2.new(0,sz,0,sz); root.AnchorPoint=Vector2.new(0,0); root.Position=UDim2.new(0,lx or 0,0,ly or 0); root.BackgroundTransparency=1; root.BorderSizePixel=0
-    local ring=Instance.new("Frame",root); ring.Size=UDim2.new(1,0,1,0); ring.BackgroundTransparency=1; ring.BorderSizePixel=0; Corner(ring,99); Stroke(ring,D.Cyan,1.5,0.35)
-    local bg=Instance.new("Frame",root); bg.Size=UDim2.new(0.84,0,0.84,0); bg.Position=UDim2.new(0.08,0,0.08,0); bg.BackgroundColor3=Color3.fromRGB(0,15,38); bg.BackgroundTransparency=0.08; bg.BorderSizePixel=0; Corner(bg,99)
-    local bgG=Instance.new("UIGradient",bg); bgG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(0,38,85)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,8,28))}); bgG.Rotation=135
-    local tk=math.max(2,math.floor(sz*0.18)); local bh=math.floor(sz*0.75); local by=math.floor((sz-bh)/2); local bxl=math.floor(sz*0.18); local bxr=sz-bxl-tk
-    local function gs() return ColorSequence.new({ColorSequenceKeypoint.new(0,D.Cyan),ColorSequenceKeypoint.new(0.5,D.Green),ColorSequenceKeypoint.new(1,D.Cyan)}) end
-    local bl=Instance.new("Frame",root); bl.Size=UDim2.new(0,tk,0,bh); bl.Position=UDim2.new(0,bxl,0,by); bl.BackgroundColor3=D.Cyan; bl.BorderSizePixel=0; Corner(bl,2); Instance.new("UIGradient",bl).Color=gs()
-    local br=Instance.new("Frame",root); br.Size=UDim2.new(0,tk,0,bh); br.Position=UDim2.new(0,bxr,0,by); br.BackgroundColor3=D.Cyan; br.BorderSizePixel=0; Corner(br,2); Instance.new("UIGradient",br).Color=gs()
-    local ch=math.max(2,math.floor(sz*0.14)); local cw=bxr-bxl-tk; local cy=by+math.floor((bh-ch)/2)
-    local bc=Instance.new("Frame",root); bc.Size=UDim2.new(0,cw,0,ch); bc.Position=UDim2.new(0,bxl+tk,0,cy); bc.BackgroundColor3=D.Cyan; bc.BorderSizePixel=0; Corner(bc,2); Instance.new("UIGradient",bc).Color=ColorSequence.new({ColorSequenceKeypoint.new(0,D.Green),ColorSequenceKeypoint.new(1,D.Cyan)})
-    local ds=ch+2; local dot=Instance.new("Frame",root); dot.Size=UDim2.new(0,ds,0,ds); dot.Position=UDim2.new(0,bxl+tk+math.floor(cw/2)-math.floor(ds/2),0,cy-1); dot.BackgroundColor3=Color3.new(1,1,1); dot.BackgroundTransparency=0.15; dot.BorderSizePixel=0; Corner(dot,99)
-    task.spawn(function() while root.Parent and S.Running do Tw(dot,{BackgroundTransparency=0.7},TM); task.wait(0.85); Tw(dot,{BackgroundTransparency=0.1},TM); task.wait(0.85) end end)
+-- ── Logo (Mond / Sterne – HAZE_ASSETS.LogoRbx oder Fallback) ──
+local function BuildMoonLogo(parent,sz,lx,ly)
+    sz = sz or 32
+    local root = Instance.new("Frame", parent)
+    root.Size = UDim2.new(0, sz, 0, sz)
+    root.AnchorPoint = Vector2.new(0, 0)
+    root.Position = UDim2.new(0, lx or 0, 0, ly or 0)
+    root.BackgroundTransparency = 1
+    root.BorderSizePixel = 0
+    local ring = Instance.new("Frame", root)
+    ring.Size = UDim2.new(1, 0, 1, 0)
+    ring.BackgroundColor3 = Color3.fromRGB(8, 8, 10)
+    ring.BackgroundTransparency = D.GlassDeep
+    ring.BorderSizePixel = 0
+    Corner(ring, 99)
+    Stroke(ring, D.BorderCyan, 1, 0.45)
+    if HAZE_ASSETS.LogoRbx ~= "" and HAZE_ASSETS.LogoRbx ~= "rbxassetid://0" then
+        local img = Instance.new("ImageLabel", ring)
+        img.Size = UDim2.new(0.88, 0, 0.88, 0)
+        img.Position = UDim2.new(0.06, 0, 0.06, 0)
+        img.BackgroundTransparency = 1
+        img.Image = HAZE_ASSETS.LogoRbx
+        img.ScaleType = Enum.ScaleType.Fit
+        Corner(img, 99)
+        return root
+    end
+    local disc = Instance.new("Frame", ring)
+    disc.Size = UDim2.new(0.82, 0, 0.82, 0)
+    disc.Position = UDim2.new(0.09, 0, 0.09, 0)
+    disc.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+    disc.BackgroundTransparency = 0.1
+    disc.BorderSizePixel = 0
+    Corner(disc, 99)
+    local moon = Instance.new("TextLabel", disc)
+    moon.Size = UDim2.new(1, 0, 1, 0)
+    moon.BackgroundTransparency = 1
+    moon.Text = "☽"
+    moon.TextColor3 = D.TextHi
+    moon.TextTransparency = 0.05
+    moon.TextSize = math.clamp(math.floor(sz * 0.52), 12, 42)
+    moon.Font = Enum.Font.GothamBold
+    moon.TextXAlignment = Enum.TextXAlignment.Center
+    moon.TextYAlignment = Enum.TextYAlignment.Center
+    moon.TextStrokeTransparency = 1
+    moon.RichText = true
+    local function star(px, py, r, tr)
+        local d = Instance.new("Frame", disc)
+        d.Size = UDim2.new(0, r, 0, r)
+        d.Position = UDim2.new(px, -r / 2, py, -r / 2)
+        d.BackgroundColor3 = D.TextHi
+        d.BackgroundTransparency = tr or 0.2
+        d.BorderSizePixel = 0
+        Corner(d, 99)
+    end
+    star(0.78, 0.28, math.max(2, math.floor(sz / 14)), 0.15)
+    star(0.68, 0.42, math.max(2, math.floor(sz / 18)), 0.35)
+    star(0.85, 0.48, math.max(2, math.floor(sz / 20)), 0.4)
     return root
 end
 
@@ -607,42 +659,43 @@ H.UI.Fr.Main.Size=UDim2.new(0,580,0,450)
 H.UI.Fr.Main.AnchorPoint=Vector2.new(0.5,0.5)
 H.UI.Fr.Main.Position=UDim2.new(0.5,0,0.5,0)
 H.UI.Fr.Main.BackgroundColor3=D.BG
-H.UI.Fr.Main.BackgroundTransparency=0.06
+H.UI.Fr.Main.BackgroundTransparency=0.18
 H.UI.Fr.Main.BorderSizePixel=0
 Corner(H.UI.Fr.Main,12)
-Stroke(H.UI.Fr.Main,D.BorderCyan,1.5,0.45)
+Stroke(H.UI.Fr.Main,D.BorderCyan,1.5,0.5)
 
 local headerStrip=Instance.new("Frame",H.UI.Fr.Main)
 headerStrip.Size=UDim2.new(1,0,0,22); headerStrip.Position=UDim2.new(0,0,0,0)
-headerStrip.BackgroundColor3=Color3.fromRGB(6,8,18); headerStrip.BackgroundTransparency=0.3
+headerStrip.BackgroundColor3=D.Sidebar; headerStrip.BackgroundTransparency=0.35
 headerStrip.BorderSizePixel=0; Corner(headerStrip,12)
 local headerBottom=Instance.new("Frame",H.UI.Fr.Main)
 headerBottom.Size=UDim2.new(1,0,0,11); headerBottom.Position=UDim2.new(0,0,0,11)
-headerBottom.BackgroundColor3=Color3.fromRGB(6,8,18); headerBottom.BackgroundTransparency=0.3; headerBottom.BorderSizePixel=0
+headerBottom.BackgroundColor3=D.Sidebar; headerBottom.BackgroundTransparency=0.35; headerBottom.BorderSizePixel=0
 local headerLine=Instance.new("Frame",H.UI.Fr.Main)
 headerLine.Size=UDim2.new(1,0,0,1); headerLine.Position=UDim2.new(0,0,0,22)
-headerLine.BackgroundColor3=D.BorderCyan; headerLine.BackgroundTransparency=0.5; headerLine.BorderSizePixel=0
+headerLine.BackgroundColor3=D.Border; headerLine.BackgroundTransparency=0.45; headerLine.BorderSizePixel=0
 local headerTimerLbl=Instance.new("TextLabel",headerStrip)
 headerTimerLbl.Size=UDim2.new(1,-10,1,0); headerTimerLbl.Position=UDim2.new(0,5,0,0)
 headerTimerLbl.BackgroundTransparency=1; headerTimerLbl.Text="⏱  0m 00s"
-headerTimerLbl.TextColor3=D.TextLow; headerTimerLbl.TextSize=10; headerTimerLbl.Font=Enum.Font.Gotham
+headerTimerLbl.TextColor3=D.TextLow; headerTimerLbl.TextSize=10; headerTimerLbl.Font=Enum.Font.GothamMedium
+headerTimerLbl.TextScaled=false; headerTimerLbl.RichText=true; headerTimerLbl.TextStrokeTransparency=1
 headerTimerLbl.TextXAlignment=Enum.TextXAlignment.Right; H.UI.Lbl.HeaderTimer=headerTimerLbl
 task.spawn(function() while S.Running do task.wait(1); pcall(function() H.UI.Lbl.HeaderTimer.Text="⏱  Session: "..FmtDur(os.time()-S.SessStart) end) end end)
 
 local glow=Instance.new("Frame",H.UI.Fr.Main)
-glow.Size=UDim2.new(1,0,0.35,0); glow.BackgroundColor3=D.Cyan; glow.BackgroundTransparency=0.94; glow.BorderSizePixel=0; Corner(glow,12)
-Instance.new("UIGradient",glow).Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(0,180,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,0,0))})
+glow.Size=UDim2.new(1,0,0.35,0); glow.BackgroundColor3=Color3.fromRGB(255,255,255); glow.BackgroundTransparency=0.965; glow.BorderSizePixel=0; Corner(glow,12)
+Instance.new("UIGradient",glow).Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(200,210,215)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,0,0))})
 
 H.UI.Fr.Sidebar=Instance.new("Frame",H.UI.Fr.Main)
 H.UI.Fr.Sidebar.Name="Sidebar"; H.UI.Fr.Sidebar.BackgroundColor3=D.Sidebar
-H.UI.Fr.Sidebar.BackgroundTransparency=0.04; H.UI.Fr.Sidebar.BorderSizePixel=0; Corner(H.UI.Fr.Sidebar,10)
+H.UI.Fr.Sidebar.BackgroundTransparency=0.14; H.UI.Fr.Sidebar.BorderSizePixel=0; Corner(H.UI.Fr.Sidebar,10)
 local sStripe=Instance.new("Frame",H.UI.Fr.Sidebar)
 sStripe.Size=UDim2.new(0,2,0.65,0); sStripe.Position=UDim2.new(0,0,0.175,0)
-sStripe.BackgroundColor3=D.Cyan; sStripe.BorderSizePixel=0; Corner(sStripe,2)
-Instance.new("UIGradient",sStripe).Color=ColorSequence.new({ColorSequenceKeypoint.new(0,D.Cyan),ColorSequenceKeypoint.new(0.5,D.Green),ColorSequenceKeypoint.new(1,D.Cyan)})
+sStripe.BackgroundColor3=D.Accent; sStripe.BorderSizePixel=0; Corner(sStripe,2)
+Instance.new("UIGradient",sStripe).Color=ColorSequence.new({ColorSequenceKeypoint.new(0,D.AccentDim),ColorSequenceKeypoint.new(0.5,D.Accent),ColorSequenceKeypoint.new(1,D.AccentDim)})
 local lf=Instance.new("Frame",H.UI.Fr.Sidebar)
 lf.Size=UDim2.new(1,0,0,46); lf.Position=UDim2.new(0,0,0,2); lf.BackgroundTransparency=1
-local sl=BuildLogo(lf,32,0,7); sl.AnchorPoint=Vector2.new(0.5,0); sl.Position=UDim2.new(0.5,0,0,7)
+local sl=BuildMoonLogo(lf,32,0,7); sl.AnchorPoint=Vector2.new(0.5,0); sl.Position=UDim2.new(0.5,0,0,7)
 H.UI.Fr.TabHolder=Instance.new("Frame",H.UI.Fr.Sidebar)
 H.UI.Fr.TabHolder.Position=UDim2.new(0,0,0,52); H.UI.Fr.TabHolder.Size=UDim2.new(1,0,1,-56)
 H.UI.Fr.TabHolder.BackgroundTransparency=1; VList(H.UI.Fr.TabHolder,3); Pad(H.UI.Fr.TabHolder,3,5,3,5)
@@ -652,23 +705,24 @@ H.UI.Fr.Content=Instance.new("Frame",H.UI.Fr.Main); H.UI.Fr.Content.Name="Conten
 local function SelectTab(name)
     for n,p in pairs(H.Tabs) do p.Visible=(n==name) end
     for n,b in pairs(H.TBtns) do
+        local s=b:FindFirstChildOfClass("UIStroke")
         if n==name then
-            b.BackgroundColor3=D.TabActive; b.TextColor3=D.Cyan
-            local s=b:FindFirstChildOfClass("UIStroke"); if s then s.Transparency=0 end
+            b.BackgroundColor3=D.TabActive; b.TextColor3=D.Accent; b.BackgroundTransparency=D.GlassPane
+            if s then s.Transparency=0; s.Color=D.Accent end
         else
-            b.BackgroundColor3=D.TabInactive; b.TextColor3=D.TextMid
-            local s=b:FindFirstChildOfClass("UIStroke"); if s then s.Transparency=1 end
+            b.BackgroundColor3=D.TabInactive; b.TextColor3=D.TextMid; b.BackgroundTransparency=D.GlassPane
+            if s then s.Transparency=1 end
         end
     end
     S.ActiveTab=name
 end
 local function MakeTab(name,icon)
     local B=Instance.new("TextButton",H.UI.Fr.TabHolder)
-    B.Size=UDim2.new(1,0,0,30); B.BackgroundColor3=D.TabInactive
+    B.Size=UDim2.new(1,0,0,30); B.BackgroundColor3=D.TabInactive; B.BackgroundTransparency=D.GlassPane
     B.Text=icon.."  "..name; B.TextColor3=D.TextMid; B.TextSize=14
     B.Font=Enum.Font.GothamMedium; B.TextScaled=false; B.RichText=true; B.TextStrokeTransparency=1
     B.AutoButtonColor=false; B.BorderSizePixel=0
-    Corner(B,7); Stroke(B,D.Cyan,1,1)
+    Corner(B,8); Stroke(B,D.Accent,1,1)
     B.MouseEnter:Connect(function() if S.ActiveTab~=name then Tw(B,{BackgroundColor3=D.CardHover}) end end)
     B.MouseLeave:Connect(function() if S.ActiveTab~=name then Tw(B,{BackgroundColor3=D.TabInactive}) end end)
     local P=Instance.new("ScrollingFrame",H.UI.Fr.Content)
@@ -684,6 +738,7 @@ local function MakeTraitsTab(name, icon)
     local B = Instance.new("TextButton", H.UI.Fr.TabHolder)
     B.Size = UDim2.new(1, 0, 0, 30)
     B.BackgroundColor3 = D.TabInactive
+    B.BackgroundTransparency = D.GlassPane
     B.Text = icon .. "  " .. name
     B.TextColor3 = D.TextMid
     B.TextSize = 14
@@ -691,8 +746,8 @@ local function MakeTraitsTab(name, icon)
     B.TextScaled = false; B.RichText = true; B.TextStrokeTransparency = 1
     B.AutoButtonColor = false
     B.BorderSizePixel = 0
-    Corner(B, 7)
-    Stroke(B, D.Cyan, 1, 1)
+    Corner(B, 8)
+    Stroke(B, D.Accent, 1, 1)
     B.MouseEnter:Connect(function() if S.ActiveTab ~= name then Tw(B, { BackgroundColor3 = D.CardHover }) end end)
     B.MouseLeave:Connect(function() if S.ActiveTab ~= name then Tw(B, { BackgroundColor3 = D.TabInactive }) end end)
     local TraitRoot = Instance.new("Frame", H.UI.Fr.Content)
@@ -748,16 +803,16 @@ local function MakeTraitsTab(name, icon)
     return TraitRoot, TraitSticky, TraitScroll
 end
 
-local GamePage  = MakeTab("Game","🎮")
-local MiscPage  = MakeTab("Misc","🔧")
-local SessPage  = MakeTab("Session","📊")
-local InvPage   = MakeTab("Inventory","🎒")
-local QuestPage = MakeTab("Quests","📋")
-local TraitRoot, TraitSticky, TraitScroll = MakeTraitsTab("Traits", "✨")
+local GamePage  = MakeTab("Game","◈")
+local MiscPage  = MakeTab("Misc","◇")
+local SessPage  = MakeTab("Session","◎")
+local InvPage   = MakeTab("Inventory","▣")
+local QuestPage = MakeTab("Quests","≡")
+local TraitRoot, TraitSticky, TraitScroll = MakeTraitsTab("Traits", "✦")
 local TraitPage = TraitScroll
-local ShopPage  = MakeTab("Shops","🏪")
-local CraftPage = MakeTab("Crafting","🔨")
-local SettPage  = MakeTab("Settings","⚙")
+local ShopPage  = MakeTab("Shops","▤")
+local CraftPage = MakeTab("Crafting","⚒")
+local SettPage  = MakeTab("Settings","⛭")
 
 -- Sofort setzen für Module
 _G.HazeShared.ShopContainer = ShopPage
@@ -806,10 +861,13 @@ local function SendWebhook(rewardTable,goalItem,goalAmt)
     if sTxt=="" then sTxt="> *–*" end
     local dur=FmtDur(os.time()-S.SessStart); local isGoal=goalItem~=nil
     local ava="https://www.roblox.com/headshot-thumbnail/image?userId="..tostring(Svc.Player.UserId).."&width=150&height=150&format=png"
+    local logoOk = HAZE_ASSETS.LogoHttps and #HAZE_ASSETS.LogoHttps > 12 and HAZE_ASSETS.LogoHttps:find("^https?://")
+    local whAvatar = logoOk and HAZE_ASSETS.LogoHttps or ava
+    local thumbUrl = logoOk and HAZE_ASSETS.LogoHttps or ava
     local embed={
-        color=isGoal and 0x00FF7A or 0x00C8FF,
+        color=isGoal and 0x2DD4A3 or 0x3F3F46,
         title=(isGoal and "🎯  ZIEL ERREICHT!  " or "🏆  ")..string.format("%s · Runde #%d",Svc.Player.Name,S.RoundCount),
-        thumbnail={url=ava},
+        thumbnail={url=thumbUrl},
         fields={
             {name="👤 Spieler",value="```"..Svc.Player.Name.."```",inline=true},
             {name="🔢 Runde",value="```#"..S.RoundCount.."```",inline=true},
@@ -817,12 +875,12 @@ local function SendWebhook(rewardTable,goalItem,goalAmt)
             {name="🎁 Loot",value=rTxt,inline=false},
             {name="📊 Gesamt",value=sTxt,inline=false}
         },
-        footer={text="HazeHUB V19.8 · "..dur}
+        footer={text="Haze Hub · V19.8 · "..dur}
     }
     if isGoal then table.insert(embed.fields,2,{name="🎯 Ziel",value=string.format("**%s** `%d/%d` ✅",goalItem,goalAmt,goalAmt),inline=false}) end
     task.spawn(function() pcall(function()
         local fn=request or http_request or (syn and syn.request); if not fn then return end
-        fn({Url=H.Config.WebhookURL:gsub("discord%.com","webhook.lewisakura.moe"),Method="POST",Headers={["Content-Type"]="application/json"},Body=Svc.Http:JSONEncode({embeds={embed}})})
+        fn({Url=H.Config.WebhookURL:gsub("discord%.com","webhook.lewisakura.moe"),Method="POST",Headers={["Content-Type"]="application/json"},Body=Svc.Http:JSONEncode({username="Haze Hub",avatar_url=whAvatar,embeds={embed}})})
     end) end)
 end
 
@@ -856,7 +914,7 @@ H.UI.Lbl.ARStatus.Text="Auto Retry: AUS"; H.UI.Lbl.ARStatus.TextColor3=D.TextMid
 H.UI.Lbl.ARStatus.TextSize=12; H.UI.Lbl.ARStatus.Font=Enum.Font.GothamBold
 H.UI.Lbl.ARStatus.TextXAlignment=Enum.TextXAlignment.Left
 H.UI.Btn.ARToggle=Instance.new("TextButton",arRow)
-H.UI.Btn.ARToggle.Size=UDim2.new(0.42,0,0,30); H.UI.Btn.ARToggle.BackgroundColor3=D.CardHover
+H.UI.Btn.ARToggle.Size=UDim2.new(0.42,0,0,30); H.UI.Btn.ARToggle.BackgroundColor3=D.CardHover; H.UI.Btn.ARToggle.BackgroundTransparency=D.GlassPane
 H.UI.Btn.ARToggle.Text="⬜ AUS"; H.UI.Btn.ARToggle.TextColor3=D.TextLow
 H.UI.Btn.ARToggle.TextSize=12; H.UI.Btn.ARToggle.Font=Enum.Font.GothamBold
 H.UI.Btn.ARToggle.AutoButtonColor=false; H.UI.Btn.ARToggle.BorderSizePixel=0
@@ -865,11 +923,11 @@ local function UpdateAutoRetryUI()
     if H.Config.AutoRetry then
         H.UI.Btn.ARToggle.Text="✅ AN"; H.UI.Btn.ARToggle.TextColor3=D.Green
         H.UI.Lbl.ARStatus.Text="Auto Retry: AN"; H.UI.Lbl.ARStatus.TextColor3=D.Green
-        Stroke(H.UI.Btn.ARToggle,D.Green,1.5,0); Tw(H.UI.Btn.ARToggle,{BackgroundColor3=D.GreenDark})
+        Stroke(H.UI.Btn.ARToggle,D.Green,1.5,0); Tw(H.UI.Btn.ARToggle,{BackgroundColor3=D.GreenDark,BackgroundTransparency=0.12})
     else
         H.UI.Btn.ARToggle.Text="⬜ AUS"; H.UI.Btn.ARToggle.TextColor3=D.TextLow
         H.UI.Lbl.ARStatus.Text="Auto Retry: AUS"; H.UI.Lbl.ARStatus.TextColor3=D.TextMid
-        Stroke(H.UI.Btn.ARToggle,D.TextLow,1,0.4); Tw(H.UI.Btn.ARToggle,{BackgroundColor3=D.CardHover})
+        Stroke(H.UI.Btn.ARToggle,D.TextLow,1,0.4); Tw(H.UI.Btn.ARToggle,{BackgroundColor3=D.CardHover,BackgroundTransparency=D.GlassPane})
     end
 end
 H.UI.Btn.ARToggle.MouseButton1Click:Connect(function() H.Config.AutoRetry=not H.Config.AutoRetry; SaveConfig(); UpdateAutoRetryUI() end)
@@ -930,12 +988,12 @@ local function RebuildChapBtns(chapList)
         cb.MouseButton1Click:Connect(function()
             S.SelChap=capCid
             for _,b in pairs(H.UI.Fr.ChapBtns) do Tw(b,{BackgroundColor3=D.CardHover}); local s=b:FindFirstChildOfClass("UIStroke"); if s then s.Color=D.Border; s.Transparency=0.4 end end
-            Tw(cb,{BackgroundColor3=Color3.fromRGB(0,28,52)}); Stroke(cb,D.Cyan,1.5,0)
+            Tw(cb,{BackgroundColor3=D.RowSelect}); Stroke(cb,D.Accent,1.5,0)
             H.UI.Lbl.WorldStatus.Text=string.format("⚙ %s [%s] → %s",S.SelWorld or "?",S.SelMode,capCid); H.UI.Lbl.WorldStatus.TextColor3=D.Cyan
         end)
         H.UI.Fr.ChapBtns[i]=cb
     end
-    if H.UI.Fr.ChapBtns[1] then Tw(H.UI.Fr.ChapBtns[1],{BackgroundColor3=Color3.fromRGB(0,28,52)}); Stroke(H.UI.Fr.ChapBtns[1],D.Cyan,1.5,0) end
+    if H.UI.Fr.ChapBtns[1] then Tw(H.UI.Fr.ChapBtns[1],{BackgroundColor3=D.RowSelect}); Stroke(H.UI.Fr.ChapBtns[1],D.Accent,1.5,0) end
 end
 SecLbl(wCard,"WELTEN"); H.UI.Fr.WorldBtns=Instance.new("Frame",wCard)
 H.UI.Fr.WorldBtns.Size=UDim2.new(1,0,0,0); H.UI.Fr.WorldBtns.AutomaticSize=Enum.AutomaticSize.Y
@@ -945,14 +1003,14 @@ local function CreateWorldBtn(wid)
     wb.Size=UDim2.new(1,0,0,30); wb.BackgroundColor3=D.CardHover; wb.Text="🌍  "..wid
     wb.TextColor3=D.TextHi; wb.TextSize=11; wb.Font=Enum.Font.GothamSemibold
     wb.AutoButtonColor=false; wb.BorderSizePixel=0; Corner(wb,7); Stroke(wb,D.Border,1,0.4)
-    wb.MouseEnter:Connect(function() if S.SelWorld~=wid then Tw(wb,{BackgroundColor3=Color3.fromRGB(36,46,74)}) end end)
+    wb.MouseEnter:Connect(function() if S.SelWorld~=wid then Tw(wb,{BackgroundColor3=D.CardHover}) end end)
     wb.MouseLeave:Connect(function() if S.SelWorld~=wid then Tw(wb,{BackgroundColor3=D.CardHover}) end end)
     wb.MouseButton1Click:Connect(function()
         S.SelWorld=wid
         for _,b in pairs(H.UI.Fr.WorldBtns:GetChildren()) do
             if b:IsA("TextButton") then Tw(b,{BackgroundColor3=D.CardHover}); local s=b:FindFirstChildOfClass("UIStroke"); if s then s.Color=D.Border; s.Transparency=0.4 end end
         end
-        Tw(wb,{BackgroundColor3=Color3.fromRGB(0,28,52)}); Stroke(wb,D.Cyan,1.5,0)
+        Tw(wb,{BackgroundColor3=D.RowSelect}); Stroke(wb,D.Accent,1.5,0)
         H.UI.Lbl.WorldStatus.Text="🌍 "..wid.." ["..S.SelMode.."] → Kapitel wählen"; H.UI.Lbl.WorldStatus.TextColor3=D.Yellow
         local wd=S.WorldData[wid] or {}; local cl=(S.SelMode=="Story" or S.SelMode=="Calamity") and wd.story or wd.ranger; RebuildChapBtns(cl or {})
     end)
@@ -1283,9 +1341,9 @@ local function RebuildInventory()
             local cap=iname
             clickBtn.MouseButton1Click:Connect(function()
                 if _G._SetGoalFromInventory then _G._SetGoalFromInventory(cap) end
-                Tw(row,{BackgroundColor3=Color3.fromRGB(35,20,65)}); task.delay(0.3,function() Tw(row,{BackgroundColor3=isRare and D.RedDark or D.CardHover}) end)
+                Tw(row,{BackgroundColor3=D.RowSelect}); task.delay(0.3,function() Tw(row,{BackgroundColor3=isRare and D.RedDark or D.CardHover}) end)
             end)
-            clickBtn.MouseEnter:Connect(function() Tw(row,{BackgroundColor3=isRare and Color3.fromRGB(80,18,18) or Color3.fromRGB(40,52,82)}) end)
+            clickBtn.MouseEnter:Connect(function() Tw(row,{BackgroundColor3=isRare and Color3.fromRGB(80,18,18) or D.CardHover}) end)
             clickBtn.MouseLeave:Connect(function() Tw(row,{BackgroundColor3=isRare and D.RedDark or D.CardHover}) end)
             -- ★ Dual Preview: erst Texture-ID, dann ViewportFrame
             local previewFrame = BuildItemPreview(row, iname, 44)
@@ -1471,19 +1529,19 @@ NeonBtn(SettPage,"⏏  GUI vollständig entladen",D.Red,34).MouseButton1Click:Co
 end)
 end) -- end pcall Settings Tab
 
--- ── Mobile Button ─────────────────────────────────────────────
+-- ── Mobile Button (rund, oben rechts, Mond-Logo) ──────────────
 H.UI.Fr.MiniBtn=Instance.new("TextButton",ScreenGui)
-H.UI.Fr.MiniBtn.Name="MiniBtn"; H.UI.Fr.MiniBtn.Size=UDim2.new(0,50,0,50)
-H.UI.Fr.MiniBtn.AnchorPoint=Vector2.new(0.5,0.5); H.UI.Fr.MiniBtn.Position=UDim2.new(0.05,0,0.5,0)
-H.UI.Fr.MiniBtn.BackgroundColor3=Color3.fromRGB(0,26,50); H.UI.Fr.MiniBtn.BackgroundTransparency=0.10
+H.UI.Fr.MiniBtn.Name="MiniBtn"; H.UI.Fr.MiniBtn.Size=UDim2.new(0,52,0,52)
+H.UI.Fr.MiniBtn.AnchorPoint=Vector2.new(1,0); H.UI.Fr.MiniBtn.Position=UDim2.new(1,-14,0,14)
+H.UI.Fr.MiniBtn.BackgroundColor3=D.BG; H.UI.Fr.MiniBtn.BackgroundTransparency=0.2
 H.UI.Fr.MiniBtn.Text=""; H.UI.Fr.MiniBtn.AutoButtonColor=false; H.UI.Fr.MiniBtn.BorderSizePixel=0; Corner(H.UI.Fr.MiniBtn,99)
-local MBRing=Instance.new("Frame",H.UI.Fr.MiniBtn); MBRing.Size=UDim2.new(1,8,1,8); MBRing.Position=UDim2.new(0,-4,0,-4); MBRing.BackgroundTransparency=1; MBRing.BorderSizePixel=0; Corner(MBRing,99); Stroke(MBRing,D.Cyan,1.5,0.4)
-Instance.new("UIGradient",H.UI.Fr.MiniBtn).Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(0,52,105)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,16,44))})
-BuildLogo(H.UI.Fr.MiniBtn,22,14,14)
-H.UI.Fr.MiniBtn.MouseEnter:Connect(function() Tw(H.UI.Fr.MiniBtn,{BackgroundTransparency=0},TM); Stroke(MBRing,D.Cyan,2,0) end)
-H.UI.Fr.MiniBtn.MouseLeave:Connect(function() Tw(H.UI.Fr.MiniBtn,{BackgroundTransparency=0.10},TM); Stroke(MBRing,D.Cyan,1.5,0.4) end)
-H.UI.Fr.MiniBtn.MouseButton1Down:Connect(function() Tw(H.UI.Fr.MiniBtn,{Size=UDim2.new(0,44,0,44)},TF) end)
-H.UI.Fr.MiniBtn.MouseButton1Up:Connect(function() Tw(H.UI.Fr.MiniBtn,{Size=UDim2.new(0,50,0,50)},TF) end)
+local MBRing=Instance.new("Frame",H.UI.Fr.MiniBtn); MBRing.Size=UDim2.new(1,10,1,10); MBRing.Position=UDim2.new(0.5,0,0.5,0); MBRing.AnchorPoint=Vector2.new(0.5,0.5)
+MBRing.BackgroundTransparency=1; MBRing.BorderSizePixel=0; MBRing.ZIndex=0; Corner(MBRing,99); Stroke(MBRing,D.BorderCyan,1.5,0.45)
+local mbLogo=BuildMoonLogo(H.UI.Fr.MiniBtn,30,0,0); mbLogo.AnchorPoint=Vector2.new(0.5,0.5); mbLogo.Position=UDim2.new(0.5,0,0.5,0); mbLogo.ZIndex=2
+H.UI.Fr.MiniBtn.MouseEnter:Connect(function() Tw(H.UI.Fr.MiniBtn,{BackgroundTransparency=0.08},TM); Stroke(MBRing,D.Accent,2,0.25) end)
+H.UI.Fr.MiniBtn.MouseLeave:Connect(function() Tw(H.UI.Fr.MiniBtn,{BackgroundTransparency=0.2},TM); Stroke(MBRing,D.BorderCyan,1.5,0.45) end)
+H.UI.Fr.MiniBtn.MouseButton1Down:Connect(function() Tw(H.UI.Fr.MiniBtn,{Size=UDim2.new(0,46,0,46)},TF) end)
+H.UI.Fr.MiniBtn.MouseButton1Up:Connect(function() Tw(H.UI.Fr.MiniBtn,{Size=UDim2.new(0,52,0,52)},TF) end)
 H.UI.Fr.MiniBtn.MouseButton1Click:Connect(function() S.GuiVisible=not S.GuiVisible; H.UI.Fr.Main.Visible=S.GuiVisible end)
 MakeDraggable(H.UI.Fr.MiniBtn,H.UI.Fr.MiniBtn); MakeDraggable(H.UI.Fr.Main,H.UI.Fr.Main)
 Svc.Input.InputBegan:Connect(function(inp,processed)
@@ -1535,6 +1593,8 @@ _G.HazeShared.GetWorldData       = function() return S.WorldData end
 _G.HazeShared.GetWorldIds        = function() return S.WorldIds  end
 _G.HazeShared.IsScanDone         = function() return S.ScanDone  end
 _G.HazeShared.D                  = D
+_G.HazeShared.HAZE_ASSETS        = HAZE_ASSETS
+_G.HazeShared.BuildMoonLogo      = BuildMoonLogo
 _G.HazeShared.TF=TF; _G.HazeShared.TM=TM; _G.HazeShared.Tw=Tw
 _G.HazeShared.Svc                = Svc
 _G.HazeShared.LoadItemViewport   = LoadItemViewport
