@@ -1,22 +1,24 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB – craft.lua  v1.0.0
---  Modul 4: Crafting & Auto-Collector
---  URL: raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/craft
+--  HazeHUB – craft.lua  v1.1.0
+--  FIXES v1.1.0:
+--    ✓ Modelle aus RS.Assets.ItemModels.Models (Multi-Part zentriert)
+--    ✓ ShopItems-Integration: kaufbare Items → Auto-Buy statt Farm-Queue
+--    ✓ ViewportFrame in jedem Rezept
+--    ✓ Doppelter Header entfernt (main schickt nur Placeholder)
+--    ✓ Besitz/Nötig-Format: "14 / 20  Erde"
+--    ✓ Karte grün wenn ALLES bereit (inkl. kaufbare Items)
 -- ╚══════════════════════════════════════════════════════════╝
 
-local VERSION = "1.0.0"
+local VERSION = "1.1.0"
 
--- ── Warten bis HazeShared & CraftPage bereit ─────────────────
+-- Warten bis HazeShared & CraftPage bereit
 local _w = 0
 while not (_G.HazeShared and _G.HazeShared.D and _G.HazeShared.Card and _G.HazeShared.CraftPage) do
     task.wait(0.3); _w = _w + 0.3
-    if _w >= 25 then
-        warn("[HazeHub-Craft] HazeShared/CraftPage nicht bereit – abgebrochen.")
-        return
-    end
+    if _w >= 25 then warn("[HazeHub-Craft] HazeShared nicht bereit."); return end
 end
 
--- ── Shared Aliase ─────────────────────────────────────────────
+-- ── Shared ───────────────────────────────────────────────────
 local HS        = _G.HazeShared
 local D         = HS.D
 local TF        = HS.TF;  local TM = HS.TM;  local Tw = HS.Tw
@@ -33,129 +35,215 @@ local Players = game:GetService("Players")
 local RS      = game:GetService("ReplicatedStorage")
 local LP      = Players.LocalPlayer
 
--- ── Daten-Module (mit Fallback) ───────────────────────────────
+-- ── Daten-Module ──────────────────────────────────────────────
 local CraftingRecipes = nil
-local GetData         = nil
+local ShopItemsData   = nil   -- RS.Shared.Info.ShopItems
 pcall(function() CraftingRecipes = require(RS.Shared.Info.CraftingRecipes) end)
-pcall(function() GetData         = require(RS.Shared.GetData) end)
+pcall(function() ShopItemsData   = require(RS.Shared.Info.ShopItems) end)
 
--- ── Helpers ───────────────────────────────────────────────────
-local function FmtNum(n)
-    n = math.floor(tonumber(n) or 0); local s = tostring(n); local r = ""; local c = 0
-    for i = #s, 1, -1 do c=c+1; r=s:sub(i,i)..r; if c%3==0 and i>1 then r=","..r end end
-    return r
-end
-
-local function GetItemAmt(name)
-    local n = 0
-    pcall(function()
-        local f = RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Items",3)
-        local it = f:FindFirstChild(name); if not it then return end
-        local vc = it:FindFirstChild("Amount") or it:FindFirstChild("Value")
-        if vc then n = tonumber(vc.Value) or 0
-        elseif it:IsA("IntValue") or it:IsA("NumberValue") then n = tonumber(it.Value) or 0 end
-    end)
-    return n
-end
-
-local function AllMatsMet(recipeName, amount)
-    amount = amount or 1
-    if not CraftingRecipes or not CraftingRecipes[recipeName] then return false end
-    local recipe = CraftingRecipes[recipeName]
-    if not recipe.Requirement then return false end
-    for mat, amt in pairs(recipe.Requirement) do
-        if GetItemAmt(mat) < (amt * amount) then return false end
+-- ── ViewportFrame – zentriert, Multi-Part fähig ──────────────
+-- Lädt aus RS.Assets.ItemModels.Models (primär)
+-- Falls HS.LoadItemViewport verfügbar: nutze das (Main hat es registriert)
+local function LoadItemViewport(vp, itemName)
+    -- Zuerst shared Helper aus Main versuchen
+    if HS.LoadItemViewport then
+        local ok=HS.LoadItemViewport(vp,itemName)
+        if ok then return true end
     end
-    return true
-end
-
--- Viewport-Modell laden
-local function LoadViewport(vp, itemName)
-    for _, v in pairs(vp:GetDescendants()) do
-        if v:IsA("Model") or v:IsA("Camera") or v:IsA("WorldModel") then v:Destroy() end
-    end
-    local wm = Instance.new("WorldModel"); wm.Parent = vp
-    local model = nil
+    -- Eigener Fallback direkt auf Assets-Pfad
+    local ok=false
     pcall(function()
-        if GetData then
-            model = GetData.GetItemModel(itemName)
-            if not model then model = GetData.GetUnitModel(itemName) end
+        for _,v in pairs(vp:GetDescendants()) do
+            if v:IsA("Model") or v:IsA("Camera") or v:IsA("WorldModel") then v:Destroy() end
         end
-    end)
-    if not model then return false end
-    local ok = pcall(function()
-        local clone = model:Clone(); clone.Parent = wm
-        local cam = Instance.new("Camera"); cam.Parent = vp; vp.CurrentCamera = cam
-        if clone.PrimaryPart then
-            cam.CFrame = clone.PrimaryPart.CFrame * CFrame.new(0,0,2.5)
-            clone:SetPrimaryPartCFrame(CFrame.lookAt(clone.PrimaryPart.Position, cam.CFrame.Position))
+        local modelsFolder=nil
+        pcall(function() modelsFolder=RS.Assets.ItemModels.Models end)
+        if not modelsFolder then
+            -- Tiefensuche
+            pcall(function()
+                local assets=RS:FindFirstChild("Assets",true)
+                if assets and assets:FindFirstChild("ItemModels") then
+                    modelsFolder=assets.ItemModels:FindFirstChild("Models")
+                end
+            end)
         end
-        local hum = clone:FindFirstChild("Humanoid",true)
-        if hum then
-            local anims = hum.Parent:FindFirstChild("Animations")
-            if anims then local idle=anims:FindFirstChild("Idle"); if idle then hum:LoadAnimation(idle):Play() end end
+        if not modelsFolder then return end
+        local template=modelsFolder:FindFirstChild(itemName)
+        if not template then
+            for _,ch in pairs(modelsFolder:GetChildren()) do
+                if ch.Name:lower()==itemName:lower() then template=ch; break end
+            end
         end
+        if not template then return end
+        local wm=Instance.new("WorldModel"); wm.Parent=vp
+        local clone=template:Clone(); clone.Parent=wm
+        local cam=Instance.new("Camera"); cam.Parent=vp; vp.CurrentCamera=cam
+        -- BoundingBox für Multi-Part
+        local parts={}
+        for _,d in pairs(clone:GetDescendants()) do if d:IsA("BasePart") then table.insert(parts,d) end end
+        if clone:IsA("BasePart") then table.insert(parts,clone) end
+        if #parts==0 then return end
+        local minX,minY,minZ=math.huge,math.huge,math.huge
+        local maxX,maxY,maxZ=-math.huge,-math.huge,-math.huge
+        for _,p in ipairs(parts) do
+            local pos=p.Position; local sz=p.Size
+            minX=math.min(minX,pos.X-sz.X/2); maxX=math.max(maxX,pos.X+sz.X/2)
+            minY=math.min(minY,pos.Y-sz.Y/2); maxY=math.max(maxY,pos.Y+sz.Y/2)
+            minZ=math.min(minZ,pos.Z-sz.Z/2); maxZ=math.max(maxZ,pos.Z+sz.Z/2)
+        end
+        local center=Vector3.new((minX+maxX)/2,(minY+maxY)/2,(minZ+maxZ)/2)
+        local size=Vector3.new(maxX-minX,maxY-minY,maxZ-minZ)
+        local maxDim=math.max(size.X,size.Y,size.Z,0.1)
+        local dist=maxDim*1.8
+        cam.CFrame=CFrame.new(center+Vector3.new(dist*0.5,dist*0.4,dist),center)
+        ok=true
     end)
     return ok
 end
 
--- Beste Welt für ein Material finden
-local function FindBestWorld(matName)
-    -- 1: RewardDB aus autofarm
-    local db = _G.HazeShared._AutoFarm_RewardDB
-    if db then
-        local bestChap, bestWorld, bestMode, bestRate = nil, nil, nil, -1
-        for chapId, data in pairs(db) do
-            if data.items and data.items[matName] then
-                local r = data.items[matName].dropRate or 0
-                if r > bestRate then bestRate=r; bestChap=data.chapId or chapId; bestWorld=data.world; bestMode=data.mode end
+-- ── Helper ───────────────────────────────────────────────────
+local function FmtNum(n)
+    n=math.floor(tonumber(n) or 0); local s=tostring(n); local r=""; local c=0
+    for i=#s,1,-1 do c=c+1; r=s:sub(i,i)..r; if c%3==0 and i>1 then r=","..r end end
+    return r
+end
+
+local function GetItemAmt(name)
+    local n=0
+    pcall(function()
+        local f=RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Items",3)
+        local it=f:FindFirstChild(name); if not it then return end
+        local vc=it:FindFirstChild("Amount") or it:FindFirstChild("Value")
+        if vc then n=tonumber(vc.Value) or 0
+        elseif it:IsA("IntValue") or it:IsA("NumberValue") then n=tonumber(it.Value) or 0 end
+    end)
+    return n
+end
+
+local function GetGold()
+    local n=0; pcall(function() n=tonumber(RS.Player_Data[LP.Name].Data.Gold.Value) or 0 end); return n
+end
+
+-- ★ ShopItems-Check: Ist dieses Item im Shop kaufbar?
+-- Gibt zurück: purchasable (bool), cost (number), shopName (string)
+local function GetShopInfo(itemName)
+    if not ShopItemsData then return false,0,"" end
+    -- ShopItems ist normalerweise eine Tabelle: {ItemName = {Cost=N, ShopType="..."}}
+    local info=nil
+    pcall(function()
+        if type(ShopItemsData)=="table" then
+            info=ShopItemsData[itemName]
+            -- Manchmal verschachtelt
+            if not info then
+                for _,shopCat in pairs(ShopItemsData) do
+                    if type(shopCat)=="table" and shopCat[itemName] then info=shopCat[itemName]; break end
+                end
             end
         end
-        if bestChap then return bestChap, bestWorld, bestMode end
+    end)
+    if not info then return false,0,"" end
+    local cost=tonumber(info.Cost) or tonumber(info.Price) or tonumber(info.CurrencyAmount) or 0
+    local shopType=tostring(info.ShopType or info.Shop or "Shop")
+    return true,cost,shopType
+end
+
+-- ★ Auto-Buy: kaufe Item via Remote
+local function AutoBuyItem(itemName,qty,shopType)
+    qty=qty or 1
+    local ok,err=pcall(function()
+        -- Versuche bekannte Remotes
+        local r=nil
+        local shopMap={
+            GhoulHunt = function() r=RS.Remote.Server.GhoulHuntExchange end,
+            Merchant  = function() r=RS.Remote.Server.Merchant end,
+        }
+        if shopMap[shopType] then pcall(shopMap[shopType]) end
+        if not r then
+            -- Generischer Fallback: FireServer mit Name+Qty
+            pcall(function() r=RS:FindFirstChild("Remote",true) and RS.Remote.Server[shopType] end)
+        end
+        if r then r:FireServer(itemName,qty)
+        else warn("[HazeHub-Craft] Kein Remote für Shop: "..shopType) end
+    end)
+    return ok
+end
+
+local function AllMatsMet(recipeName,amount)
+    amount=amount or 1
+    if not CraftingRecipes or not CraftingRecipes[recipeName] then return false end
+    local recipe=CraftingRecipes[recipeName]; if not recipe.Requirement then return false end
+    for mat,amt in pairs(recipe.Requirement) do
+        if GetItemAmt(mat)<(amt*amount) then return false end
     end
-    -- 2: WorldCache Fallback – ersten verfügbaren Chapter nehmen
-    local wData = HS.GetWorldData and HS.GetWorldData()
-    local wIds  = HS.GetWorldIds  and HS.GetWorldIds()
-    if wData and wIds then
-        for _, wid in ipairs(wIds) do
-            local wd = wData[wid] or {}
-            if wd.story and #wd.story > 0 then return wd.story[1], wid, "Story" end
+    return true
+end
+
+-- ★ Prüft ob alles bereit ist (inkl. kaufbarer Items die man sich leisten kann)
+local function AllReady(recipeName,amount)
+    amount=amount or 1
+    if not CraftingRecipes or not CraftingRecipes[recipeName] then return false end
+    local recipe=CraftingRecipes[recipeName]; if not recipe.Requirement then return false end
+    local gold=GetGold()
+    local totalCost=0
+    for mat,amt in pairs(recipe.Requirement) do
+        local need=amt*amount; local have=GetItemAmt(mat)
+        if have<need then
+            local purchasable,cost,_=GetShopInfo(mat)
+            if purchasable then
+                totalCost=totalCost+cost*(need-have)
+            else return false end
         end
     end
-    return nil, nil, nil
+    return gold>=totalCost
+end
+
+-- Beste Welt für Material finden
+local function FindBestWorld(matName)
+    local db=_G.HazeShared._AutoFarm_RewardDB
+    if db then
+        local bestChap,bestWorld,bestMode,bestRate=nil,nil,nil,-1
+        for chapId,data in pairs(db) do
+            if data.items and data.items[matName] then
+                local r=data.items[matName].dropRate or 0
+                if r>bestRate then bestRate=r; bestChap=data.chapId or chapId; bestWorld=data.world; bestMode=data.mode end
+            end
+        end
+        if bestChap then return bestChap,bestWorld,bestMode end
+    end
+    local wData=HS.GetWorldData and HS.GetWorldData(); local wIds=HS.GetWorldIds and HS.GetWorldIds()
+    if wData and wIds then
+        for _,wid in ipairs(wIds) do
+            local wd=wData[wid] or {}
+            if wd.story and #wd.story>0 then return wd.story[1],wid,"Story" end
+        end
+    end
+    return nil,nil,nil
 end
 
 -- ── State ─────────────────────────────────────────────────────
-local Craft = {
-    CraftAmt   = 1,
-    Queue      = {},   -- { matName, needed, chapId, worldId, mode }
-    Collecting = false,
-    UI         = { Lbl={}, Fr={}, Btn={}, Inp={} },
-}
-_G.HazeShared.CraftModule = Craft
+local Craft={ CraftAmt=1, Queue={}, Collecting=false, UI={Lbl={},Fr={},Btn={},Inp={}} }
+_G.HazeShared.CraftModule=Craft
 
--- ── Placeholder entfernen ─────────────────────────────────────
+-- ★ FIX: Placeholder-Labels entfernen die "geladen" oder "Craft-Modul wird" enthalten
 pcall(function()
-    for _, v in pairs(CraftPage:GetChildren()) do
-        if v:IsA("TextLabel") and v.Text:find("geladen") then v:Destroy() end
+    for _,v in pairs(CraftPage:GetChildren()) do
+        if v:IsA("TextLabel") and (v.Text:find("geladen") or v.Text:find("Craft%-Modul wird")) then v:Destroy() end
     end
 end)
 
 -- ── UI aufbauen ───────────────────────────────────────────────
-MkLbl(CraftPage, "🔨  Crafting", 14, D.Cyan, true)
-MkLbl(CraftPage, "Craft-Modul v"..VERSION.." | "..LP.Name, 9, D.TextLow).Size = UDim2.new(1,0,0,13)
+-- ★ FIX: Nur EIN Header-Label hier (kein Doppel-Header)
+MkLbl(CraftPage,"🔨  Crafting",14,D.Cyan,true)
+MkLbl(CraftPage,"Craft-Modul v"..VERSION.." | "..LP.Name,9,D.TextLow).Size=UDim2.new(1,0,0,13)
 
--- Status
-local statusCard = Card(CraftPage,28); Pad(statusCard,4,10,4,10)
-Craft.UI.Lbl.Status = Instance.new("TextLabel",statusCard)
+local statusCard=Card(CraftPage,28); Pad(statusCard,4,10,4,10)
+Craft.UI.Lbl.Status=Instance.new("TextLabel",statusCard)
 Craft.UI.Lbl.Status.Size=UDim2.new(1,0,1,0); Craft.UI.Lbl.Status.BackgroundTransparency=1
 Craft.UI.Lbl.Status.Text="⏳ Lade Rezepte..."; Craft.UI.Lbl.Status.TextColor3=D.Yellow
 Craft.UI.Lbl.Status.TextSize=11; Craft.UI.Lbl.Status.Font=Enum.Font.GothamSemibold
 Craft.UI.Lbl.Status.TextXAlignment=Enum.TextXAlignment.Left
 
-local function SetStatus(txt,col)
-    pcall(function() Craft.UI.Lbl.Status.Text=txt; Craft.UI.Lbl.Status.TextColor3=col or D.TextMid end)
-end
+local function SetStatus(txt,col) pcall(function() Craft.UI.Lbl.Status.Text=txt; Craft.UI.Lbl.Status.TextColor3=col or D.TextMid end) end
 
 -- Suchleiste
 local searchCard=Card(CraftPage); Pad(searchCard,8,10,8,10); VList(searchCard,6); SecLbl(searchCard,"🔍  REZEPT SUCHEN")
@@ -173,34 +261,24 @@ amtBox:GetPropertyChangedSignal("Text"):Connect(function()
     task.spawn(function() pcall(RebuildCraftList) end)
 end)
 
--- Rezept-Liste
+-- Rezept-Liste Container
 SecLbl(CraftPage,"📜  VERFÜGBARE REZEPTE")
 Craft.UI.Fr.RecipeList=Instance.new("Frame",CraftPage); Craft.UI.Fr.RecipeList.Size=UDim2.new(1,0,0,0); Craft.UI.Fr.RecipeList.AutomaticSize=Enum.AutomaticSize.Y; Craft.UI.Fr.RecipeList.BackgroundTransparency=1; VList(Craft.UI.Fr.RecipeList,6)
 Craft.UI.Lbl.NoRecipes=MkLbl(Craft.UI.Fr.RecipeList,"Keine Rezepte gefunden.",12,D.TextLow); Craft.UI.Lbl.NoRecipes.Size=UDim2.new(1,0,0,30); Craft.UI.Lbl.NoRecipes.TextXAlignment=Enum.TextXAlignment.Center
 
--- Auto-Collector
+-- Auto-Collector Queue
 local collCard=Card(CraftPage); Pad(collCard,10,10,10,10); VList(collCard,8); Stroke(collCard,D.Purple,1.5,0.3)
 SecLbl(collCard,"🤖  AUTO-COLLECTOR QUEUE")
 Craft.UI.Lbl.CollStatus=MkLbl(collCard,"Queue leer.",10,D.TextLow); Craft.UI.Lbl.CollStatus.Size=UDim2.new(1,0,0,16)
-
 local collBarBg=Instance.new("Frame",collCard); collBarBg.Size=UDim2.new(1,0,0,6); collBarBg.BackgroundColor3=Color3.fromRGB(18,26,48); collBarBg.BorderSizePixel=0; collBarBg.Visible=false; Corner(collBarBg,3); Craft.UI.Fr.CollBarBg=collBarBg
 local collBarFill=Instance.new("Frame",collBarBg); collBarFill.Size=UDim2.new(0,0,1,0); collBarFill.BackgroundColor3=D.Purple; collBarFill.BorderSizePixel=0; Corner(collBarFill,3); Craft.UI.Fr.CollBarFill=collBarFill
-
 Craft.UI.Fr.CollQueue=Instance.new("Frame",collCard); Craft.UI.Fr.CollQueue.Size=UDim2.new(1,0,0,0); Craft.UI.Fr.CollQueue.AutomaticSize=Enum.AutomaticSize.Y; Craft.UI.Fr.CollQueue.BackgroundTransparency=1; VList(Craft.UI.Fr.CollQueue,4)
-
 local collCtrlRow=Instance.new("Frame",collCard); collCtrlRow.Size=UDim2.new(1,0,0,34); collCtrlRow.BackgroundTransparency=1; HList(collCtrlRow,8)
-
-Craft.UI.Btn.Start=Instance.new("TextButton",collCtrlRow)
-Craft.UI.Btn.Start.Size=UDim2.new(0.62,0,0,34); Craft.UI.Btn.Start.BackgroundColor3=Color3.fromRGB(40,10,80)
-Craft.UI.Btn.Start.Text="🤖  Start Auto-Farm"; Craft.UI.Btn.Start.TextColor3=D.Purple
-Craft.UI.Btn.Start.TextSize=11; Craft.UI.Btn.Start.Font=Enum.Font.GothamBold
-Craft.UI.Btn.Start.AutoButtonColor=false; Craft.UI.Btn.Start.BorderSizePixel=0; Corner(Craft.UI.Btn.Start,8); Stroke(Craft.UI.Btn.Start,D.Purple,1.5,0.2)
+Craft.UI.Btn.Start=Instance.new("TextButton",collCtrlRow); Craft.UI.Btn.Start.Size=UDim2.new(0.62,0,0,34); Craft.UI.Btn.Start.BackgroundColor3=Color3.fromRGB(40,10,80); Craft.UI.Btn.Start.Text="🤖  Start Auto-Farm"; Craft.UI.Btn.Start.TextColor3=D.Purple; Craft.UI.Btn.Start.TextSize=11; Craft.UI.Btn.Start.Font=Enum.Font.GothamBold; Craft.UI.Btn.Start.AutoButtonColor=false; Craft.UI.Btn.Start.BorderSizePixel=0; Corner(Craft.UI.Btn.Start,8); Stroke(Craft.UI.Btn.Start,D.Purple,1.5,0.2)
 Craft.UI.Btn.Start.MouseEnter:Connect(function() Tw(Craft.UI.Btn.Start,{BackgroundColor3=Color3.fromRGB(65,18,120)}) end)
 Craft.UI.Btn.Start.MouseLeave:Connect(function() Tw(Craft.UI.Btn.Start,{BackgroundColor3=Color3.fromRGB(40,10,80)}) end)
-
 local collStopBtn=Instance.new("TextButton",collCtrlRow); collStopBtn.Size=UDim2.new(0.34,0,0,34); collStopBtn.BackgroundColor3=D.RedDark; collStopBtn.Text="⏹ Stop"; collStopBtn.TextColor3=D.Red; collStopBtn.TextSize=11; collStopBtn.Font=Enum.Font.GothamBold; collStopBtn.AutoButtonColor=false; collStopBtn.BorderSizePixel=0; Corner(collStopBtn,8); Stroke(collStopBtn,D.Red,1,0.4)
 collStopBtn.MouseEnter:Connect(function() Tw(collStopBtn,{BackgroundColor3=D.Red}) end); collStopBtn.MouseLeave:Connect(function() Tw(collStopBtn,{BackgroundColor3=D.RedDark}) end)
-
 local collClearBtn=NeonBtn(collCard,"🗑  Queue leeren",D.Red,26)
 
 -- ── Queue-UI ──────────────────────────────────────────────────
@@ -218,7 +296,9 @@ local function UpdateQueueUI()
         local pL=Instance.new("TextLabel",row); pL.Position=UDim2.new(0,10,0,21); pL.Size=UDim2.new(0.6,-10,0,14); pL.BackgroundTransparency=1
         if done then pL.Text=string.format("✅ %d / %d",cur,needed); pL.TextColor3=D.GreenBright else pL.Text=string.format("%d / %d  (%.0f%%)",cur,needed,pct*100); pL.TextColor3=D.TextLow end
         pL.TextSize=10; pL.Font=Enum.Font.GothamSemibold; pL.TextXAlignment=Enum.TextXAlignment.Left
-        if entry.chapId then local wLbl=Instance.new("TextLabel",row); wLbl.Position=UDim2.new(0.6,2,0,4); wLbl.Size=UDim2.new(0.32,-6,0,30); wLbl.BackgroundTransparency=1; wLbl.Text=string.format("[%s]\n%s",entry.mode or "?",entry.chapId or "?"); wLbl.TextColor3=D.TextLow; wLbl.TextSize=8; wLbl.Font=Enum.Font.Gotham; wLbl.TextXAlignment=Enum.TextXAlignment.Right; wLbl.TextWrapped=true end
+        -- Shopkäuflich-Badge
+        if entry.shopType then local sLbl=Instance.new("TextLabel",row); sLbl.Position=UDim2.new(0.6,2,0,4); sLbl.Size=UDim2.new(0.32,-6,0,14); sLbl.BackgroundTransparency=1; sLbl.Text="🛒 "..entry.shopType; sLbl.TextColor3=D.Gold; sLbl.TextSize=8; sLbl.Font=Enum.Font.GothamSemibold; sLbl.TextXAlignment=Enum.TextXAlignment.Right
+        elseif entry.chapId then local wLbl=Instance.new("TextLabel",row); wLbl.Position=UDim2.new(0.6,2,0,4); wLbl.Size=UDim2.new(0.32,-6,0,30); wLbl.BackgroundTransparency=1; wLbl.Text=string.format("[%s]\n%s",entry.mode or "?",entry.chapId or "?"); wLbl.TextColor3=D.TextLow; wLbl.TextSize=8; wLbl.Font=Enum.Font.Gotham; wLbl.TextXAlignment=Enum.TextXAlignment.Right; wLbl.TextWrapped=true end
         local pgBg=Instance.new("Frame",row); pgBg.Size=UDim2.new(1,-14,0,3); pgBg.Position=UDim2.new(0,10,1,-5); pgBg.BackgroundColor3=Color3.fromRGB(20,28,50); pgBg.BorderSizePixel=0; Corner(pgBg,2)
         local pgF=Instance.new("Frame",pgBg); pgF.Size=UDim2.new(pct,0,1,0); pgF.BackgroundColor3=done and D.GreenBright or D.Purple; pgF.BorderSizePixel=0; Corner(pgF,2)
         local ci=i; local xBtn=Instance.new("TextButton",row); xBtn.Size=UDim2.new(0,28,0,28); xBtn.Position=UDim2.new(1,-32,0.5,-14); xBtn.BackgroundColor3=Color3.fromRGB(50,12,12); xBtn.Text="✕"; xBtn.TextColor3=D.Red; xBtn.TextSize=11; xBtn.Font=Enum.Font.GothamBold; xBtn.AutoButtonColor=false; xBtn.BorderSizePixel=0; Corner(xBtn,6); Stroke(xBtn,D.Red,1,0.4)
@@ -227,103 +307,162 @@ local function UpdateQueueUI()
     end
 end
 
--- ── Rezept-Karte aufbauen ─────────────────────────────────────
-local function BuildRecipeCard(parent, itemName, recipeData, craftAmt)
-    craftAmt = craftAmt or 1
-    local allMet = true
-    local matLines = {}
+-- ── Rezept-Karte ──────────────────────────────────────────────
+local function BuildRecipeCard(parent,itemName,recipeData,craftAmt)
+    craftAmt=craftAmt or 1
+    local allMet=true; local anyShop=false; local matLines={}
     if recipeData.Requirement then
-        for mat, amt in pairs(recipeData.Requirement) do
+        for mat,amt in pairs(recipeData.Requirement) do
             local have=GetItemAmt(mat); local need=amt*craftAmt; local met=have>=need
-            if not met then allMet=false end
-            table.insert(matLines,{name=mat,have=have,need=need,met=met})
+            local purchasable,shopCost,shopType=GetShopInfo(mat)
+            local shopMet=false
+            if not met and purchasable then
+                -- Kaufbar – zählt als "bereit" wenn genug Gold
+                local goldNeeded=shopCost*(need-have)
+                shopMet=(GetGold()>=goldNeeded)
+                if shopMet then anyShop=true end
+            end
+            if not met and not shopMet then allMet=false end
+            table.insert(matLines,{name=mat,have=have,need=need,met=met,purchasable=purchasable,shopCost=shopCost,shopType=shopType,shopMet=shopMet})
         end
-        table.sort(matLines,function(a,b) if a.met~=b.met then return not a.met end; return a.name<b.name end)
+        table.sort(matLines,function(a,b)
+            if a.met~=b.met then return not a.met end
+            if a.shopMet~=b.shopMet then return not a.shopMet end
+            return a.name<b.name
+        end)
     end
 
-    -- Karte
     local card=Instance.new("Frame",parent); card.Size=UDim2.new(1,0,0,0); card.AutomaticSize=Enum.AutomaticSize.Y; card.BorderSizePixel=0; Corner(card,9)
-    if allMet then card.BackgroundColor3=Color3.fromRGB(0,28,16); Stroke(card,D.GreenBright,1.5,0.1)
+    if allMet and anyShop then card.BackgroundColor3=Color3.fromRGB(0,35,18); Stroke(card,D.Gold,1.5,0.1)
+    elseif allMet then card.BackgroundColor3=Color3.fromRGB(0,28,16); Stroke(card,D.GreenBright,1.5,0.1)
     else card.BackgroundColor3=D.Card; Stroke(card,D.Border,1,0.3) end
 
     local inner=Instance.new("Frame",card); inner.Size=UDim2.new(1,0,0,0); inner.AutomaticSize=Enum.AutomaticSize.Y; inner.BackgroundTransparency=1; Pad(inner,8,10,8,10); VList(inner,6)
 
-    -- Header: Viewport + Name
+    -- Header: ViewportFrame + Name
     local headerRow=Instance.new("Frame",inner); headerRow.Size=UDim2.new(1,0,0,56); headerRow.BackgroundTransparency=1
 
-    local vp=Instance.new("ViewportFrame",headerRow); vp.Size=UDim2.new(0,52,0,52); vp.Position=UDim2.new(0,0,0,0); vp.BackgroundColor3=Color3.fromRGB(12,18,36); vp.BorderSizePixel=0; vp.ImageColor3=Color3.new(1,1,1); Corner(vp,7); Stroke(vp,allMet and D.GreenBright or D.Border,1,allMet and 0.2 or 0.5)
+    -- ★ ViewportFrame aus RS.Assets.ItemModels.Models
+    local vp=Instance.new("ViewportFrame",headerRow); vp.Size=UDim2.new(0,52,0,52); vp.Position=UDim2.new(0,0,0,0); vp.BackgroundColor3=Color3.fromRGB(12,18,36); vp.BorderSizePixel=0; vp.ImageColor3=Color3.new(1,1,1); Corner(vp,7)
+    if allMet then Stroke(vp,D.GreenBright,1,0.2) else Stroke(vp,D.Border,1,0.5) end
     task.spawn(function()
-        local ok=LoadViewport(vp,itemName)
+        local ok=LoadItemViewport(vp,itemName)
         if not ok then
             local fb=Instance.new("TextLabel",vp); fb.Size=UDim2.new(1,0,1,0); fb.BackgroundTransparency=1; fb.Text=itemName:sub(1,1):upper(); fb.TextColor3=D.TextMid; fb.TextSize=18; fb.Font=Enum.Font.GothamBold; fb.TextXAlignment=Enum.TextXAlignment.Center; fb.TextYAlignment=Enum.TextYAlignment.Center
         end
     end)
 
-    local nameLbl=Instance.new("TextLabel",headerRow); nameLbl.Position=UDim2.new(0,60,0,2); nameLbl.Size=UDim2.new(1,-120,0,20); nameLbl.BackgroundTransparency=1; nameLbl.Text=itemName; nameLbl.TextColor3=allMet and D.GreenBright or D.TextHi; nameLbl.TextSize=12; nameLbl.Font=Enum.Font.GothamBold; nameLbl.TextXAlignment=Enum.TextXAlignment.Left; nameLbl.TextTruncate=Enum.TextTruncate.AtEnd
+    local nameLbl=Instance.new("TextLabel",headerRow); nameLbl.Position=UDim2.new(0,60,0,2); nameLbl.Size=UDim2.new(1,-120,0,20); nameLbl.BackgroundTransparency=1; nameLbl.Text=itemName
+    if allMet and anyShop then nameLbl.TextColor3=D.Gold
+    elseif allMet then nameLbl.TextColor3=D.GreenBright
+    else nameLbl.TextColor3=D.TextHi end
+    nameLbl.TextSize=12; nameLbl.Font=Enum.Font.GothamBold; nameLbl.TextXAlignment=Enum.TextXAlignment.Left; nameLbl.TextTruncate=Enum.TextTruncate.AtEnd
+
     if recipeData.Cost then local costLbl=Instance.new("TextLabel",headerRow); costLbl.Position=UDim2.new(0,60,0,22); costLbl.Size=UDim2.new(1,-120,0,14); costLbl.BackgroundTransparency=1; costLbl.Text="💰 "..FmtNum(recipeData.Cost*craftAmt).." Gold"; costLbl.TextColor3=D.Gold; costLbl.TextSize=10; costLbl.Font=Enum.Font.GothamSemibold; costLbl.TextXAlignment=Enum.TextXAlignment.Left end
+
     local badgeLbl=Instance.new("TextLabel",headerRow); badgeLbl.Position=UDim2.new(1,-60,0,0); badgeLbl.Size=UDim2.new(0,56,0,20); badgeLbl.BackgroundTransparency=1
-    if allMet then badgeLbl.Text="✅ Bereit"; badgeLbl.TextColor3=D.GreenBright else local mc=0; for _,ml in ipairs(matLines) do if ml.met then mc=mc+1 end end; badgeLbl.Text=string.format("%d/%d",mc,#matLines); badgeLbl.TextColor3=D.Orange end
+    if allMet and anyShop then badgeLbl.Text="🛒 Kaufen"; badgeLbl.TextColor3=D.Gold
+    elseif allMet then badgeLbl.Text="✅ Bereit"; badgeLbl.TextColor3=D.GreenBright
+    else local mc=0; for _,ml in ipairs(matLines) do if ml.met or ml.shopMet then mc=mc+1 end end; badgeLbl.Text=string.format("%d/%d",mc,#matLines); badgeLbl.TextColor3=D.Orange end
     badgeLbl.TextSize=10; badgeLbl.Font=Enum.Font.GothamBold; badgeLbl.TextXAlignment=Enum.TextXAlignment.Right
 
     -- Material-Zeilen  Format: "14 / 20  Erde"
-    if #matLines > 0 then
+    if #matLines>0 then
         local matSep=Instance.new("Frame",inner); matSep.Size=UDim2.new(1,0,0,1); matSep.BackgroundColor3=D.Border; matSep.BackgroundTransparency=0.4; matSep.BorderSizePixel=0
         local matHolder=Instance.new("Frame",inner); matHolder.Size=UDim2.new(1,0,0,0); matHolder.AutomaticSize=Enum.AutomaticSize.Y; matHolder.BackgroundTransparency=1; VList(matHolder,3)
         for _,ml in ipairs(matLines) do
             local mr=Instance.new("Frame",matHolder); mr.Size=UDim2.new(1,0,0,22); mr.BackgroundTransparency=1
-            local dot=Instance.new("Frame",mr); dot.Size=UDim2.new(0,8,0,8); dot.Position=UDim2.new(0,0,0.5,-4); dot.BackgroundColor3=ml.met and D.Green or D.Red; dot.BorderSizePixel=0; Corner(dot,99)
-            local mLbl=Instance.new("TextLabel",mr); mLbl.Position=UDim2.new(0,14,0,0); mLbl.Size=UDim2.new(0.65,-14,1,0); mLbl.BackgroundTransparency=1
-            mLbl.Text=string.format("%d / %d  %s",ml.have,ml.need,ml.name)   -- Format: "14/20 Erde"
-            mLbl.TextColor3=ml.met and D.Green or D.TextMid; mLbl.TextSize=10; mLbl.Font=Enum.Font.GothamSemibold; mLbl.TextXAlignment=Enum.TextXAlignment.Left; mLbl.TextTruncate=Enum.TextTruncate.AtEnd
-            local pct=math.min(1,ml.have/math.max(1,ml.need))
-            local pgBg=Instance.new("Frame",mr); pgBg.Size=UDim2.new(0.33,0,0,4); pgBg.Position=UDim2.new(0.66,0,0.5,-2); pgBg.BackgroundColor3=Color3.fromRGB(20,28,50); pgBg.BorderSizePixel=0; Corner(pgBg,2)
-            local pgF=Instance.new("Frame",pgBg); pgF.Size=UDim2.new(pct,0,1,0); pgF.BackgroundColor3=ml.met and D.Green or D.Red; pgF.BorderSizePixel=0; Corner(pgF,2)
+            local dotColor; if ml.met then dotColor=D.Green elseif ml.shopMet then dotColor=D.Gold else dotColor=D.Red end
+            local dot=Instance.new("Frame",mr); dot.Size=UDim2.new(0,8,0,8); dot.Position=UDim2.new(0,0,0.5,-4); dot.BackgroundColor3=dotColor; dot.BorderSizePixel=0; Corner(dot,99)
+            local mLbl=Instance.new("TextLabel",mr); mLbl.Position=UDim2.new(0,14,0,0); mLbl.Size=UDim2.new(0.60,-14,1,0); mLbl.BackgroundTransparency=1
+            -- ★ Format: "14 / 20  Erde"
+            mLbl.Text=string.format("%d / %d  %s",ml.have,ml.need,ml.name)
+            if ml.met then mLbl.TextColor3=D.Green elseif ml.shopMet then mLbl.TextColor3=D.Gold else mLbl.TextColor3=D.TextMid end
+            mLbl.TextSize=10; mLbl.Font=Enum.Font.GothamSemibold; mLbl.TextXAlignment=Enum.TextXAlignment.Left; mLbl.TextTruncate=Enum.TextTruncate.AtEnd
+            -- Shop-Badge rechts
+            if ml.purchasable and not ml.met then
+                local sbL=Instance.new("TextLabel",mr); sbL.Position=UDim2.new(0.62,0,0,0); sbL.Size=UDim2.new(0.38,0,1,0); sbL.BackgroundTransparency=1
+                sbL.Text="🛒 "..FmtNum(ml.shopCost); sbL.TextColor3=ml.shopMet and D.Gold or D.Orange; sbL.TextSize=9; sbL.Font=Enum.Font.GothamSemibold; sbL.TextXAlignment=Enum.TextXAlignment.Right
+            else
+                local pct=math.min(1,ml.have/math.max(1,ml.need))
+                local pgBg=Instance.new("Frame",mr); pgBg.Size=UDim2.new(0.35,0,0,4); pgBg.Position=UDim2.new(0.63,0,0.5,-2); pgBg.BackgroundColor3=Color3.fromRGB(20,28,50); pgBg.BorderSizePixel=0; Corner(pgBg,2)
+                local pgF=Instance.new("Frame",pgBg); pgF.Size=UDim2.new(pct,0,1,0); pgF.BackgroundColor3=ml.met and D.Green or D.Red; pgF.BorderSizePixel=0; Corner(pgF,2)
+            end
         end
     end
 
     -- Buttons
     local btnRow=Instance.new("Frame",inner); btnRow.Size=UDim2.new(1,0,0,34); btnRow.BackgroundTransparency=1; HList(btnRow,8)
+    local capName=itemName; local capAmt=craftAmt
 
     -- Craft-Button
     local craftBtn=Instance.new("TextButton",btnRow)
-    craftBtn.Size=UDim2.new(allMet and 1 or 0.48,0,0,34); craftBtn.Font=Enum.Font.GothamBold; craftBtn.TextSize=11; craftBtn.AutoButtonColor=false; craftBtn.BorderSizePixel=0; Corner(craftBtn,8)
+    local btnW=allMet and 1 or 0.48
+    craftBtn.Size=UDim2.new(btnW,0,0,34); craftBtn.Font=Enum.Font.GothamBold; craftBtn.TextSize=11; craftBtn.AutoButtonColor=false; craftBtn.BorderSizePixel=0; Corner(craftBtn,8)
     if allMet then
-        craftBtn.BackgroundColor3=D.GreenDark; craftBtn.Text="⚒  Jetzt Craften!"; craftBtn.TextColor3=D.GreenBright; Stroke(craftBtn,D.GreenBright,1.5,0)
-        craftBtn.MouseEnter:Connect(function() Tw(craftBtn,{BackgroundColor3=Color3.fromRGB(0,80,40)}) end); craftBtn.MouseLeave:Connect(function() Tw(craftBtn,{BackgroundColor3=D.GreenDark}) end)
+        local btnColor=anyShop and Color3.fromRGB(0,35,10) or D.GreenDark
+        local txtColor=anyShop and D.Gold or D.GreenBright
+        craftBtn.BackgroundColor3=btnColor; craftBtn.Text="⚒  Jetzt Craften!"; craftBtn.TextColor3=txtColor; Stroke(craftBtn,txtColor,1.5,0)
+        craftBtn.MouseEnter:Connect(function() Tw(craftBtn,{BackgroundColor3=anyShop and Color3.fromRGB(0,55,15) or Color3.fromRGB(0,80,40)}) end); craftBtn.MouseLeave:Connect(function() Tw(craftBtn,{BackgroundColor3=btnColor}) end)
     else
         craftBtn.BackgroundColor3=Color3.fromRGB(18,22,38); craftBtn.Text="⚒  Craften"; craftBtn.TextColor3=D.TextLow; Stroke(craftBtn,D.TextLow,1,0.6)
     end
 
-    local capName=itemName; local capAmt=craftAmt
     craftBtn.MouseButton1Click:Connect(function()
-        -- Nochmal prüfen (Inventar kann sich geändert haben)
-        if not AllMatsMet(capName,capAmt) then SetStatus("❌ Nicht alle Materialien vorhanden!",D.Red); task.delay(2,function() pcall(function() SetStatus("Bereit.",D.TextMid) end) end); return end
-        -- Remote feuern
+        -- ★ Auto-Buy vor dem Craften: kaufe alle fehlenden shopbaren Items
+        for _,ml in ipairs(matLines) do
+            if not ml.met and ml.purchasable then
+                local missing=ml.need-ml.have
+                if missing>0 then
+                    SetStatus(string.format("🛒 Kaufe %d × %s...",missing,ml.name),D.Gold)
+                    AutoBuyItem(ml.name,missing,ml.shopType)
+                    task.wait(0.5)
+                end
+            end
+        end
+        -- Nochmal prüfen
+        if not AllMatsMet(capName,capAmt) and not AllReady(capName,capAmt) then
+            SetStatus("❌ Nicht alle Materialien vorhanden!",D.Red); task.delay(2,function() pcall(function() SetStatus("Bereit.",D.TextMid) end) end); return
+        end
         pcall(function() RS.Remote.Server.Crafting.Event:FireServer(capName,"1","1") end)
         craftBtn.Text="⏳ Craftet..."; craftBtn.TextColor3=D.Yellow
         SetStatus("⚒ Crafting: "..capName.." × "..capAmt,D.Yellow)
-        task.delay(2.5,function() pcall(function() craftBtn.Text="⚒  Jetzt Craften!"; craftBtn.TextColor3=D.GreenBright; SetStatus("✅ Craft abgeschickt: "..capName,D.Green); task.spawn(function() pcall(RebuildCraftList) end) end) end)
+        task.delay(2.5,function() pcall(function()
+            craftBtn.Text="⚒  Jetzt Craften!"; craftBtn.TextColor3=allMet and D.GreenBright or D.TextLow
+            SetStatus("✅ Craft abgeschickt!",D.Green); task.spawn(function() pcall(RebuildCraftList) end)
+        end) end)
     end)
 
-    -- Sammeln-Button (nur wenn Mats fehlen)
+    -- ★ Sammeln-Button: nur für Items die NICHT kaufbar sind und fehlen
     if not allMet then
         local collectBtn=Instance.new("TextButton",btnRow); collectBtn.Size=UDim2.new(0.48,0,0,34); collectBtn.BackgroundColor3=Color3.fromRGB(30,10,60); collectBtn.Text="🤖 Sammeln"; collectBtn.TextColor3=D.Purple; collectBtn.TextSize=11; collectBtn.Font=Enum.Font.GothamBold; collectBtn.AutoButtonColor=false; collectBtn.BorderSizePixel=0; Corner(collectBtn,8); Stroke(collectBtn,D.Purple,1,0.3)
         collectBtn.MouseEnter:Connect(function() Tw(collectBtn,{BackgroundColor3=Color3.fromRGB(55,18,100)}) end); collectBtn.MouseLeave:Connect(function() Tw(collectBtn,{BackgroundColor3=Color3.fromRGB(30,10,60)}) end)
         collectBtn.MouseButton1Click:Connect(function()
-            local added=0
+            local added=0; local shopBought=0
             for _,ml in ipairs(matLines) do
                 if not ml.met then
-                    local already=false; for _,e in ipairs(Craft.Queue) do if e.matName==ml.name then already=true; if e.needed<ml.need then e.needed=ml.need end; break end end
-                    if not already then
-                        local chapId,worldId,mode=FindBestWorld(ml.name)
-                        table.insert(Craft.Queue,{matName=ml.name,needed=ml.need,chapId=chapId,worldId=worldId,mode=mode or "Story"})
-                        added=added+1
+                    if ml.purchasable then
+                        -- ★ Kaufbares Item → sofort kaufen
+                        local missing=ml.need-ml.have
+                        SetStatus(string.format("🛒 Kaufe %d × %s...",missing,ml.name),D.Gold)
+                        AutoBuyItem(ml.name,missing,ml.shopType); shopBought=shopBought+1; task.wait(0.3)
+                    else
+                        -- Nicht kaufbar → in Farm-Queue
+                        local already=false; for _,e in ipairs(Craft.Queue) do if e.matName==ml.name then already=true; if e.needed<ml.need then e.needed=ml.need end; break end end
+                        if not already then
+                            local chapId,worldId,mode=FindBestWorld(ml.name)
+                            table.insert(Craft.Queue,{matName=ml.name,needed=ml.need,chapId=chapId,worldId=worldId,mode=mode or "Story"})
+                            added=added+1
+                        end
                     end
                 end
             end
             UpdateQueueUI()
-            if added>0 then SetStatus(string.format("➕ %d Material%s zur Queue",added,added==1 and "" or "ien"),D.Purple)
-            else SetStatus("ℹ Bereits alle in Queue.",D.Yellow) end
+            local parts={}
+            if shopBought>0 then table.insert(parts,"🛒 "..shopBought.." gekauft") end
+            if added>0 then table.insert(parts,"🤖 "..added.." in Queue") end
+            if #parts>0 then SetStatus(table.concat(parts,"  |  "),D.Purple)
+            else SetStatus("ℹ Alles erledigt.",D.Yellow) end
             Tw(card,{BackgroundColor3=Color3.fromRGB(35,10,65)},TM); task.delay(0.4,function() Tw(card,{BackgroundColor3=allMet and Color3.fromRGB(0,28,16) or D.Card},TM) end)
         end)
     end
@@ -342,17 +481,21 @@ function RebuildCraftList()
             if filter=="" or itemName:lower():find(filter,1,true) then table.insert(recipes,{name=itemName,data=data}) end
         end
     end
-    table.sort(recipes,function(a,b) local aOk=AllMatsMet(a.name,craftAmt); local bOk=AllMatsMet(b.name,craftAmt); if aOk~=bOk then return aOk end; return a.name:lower()<b.name:lower() end)
+    table.sort(recipes,function(a,b)
+        local aOk=AllReady(a.name,craftAmt); local bOk=AllReady(b.name,craftAmt)
+        if aOk~=bOk then return aOk end; return a.name:lower()<b.name:lower()
+    end)
     if #recipes==0 then
-        Craft.UI.Lbl.NoRecipes.Visible=true; Craft.UI.Lbl.NoRecipes.Text=filter~="" and ("Kein Rezept für '"..filter.."'") or "Keine Rezepte."; SetStatus("0 Rezepte",D.TextLow); return
+        Craft.UI.Lbl.NoRecipes.Visible=true; Craft.UI.Lbl.NoRecipes.Text=filter~="" and ("Kein Rezept für '"..filter.."'") or "Keine Rezepte."
+        SetStatus("0 Rezepte",D.TextLow); return
     end
     Craft.UI.Lbl.NoRecipes.Visible=false; local craftable=0
     for _,r in ipairs(recipes) do
-        if AllMatsMet(r.name,craftAmt) then craftable=craftable+1 end
+        if AllReady(r.name,craftAmt) then craftable=craftable+1 end
         BuildRecipeCard(Craft.UI.Fr.RecipeList,r.name,r.data,craftAmt)
         task.wait()
     end
-    SetStatus(string.format("✅ %d Rezept%s | %d craftbar",#recipes,#recipes==1 and "" or "e",craftable),craftable>0 and D.Green or D.TextMid)
+    SetStatus(string.format("✅ %d Rezept%s | %d bereit",#recipes,#recipes==1 and "" or "e",craftable),craftable>0 and D.Green or D.TextMid)
 end
 
 -- ── Auto-Collector ────────────────────────────────────────────
@@ -366,22 +509,27 @@ local function RunCollector()
 
     task.spawn(function()
         while Craft.Collecting and #Craft.Queue>0 do
-            -- Erledigte Items entfernen
+            -- Erledigte Items und Shop-Items abarbeiten
             for i=#Craft.Queue,1,-1 do
-                if GetItemAmt(Craft.Queue[i].matName)>=Craft.Queue[i].needed then
-                    SetStatus(string.format("✅ '%s' fertig! Nächstes...",Craft.Queue[i].matName),D.Green)
-                    table.remove(Craft.Queue,i); pcall(UpdateQueueUI); task.wait(0.5)
+                local e=Craft.Queue[i]
+                -- ★ Shop-Items sofort kaufen
+                if e.shopType then
+                    local have=GetItemAmt(e.matName); local missing=e.needed-have
+                    if missing>0 then
+                        SetStatus(string.format("🛒 Kaufe %d × %s",missing,e.matName),D.Gold)
+                        AutoBuyItem(e.matName,missing,e.shopType); task.wait(1)
+                    end
                 end
+                if GetItemAmt(e.matName)>=e.needed then table.remove(Craft.Queue,i); pcall(UpdateQueueUI); task.wait(0.3) end
             end
             if #Craft.Queue==0 then break end
             local cur=Craft.Queue[1]; local have=GetItemAmt(cur.matName); local pct=math.min(1,have/math.max(1,cur.needed))
             pcall(function() Tw(Craft.UI.Fr.CollBarFill,{Size=UDim2.new(pct,0,1,0),BackgroundColor3=pct>=1 and D.Green or D.Purple},TF) end)
             SetStatus(string.format("🤖 '%s': %d/%d",cur.matName,have,cur.needed),D.Purple)
             if have>=cur.needed then task.wait(0.3); continue end
-
             if IsLobby() then
                 if not cur.chapId then SetStatus(string.format("⚠ Kein Chapter für '%s'",cur.matName),D.Orange); table.remove(Craft.Queue,1); pcall(UpdateQueueUI); task.wait(1); continue end
-                SetStatus(string.format("🚀 [%s] %s für '%s'",cur.mode or "Story",cur.chapId,cur.matName),D.Cyan)
+                SetStatus(string.format("🚀 [%s] %s",cur.mode or "Story",cur.chapId),D.Cyan)
                 pcall(function()
                     local m=cur.mode or "Story"
                     if m=="Story" then Fire("Create"); task.wait(0.4); Fire("Change-World",{World=cur.worldId}); task.wait(0.4); Fire("Change-Chapter",{Chapter=cur.chapId}); task.wait(2); Fire("Submit"); task.wait(0.5); Fire("Start")
@@ -392,8 +540,8 @@ local function RunCollector()
             else
                 local rw=0
                 while not IsLobby() and rw<360 and Craft.Collecting do
-                    task.wait(3); rw=rw+3; local nowHave=GetItemAmt(cur.matName); local nowPct=math.min(1,nowHave/math.max(1,cur.needed))
-                    pcall(function() Tw(Craft.UI.Fr.CollBarFill,{Size=UDim2.new(nowPct,0,1,0)},TF) end)
+                    task.wait(3); rw=rw+3; local nowHave=GetItemAmt(cur.matName); local np=math.min(1,nowHave/math.max(1,cur.needed))
+                    pcall(function() Tw(Craft.UI.Fr.CollBarFill,{Size=UDim2.new(np,0,1,0)},TF) end)
                     SetStatus(string.format("⚔ Runde | '%s': %d/%d",cur.matName,nowHave,cur.needed),D.Orange)
                     if nowHave>=cur.needed then break end
                 end
@@ -401,7 +549,6 @@ local function RunCollector()
             end
             pcall(UpdateQueueUI)
         end
-
         Craft.Collecting=false
         pcall(function() Craft.UI.Btn.Start.Text="🤖  Start Auto-Farm"; Craft.UI.Btn.Start.TextColor3=D.Purple; Tw(Craft.UI.Fr.CollBarFill,{Size=UDim2.new(1,0,1,0),BackgroundColor3=D.Green},TM) end)
         if #Craft.Queue==0 then SetStatus("✅ Alle Materialien gesammelt! Bereit zum Craften.",D.GreenBright); task.delay(0.5,function() pcall(RebuildCraftList) end)
@@ -410,7 +557,7 @@ local function RunCollector()
     end)
 end
 
--- ── Button-Verbindungen ───────────────────────────────────────
+-- ── Buttons ───────────────────────────────────────────────────
 searchBox:GetPropertyChangedSignal("Text"):Connect(function() task.spawn(function() pcall(RebuildCraftList) end) end)
 searchRefBtn.MouseButton1Click:Connect(function() SetStatus("⏳ Lade neu...",D.Yellow); task.spawn(function() pcall(RebuildCraftList) end) end)
 Craft.UI.Btn.Start.MouseButton1Click:Connect(function() RunCollector() end)
@@ -424,12 +571,11 @@ task.spawn(function()
     end
 end)
 
--- ── Startup ───────────────────────────────────────────────────
-task.delay(1, function()
+-- Startup
+task.delay(1,function()
     if not CraftingRecipes then pcall(function() CraftingRecipes=require(RS.Shared.Info.CraftingRecipes) end) end
-    if not GetData         then pcall(function() GetData=require(RS.Shared.GetData) end) end
-    pcall(RebuildCraftList)
-    pcall(UpdateQueueUI)
+    if not ShopItemsData   then pcall(function() ShopItemsData=require(RS.Shared.Info.ShopItems) end) end
+    pcall(RebuildCraftList); pcall(UpdateQueueUI)
 end)
 
-print(string.format("[HazeHub-Craft] v%s geladen | %s", VERSION, LP.Name))
+print(string.format("[HazeHub-Craft] v%s geladen | %s",VERSION,LP.Name))
