@@ -1,16 +1,15 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB – trait.lua  v2.0.0
+--  HazeHUB – trait.lua  v2.1.0
 --
---  v2.0.0 (Trait-Tab visuell):
---    ✓ Große Grid-Zellen: UIGridLayout CellSize Scale 0.48 / 0.48
---    ✓ Viewport klont nur aus RS.Assets.UnitModels.Unit
---    ✓ Kamera: GetExtentsSize + PrimaryPart, extrem nah, Fokus Oberkörper
---    ✓ Alle UIScale unter TraitPage entfernt (kein globales Schrumpfen)
---  Features (unverändert):
---    ✓ Collection-Scan, Live-Traits, Auto-Reroll, TraitAck, Übersicht
+--  v2.1.0 (Viewport Stability & Face-Focus):
+--    ✓ Model-Pfad: :Shiny→Shiny, :Evo→Evo, sonst Unit (+ sinnvolle Fallbacks)
+--    ✓ WorldModel, volle Sichtbarkeit (keine Bein-Transparenz)
+--    ✓ Kamera frontal: Head→UpperTorso→PrimaryPart, FOV fest 50
+--  v2.0.0: große Grid-Zellen (0.48), UIScale unter TraitPage entfernt
+--  Features: Collection-Scan, Live-Traits, Auto-Reroll, Übersicht
 -- ╚══════════════════════════════════════════════════════════╝
 
-local VERSION = "2.0.0"
+local VERSION = "2.1.0"
 
 -- Warten bis HazeShared & TraitPage bereit
 local _w = 0
@@ -281,23 +280,9 @@ local function ScanUnits()
     return true
 end
 
--- Nur RS.Assets.UnitModels.Unit (keine Shiny/Evo-Ordner für Viewport-Klon)
-local UnitTemplateRoot = nil
-local UnitTemplateIndex = {}
-
-local function BuildUnitTemplateIndex()
-    UnitTemplateIndex = {}
-    UnitTemplateRoot = nil
-    pcall(function()
-        UnitTemplateRoot = RS:WaitForChild("Assets", 8):WaitForChild("UnitModels", 8):WaitForChild("Unit", 8)
-    end)
-    if not UnitTemplateRoot then return end
-    for _, entry in ipairs(UnitTemplateRoot:GetDescendants()) do
-        if entry:IsA("Model") then
-            UnitTemplateIndex[entry.Name:lower()] = entry
-        end
-    end
-end
+-- RS.Assets.UnitModels: Shiny / Evo / Unit (Collection-Name steuert Ordner)
+local UnitModelsRoot = nil
+local BucketModelIndex = { Unit = {}, Shiny = {}, Evo = {} }
 
 local function NormalizeUnitKey(unitName)
     local raw = tostring(unitName or "")
@@ -309,15 +294,53 @@ local function NormalizeUnitKey(unitName)
     return key
 end
 
-local function FindUnitTemplateInUnitFolder(unitName)
-    if not UnitTemplateRoot then BuildUnitTemplateIndex() end
+local function ResolveTemplateBucket(unitName)
+    local n = tostring(unitName or ""):lower()
+    if n:find(":shiny", 1, true) then return "Shiny" end
+    if n:find(":evo", 1, true) then return "Evo" end
+    return "Unit"
+end
+
+local function BuildBucketModelIndex()
+    BucketModelIndex = { Unit = {}, Shiny = {}, Evo = {} }
+    UnitModelsRoot = nil
+    pcall(function()
+        UnitModelsRoot = RS:WaitForChild("Assets", 8):WaitForChild("UnitModels", 8)
+    end)
+    if not UnitModelsRoot then return end
+    for _, bucket in ipairs({ "Unit", "Shiny", "Evo" }) do
+        local folder = UnitModelsRoot:FindFirstChild(bucket)
+        if folder then
+            for _, entry in ipairs(folder:GetDescendants()) do
+                if entry:IsA("Model") then
+                    BucketModelIndex[bucket][entry.Name:lower()] = entry
+                end
+            end
+        end
+    end
+end
+
+local function BucketSearchOrder(preferred)
+    if preferred == "Shiny" then return { "Shiny", "Unit" } end
+    if preferred == "Evo" then return { "Evo", "Unit" } end
+    return { "Unit", "Shiny", "Evo" }
+end
+
+local function FindUnitTemplate(unitName)
+    if not UnitModelsRoot then BuildBucketModelIndex() end
     local key = NormalizeUnitKey(unitName)
     if key == "" then return nil end
-    local exact = UnitTemplateIndex[key]
-    if exact then return exact end
-    for n, mdl in pairs(UnitTemplateIndex) do
-        if n:find(key, 1, true) or key:find(n, 1, true) then
-            return mdl
+    local preferred = ResolveTemplateBucket(unitName)
+    for _, bucket in ipairs(BucketSearchOrder(preferred)) do
+        local idx = BucketModelIndex[bucket]
+        if idx then
+            local exact = idx[key]
+            if exact then return exact end
+            for n, mdl in pairs(idx) do
+                if n:find(key, 1, true) or key:find(n, 1, true) then
+                    return mdl
+                end
+            end
         end
     end
     return nil
@@ -330,12 +353,12 @@ local function FillViewportWithUnit(vp, unitName)
             if d:IsA("WorldModel") or d:IsA("Camera") then d:Destroy() end
         end
 
-        -- Strikte Quelle: ReplicatedStorage.Assets.UnitModels.Unit
-        local source = FindUnitTemplateInUnitFolder(unitName)
+        local source = FindUnitTemplate(unitName)
         if not source then return end
 
         local world = Instance.new("WorldModel")
         world.Parent = vp
+
         local clone = source:Clone()
         clone.Parent = world
 
@@ -343,76 +366,31 @@ local function FillViewportWithUnit(vp, unitName)
             local pp = clone:FindFirstChildWhichIsA("BasePart", true)
             if pp then clone.PrimaryPart = pp end
         end
-        if clone.PrimaryPart then
-            clone:PivotTo(CFrame.new(0, 0, 0))
-        end
-
-        local upperTorso = clone:FindFirstChild("UpperTorso", true) or clone:FindFirstChild("Torso", true)
-        local torsoY = nil
-        if upperTorso and upperTorso:IsA("BasePart") then
-            torsoY = upperTorso.Position.Y
-        end
-        for _, p in ipairs(clone:GetDescendants()) do
-            if p:IsA("BasePart") then
-                local n = p.Name:lower()
-                local lowerName = (n:find("leg", 1, true) ~= nil) or (n:find("foot", 1, true) ~= nil) or (n:find("shoe", 1, true) ~= nil) or (n:find("pants", 1, true) ~= nil) or (n:find("lower", 1, true) ~= nil) or (n:find("hip", 1, true) ~= nil)
-                local lowerPos = torsoY and (p.Position.Y < torsoY)
-                if lowerName or lowerPos then
-                    p.Transparency = 1
-                    for _, d in ipairs(p:GetDescendants()) do
-                        if d:IsA("Decal") or d:IsA("Texture") then
-                            d.Transparency = 1
-                        end
-                    end
-                end
-            end
-        end
+        clone:PivotTo(CFrame.new(0, 0, 0))
 
         local cam = Instance.new("Camera")
         cam.Parent = vp
         vp.CurrentCamera = cam
+        cam.FieldOfView = 50
 
-        local extents = clone:GetExtentsSize()
-        local exY = math.max(extents.Y, 0.05)
-        local exXZ = math.max(extents.X, extents.Z, 0.05)
-
+        local head = clone:FindFirstChild("Head", true)
+        local upperTorso = clone:FindFirstChild("UpperTorso", true) or clone:FindFirstChild("Torso", true)
         local pp = clone.PrimaryPart
         if not pp or not pp:IsA("BasePart") then
             pp = clone:FindFirstChildWhichIsA("BasePart", true)
         end
 
-        local head = clone:FindFirstChild("Head", true)
-        local up = clone:FindFirstChild("UpperTorso", true) or clone:FindFirstChild("Torso", true)
+        local aim = head and head:IsA("BasePart") and head
+            or upperTorso and upperTorso:IsA("BasePart") and upperTorso
+            or pp
 
-        local focusPos
-        if head and up and head:IsA("BasePart") and up:IsA("BasePart") then
-            focusPos = (head.Position + up.Position) * 0.5
-        elseif head and head:IsA("BasePart") then
-            focusPos = head.Position
-        elseif up and up:IsA("BasePart") then
-            focusPos = up.Position + Vector3.new(0, up.Size.Y * 0.35, 0)
-        elseif pp then
-            focusPos = pp.Position + Vector3.new(0, exY * 0.22, 0)
-        else
-            local cf = select(1, clone:GetBoundingBox())
-            focusPos = cf.Position + Vector3.new(0, exY * 0.15, 0)
+        if not aim or not aim:IsA("BasePart") then
+            return
         end
 
-        local look = (pp and pp.CFrame.LookVector) or Vector3.new(0, 0, -1)
-        -- Extrem nah: Distanz aus Extents (Vorgabe ~ LookVector * ExtentsY * 0.5 vom PrimaryPart aus, Blick auf Oberkörper)
-        local offsetDist = exY * 0.48
-        if pp then
-            cam.CFrame = CFrame.new(pp.Position + look * offsetDist, focusPos)
-        else
-            cam.CFrame = CFrame.new(focusPos + look * offsetDist, focusPos)
-        end
-
-        -- FOV anpassen: Oberkörper füllt das Viewport-Feld
-        local distCam = (cam.CFrame.Position - focusPos).Magnitude
-        local span = math.max(exY * 0.55, exXZ * 0.42)
-        local fov = 2 * math.deg(math.atan(span / math.max(distCam, 0.15)))
-        fov = math.clamp(fov * 0.92, 32, 58)
-        cam.FieldOfView = fov
+        local targetPos = aim.Position
+        local look = aim.CFrame.LookVector
+        cam.CFrame = CFrame.new(targetPos + look * 4 + Vector3.new(0, 0.5, 0), targetPos)
 
         ok = true
     end)
