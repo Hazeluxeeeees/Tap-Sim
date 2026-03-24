@@ -396,7 +396,7 @@ do
     local quickCard=Card(targetCard); Pad(quickCard,6,8,6,8); VList(quickCard,4)
     SecLbl(quickCard,"⚡ SCHNELL-ZIELE (Divine/Mythic)")
     local qGrid=Instance.new("Frame",quickCard); qGrid.Size=UDim2.new(1,0,0,0); qGrid.AutomaticSize=Enum.AutomaticSize.Y; qGrid.BackgroundTransparency=1
-    local qLayout=Instance.new("UIGridLayout",qGrid); qLayout.CellSize=UDim2.new(0.24,-3,0,24); qLayout.CellPaddingSize=UDim2.new(0,3,0,3); qLayout.HorizontalAlignment=Enum.HorizontalAlignment.Left
+    local qLayout=Instance.new("UIGridLayout",qGrid); qLayout.CellSize=UDim2.new(0.24,-3,0,24); qLayout.CellPadding=UDim2.new(0,3,0,3); qLayout.HorizontalAlignment=Enum.HorizontalAlignment.Left
     local QUICK_TRAITS = {"Sovereign","Seraph","Duplicator","Capitalist","Blitz","Violent","Juggernaut","Millionaire"}
     for _,tn in ipairs(QUICK_TRAITS) do
         local td = AllTraits[tn]
@@ -450,7 +450,7 @@ MkLbl(delayRow,"zwischen Rolls",9,D.TextLow).Size=UDim2.new(0.22,0,1,0)
 
 -- Control Buttons
 local ctrlRow=Instance.new("Frame",rerollCard); ctrlRow.Size=UDim2.new(1,0,0,40); ctrlRow.BackgroundTransparency=1; HList(ctrlRow,8)
-local startRerollBtn=Instance.new("TextButton",ctrlRow); startRerollBtn.Size=UDim2.new(0.58,0,0,40); startRerollBtn.BackgroundColor3=Color3.fromRGB(50,35,0); startRerollBtn.Text="🎲  Auto-Reroll STARTEN"; startRerollBtn.TextColor3=D.Gold; startRerollBtn.TextSize=12; startRerollBtn.Font=Enum.Font.GothamBold; startRerollBtn.AutoButtonColor=false; startRerollBtn.BorderSizePixel=0; Corner(startRerollBtn,9); Stroke(startRerollBtn,D.Gold,2,0)
+local startRerollBtn=Instance.new("TextButton",ctrlRow); startRerollBtn.Size=UDim2.new(0.58,0,0,40); startRerollBtn.BackgroundColor3=Color3.fromRGB(50,35,0); startRerollBtn.Text="🎲  Start Reroll"; startRerollBtn.TextColor3=D.Gold; startRerollBtn.TextSize=12; startRerollBtn.Font=Enum.Font.GothamBold; startRerollBtn.AutoButtonColor=false; startRerollBtn.BorderSizePixel=0; Corner(startRerollBtn,9); Stroke(startRerollBtn,D.Gold,2,0)
 startRerollBtn.MouseEnter:Connect(function() Tw(startRerollBtn,{BackgroundColor3=Color3.fromRGB(75,55,0)}) end); startRerollBtn.MouseLeave:Connect(function() Tw(startRerollBtn,{BackgroundColor3=Color3.fromRGB(50,35,0)}) end)
 local stopRerollBtn=Instance.new("TextButton",ctrlRow); stopRerollBtn.Size=UDim2.new(0.38,0,0,40); stopRerollBtn.BackgroundColor3=D.RedDark; stopRerollBtn.Text="⏹ STOP"; stopRerollBtn.TextColor3=D.Red; stopRerollBtn.TextSize=12; stopRerollBtn.Font=Enum.Font.GothamBold; stopRerollBtn.AutoButtonColor=false; stopRerollBtn.BorderSizePixel=0; Corner(stopRerollBtn,9); Stroke(stopRerollBtn,D.Red,1.5,0.2)
 stopRerollBtn.MouseEnter:Connect(function() Tw(stopRerollBtn,{BackgroundColor3=D.Red}) end); stopRerollBtn.MouseLeave:Connect(function() Tw(stopRerollBtn,{BackgroundColor3=D.RedDark}) end)
@@ -501,14 +501,15 @@ end)
 local function AutoRerollLoop()
     TR.Rolling = true
     TR.RollCount = 0
-    local delay = math.max(0.1, tonumber(delayBox.Text) or 0.5)
     startRerollBtn.Text="⏳ Rollt..."; startRerollBtn.TextColor3=D.Yellow; Stroke(startRerollBtn,D.Yellow,2,0)
     SetStatus("🎲 Auto-Reroll läuft...", D.Gold)
     local rollStart = os.time()
     while TR.Rolling do
+        pcall(UpdateLiveTraitDisplay)
+        if CheckGoalReached() then TR.Rolling=false; break end
         local ok = DoSingleReroll()
         if not ok then SetStatus("❌ Reroll fehlgeschlagen!",D.Red); TR.Rolling=false; break end
-        task.wait(delay)
+        task.wait(0.1)
         pcall(UpdateLiveTraitDisplay)
         if CheckGoalReached() then TR.Rolling=false; break end
         -- Rate anzeigen
@@ -519,7 +520,7 @@ local function AutoRerollLoop()
         end
     end
     TR.Rolling = false
-    startRerollBtn.Text="🎲  Auto-Reroll STARTEN"; startRerollBtn.TextColor3=D.Gold; Stroke(startRerollBtn,D.Gold,2,0)
+    startRerollBtn.Text="🎲  Start Reroll"; startRerollBtn.TextColor3=D.Gold; Stroke(startRerollBtn,D.Gold,2,0)
     pcall(UpdateLiveTraitDisplay)
 end
 
@@ -533,7 +534,7 @@ startRerollBtn.MouseButton1Click:Connect(function()
 end)
 stopRerollBtn.MouseButton1Click:Connect(function()
     TR.Rolling = false
-    startRerollBtn.Text="🎲  Auto-Reroll STARTEN"; startRerollBtn.TextColor3=D.Gold; Stroke(startRerollBtn,D.Gold,2,0)
+    startRerollBtn.Text="🎲  Start Reroll"; startRerollBtn.TextColor3=D.Gold; Stroke(startRerollBtn,D.Gold,2,0)
     SetStatus("⏹ Auto-Reroll gestoppt.",D.TextMid)
 end)
 
