@@ -31,6 +31,9 @@
 -- ── Früh-Flag (AutoFarm aus account-spezifischer settings-Datei, siehe nach Services) ──
 local _earlyAutoFarm = false
 
+-- ★ Account-spezifische Dynamik (für Multi-Account korrekt)
+local LP = game.Players.LocalPlayer
+
 -- ── Haupttabelle ──────────────────────────────────────────────
 local Haze = {
     UI   = { Fr={}, Lbl={}, Btn={}, Inp={} },
@@ -72,7 +75,7 @@ _G.HazeShared = {
 Haze.Svc.Http     = game:GetService("HttpService")
 Haze.Svc.Input    = game:GetService("UserInputService")
 Haze.Svc.Vuser    = game:GetService("VirtualUser")
-Haze.Svc.Player   = game:GetService("Players").LocalPlayer
+Haze.Svc.Player   = LP
 Haze.Svc.RS       = game:GetService("ReplicatedStorage")
 Haze.Svc.Tween    = game:GetService("TweenService")
 Haze.Svc.Teleport = game:GetService("TeleportService")
@@ -108,18 +111,14 @@ end)
 if makefolder then pcall(function() makefolder(K.FOLDER) end) end
 
 -- ── Account-spezifische Dateien (kein Überschreiben zwischen mehreren Accounts) ──
-local function SanitizePlayerFileStem(name)
-    return (tostring(name or "Player")):gsub("[\\/:%*%?\"<>|]", "_")
-end
+-- REQUIRED: Pro Account eindeutig; Dateiname basiert exakt auf LP.Name.
+local saveFile = LP.Name .. "_settings.json"
+local autoSaveFile = LP.Name .. "_autosave.json"
 local function GetSettingsFilePath()
-    local lp = Svc.Player
-    local stem = lp and SanitizePlayerFileStem(lp.Name) or "_unknown"
-    return K.FOLDER .. "/" .. stem .. "_settings.json"
+    return K.FOLDER .. "/" .. saveFile
 end
 local function GetAutoSaveFilePath()
-    local lp = Svc.Player
-    local stem = lp and SanitizePlayerFileStem(lp.Name) or "_unknown"
-    return K.FOLDER .. "/" .. stem .. "_autosave.json"
+    return K.FOLDER .. "/" .. autoSaveFile
 end
 pcall(function()
     if not (isfile and readfile) then return end
@@ -149,19 +148,25 @@ local function FmtNum(n)
 end
 -- Human-readable Dauer: <60s nur Sekunden; ab 60s Minuten:Sekunden + „m“ (z. B. 1:05m)
 local function formatTime(sec)
-    sec = math.floor(tonumber(sec) or 0)
-    if sec < 0 then sec = 0 end
-    if sec < 60 then
-        return tostring(sec) .. "s"
+    local t = tonumber(sec) or 0
+    if t < 0 then t = 0 end
+    -- REQUIRED: 0.04 min -> lesbar (Sekunden oder Min:Sekunden).
+    -- Wenn ein Wert im Minuten-Format (0..1) reinkommt, konvertieren wir zu Sekunden.
+    if t > 0 and t < 1 then
+        t = t * 60
     end
-    local m = math.floor(sec / 60)
-    local s = sec % 60
-    return string.format("%d:%02dm", m, s)
+    local secInt = math.floor(t)
+    if secInt < 60 then
+        return tostring(secInt) .. "s"
+    end
+    local m = math.floor(secInt / 60)
+    local s = secInt % 60
+    return string.format("%d:%02d", m, s)
 end
 local function GetInvAmt(itemName)
     local n=0
     pcall(function()
-        local f=Svc.RS:WaitForChild("Player_Data",3):WaitForChild(Svc.Player.Name,3):WaitForChild("Items",3)
+        local f=Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Items",3)
         local item=f:FindFirstChild(itemName); if not item then return end
         local vc=item:FindFirstChild("Value") or item:FindFirstChild("Amount")
         if vc then n=tonumber(vc.Value) or 0
@@ -945,7 +950,7 @@ local function SendWebhook(_a,_b,_c)
     end
     local itemsTxt = #itemLines > 0 and table.concat(itemLines, "\n") or "*Keine Item-Drops in dieser Session erfasst.*"
     itemsTxt = itemsTxt:sub(1, 3200)
-    local ava = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. tostring(Svc.Player.UserId) .. "&width=150&height=150&format=png"
+    local ava = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. tostring(LP.UserId) .. "&width=150&height=150&format=png"
     local logoOk = HAZE_ASSETS.LogoHttps and #HAZE_ASSETS.LogoHttps > 12 and HAZE_ASSETS.LogoHttps:find("^https?://")
     local whAvatar = logoOk and HAZE_ASSETS.LogoHttps or ava
     local thumbUrl = logoOk and HAZE_ASSETS.LogoHttps or ava
@@ -956,7 +961,7 @@ local function SendWebhook(_a,_b,_c)
         description = "*Kumulierte Werte dieser Sitzung*",
         thumbnail = { url = thumbUrl },
         fields = {
-            { name = "Account", value = "`" .. Svc.Player.Name .. "`", inline = true },
+            { name = "Account", value = "`" .. LP.Name .. "`", inline = true },
             { name = "Runde", value = "`" .. tostring(cr) .. "`", inline = true },
             { name = "Ø Zeit", value = "`" .. avgStr .. "`", inline = true },
             { name = "Rundenzeit (gesamt)", value = "`" .. timeStr .. "`", inline = false },
@@ -1443,7 +1448,7 @@ local function RefreshPlayerStats()
         else H.UI.Lbl.XPText.Text="HUD XP nicht verfügbar"; H.UI.Lbl.XPText.TextColor3=D.TextLow end
     end)
     pcall(function()
-        local df=Svc.RS:WaitForChild("Player_Data",3):WaitForChild(Svc.Player.Name,3):WaitForChild("Data",3)
+        local df=Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Data",3)
         local lvl=df:FindFirstChild("Level"); local exp=df:FindFirstChild("Exp"); local maxExp=df:FindFirstChild("MaxExp")
         if lvl then
             local lvlTxt="Level "..tostring(lvl.Value)
@@ -1454,8 +1459,8 @@ local function RefreshPlayerStats()
     for _,sd in ipairs(UPGRADE_STATS) do
         pcall(function()
             local lbls=H.UI.Lbl.UpgradeStats[sd.key]; if not lbls then return end
-            local curLvl=nil; pcall(function() curLvl=tonumber(Svc.RS:WaitForChild("Player_Data",3):WaitForChild(Svc.Player.Name,3):WaitForChild("Stats",3):WaitForChild(sd.levelKey,3).Value) end)
-            local statVal=nil; pcall(function() statVal=tonumber(Svc.RS:WaitForChild("Player_Data",3):WaitForChild(Svc.Player.Name,3):WaitForChild("Stats",3):WaitForChild(sd.key,3).Value) end)
+            local curLvl=nil; pcall(function() curLvl=tonumber(Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Stats",3):WaitForChild(sd.levelKey,3).Value) end)
+            local statVal=nil; pcall(function() statVal=tonumber(Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Stats",3):WaitForChild(sd.key,3).Value) end)
             local isMax=curLvl~=nil and curLvl>=sd.maxLvl
             if isMax then lbls.level.Text="✅ LVL: MAX"; lbls.level.TextColor3=D.GreenBright
             elseif curLvl then lbls.level.Text=string.format("Lv. %d / %d%s",curLvl,sd.maxLvl,statVal~=nil and ("  ["..FmtNum(statVal).."]") or ""); lbls.level.TextColor3=D.TextMid
@@ -1486,7 +1491,7 @@ end
 local function RebuildCurrencies()
     for _,cur in ipairs(CURRENCIES) do
         local lbl=H.UI.Lbl.Currencies[cur.key]; if not lbl then continue end
-        local val=nil; pcall(function() val=Svc.RS:WaitForChild("Player_Data",3):WaitForChild(Svc.Player.Name,3):WaitForChild("Data",3):FindFirstChild(cur.key); if val then val=val.Value end end)
+        local val=nil; pcall(function() val=Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Data",3):FindFirstChild(cur.key); if val then val=val.Value end end)
         if val~=nil then lbl.Text=FmtNum(val); lbl.TextColor3=D.TextHi else lbl.Text="–"; lbl.TextColor3=D.TextLow end
     end
 end
@@ -1500,7 +1505,7 @@ H.UI.Lbl.InvEmpty=MkLbl(H.UI.Fr.InvList,"Inventar wird geladen...",12,D.TextLow)
 
 local function RebuildInventory()
     for _,v in pairs(H.UI.Fr.InvList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
-    local folder; pcall(function() folder=Svc.RS:WaitForChild("Player_Data",5):WaitForChild(Svc.Player.Name,5):WaitForChild("Items",5) end)
+    local folder; pcall(function() folder=Svc.RS:WaitForChild("Player_Data",5):WaitForChild(LP.Name,5):WaitForChild("Items",5) end)
     if not folder then H.UI.Lbl.InvEmpty.Visible=true; H.UI.Lbl.InvEmpty.Text="Pfad nicht gefunden"; H.UI.Lbl.InvEmpty.TextColor3=D.Orange; return end
     local children=folder:GetChildren(); if #children==0 then H.UI.Lbl.InvEmpty.Visible=true; H.UI.Lbl.InvEmpty.Text="Inventar leer"; H.UI.Lbl.InvEmpty.TextColor3=D.TextLow; return end
     H.UI.Lbl.InvEmpty.Visible=false; table.sort(children,function(a,b) return a.Name:lower()<b.Name:lower() end)
@@ -1568,7 +1573,7 @@ end
 local questContainer=Instance.new("Frame",QuestPage); questContainer.Size=UDim2.new(1,0,0,0); questContainer.AutomaticSize=Enum.AutomaticSize.Y; questContainer.BackgroundTransparency=1; VList(questContainer,8)
 local function RebuildQuestsUI()
     for _,v in pairs(questContainer:GetChildren()) do if v:IsA("Frame") or v:IsA("TextLabel") then v:Destroy() end end
-    local pdr=nil; pcall(function() pdr=Svc.RS:WaitForChild("Player_Data",3):WaitForChild(Svc.Player.Name,3) end)
+    local pdr=nil; pcall(function() pdr=Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3) end)
     if not pdr then MkLbl(questContainer,"⚠ Player_Data nicht gefunden!",11,D.Orange).Size=UDim2.new(1,0,0,28); return end
     local pqr=nil; pcall(function() pqr=pdr:WaitForChild("PlayerQuest",3) end)
     if not pqr then MkLbl(questContainer,"⚠ PlayerQuest nicht gefunden!",11,D.Orange).Size=UDim2.new(1,0,0,28); return end
@@ -1725,12 +1730,26 @@ local function ToggleHubGui()
     SyncBlurToGui()
     SaveConfig()
 end
+local _mobFirstClick = true
+local function OnMiniBtnClick()
+    if _mobFirstClick then
+        _mobFirstClick = false
+        MainFrame.Visible = true
+    else
+        MainFrame.Visible = not MainFrame.Visible
+    end
+    S.GuiVisible=MainFrame.Visible
+    H.Config.GuiVisible=S.GuiVisible
+    SyncBlurToGui()
+    SaveConfig()
+end
 H.UI.Fr.MiniBtn.MouseEnter:Connect(function() Tw(H.UI.Fr.MiniBtn,{BackgroundTransparency=0.08},TM); Stroke(MBRing,D.Accent,2,0.25) end)
 H.UI.Fr.MiniBtn.MouseLeave:Connect(function() Tw(H.UI.Fr.MiniBtn,{BackgroundTransparency=0.2},TM); Stroke(MBRing,D.Border,1.5,0.45) end)
 H.UI.Fr.MiniBtn.MouseButton1Down:Connect(function() Tw(H.UI.Fr.MiniBtn,{Size=UDim2.new(0,44,0,44)},TF) end)
 H.UI.Fr.MiniBtn.MouseButton1Up:Connect(function() Tw(H.UI.Fr.MiniBtn,{Size=UDim2.new(0,50,0,50)},TF) end)
-H.UI.Fr.MiniBtn.MouseButton1Click:Connect(ToggleHubGui)
+H.UI.Fr.MiniBtn.MouseButton1Click:Connect(OnMiniBtnClick)
 MakeDraggable(H.UI.Fr.Main,MainFrame)
+MakeDraggable(H.UI.Fr.MiniBtn,H.UI.Fr.MiniBtn)
 Svc.Input.InputBegan:Connect(function(inp,processed)
     if processed then return end; if S.KeyListening then return end
     if inp.UserInputType==Enum.UserInputType.Keyboard and inp.KeyCode.Name==H.Config.ToggleKey then
