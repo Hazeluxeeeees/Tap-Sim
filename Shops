@@ -47,7 +47,7 @@ local Corner  = HS.Corner;  local Stroke   = HS.Stroke
 -- ============================================================
 local Players = game:GetService("Players")
 local RS      = game:GetService("ReplicatedStorage")
-local LP      = Players.LocalPlayer   -- ★ immer dynamisch
+local LP      = game.Players.LocalPlayer
 
 -- ============================================================
 --  HILFSFUNKTIONEN
