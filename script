@@ -396,10 +396,16 @@ local function HList(p,gap)
 end
 local function ApplySharpTypography(o)
     if not (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) then return end
-    o.TextScaled = false
+    if o.Name == "StatNameLabel" then
+        -- mobile-optimiert: lange Stat-Namen dürfen skalieren und wrapen
+        o.TextScaled = true
+        pcall(function() o.TextWrapped = true end)
+    else
+        o.TextScaled = false
+    end
     o.RichText = true
     o.TextStrokeTransparency = 1
-    if o.TextSize > 0 and o.TextSize < 12 then o.TextSize = 12 end
+    if o.Name ~= "StatNameLabel" and o.TextSize > 0 and o.TextSize < 12 then o.TextSize = 12 end
     if o:IsA("TextBox") then
         if o.Font == Enum.Font.Gotham or o.Font == Enum.Font.GothamSemibold then o.Font = Enum.Font.GothamMedium end
         return
