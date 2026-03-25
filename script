@@ -1,5 +1,9 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB V20 – Hauptskript  v20.1
+--  HazeHUB V20 – Hauptskript  v20.2
+--  FIXES v20.2:
+--    ✓ formatTime(seconds): <60 → „27s“, sonst „M:SSm“; Session-Tab + Webhook + Header-Timer
+--    ✓ Webhook: Embed 0x000000; Inline Runde / Zeit / Ø Zeit; Felder „Statistiken“ + „Drops“
+--    ✓ Währungs-Keys (Gold/Exp/Gems) fest im Session-Item-Filter; Logo im Header/Mini zentriert
 --  FIXES v20.1:
 --    ✓ Session-Item-Liste ohne Gold/Exp/Gems (Dupplikat-Filter); Webhook: Status / Währungen / Items
 --    ✓ Ø Rundenzeit in Sekunden (UI + Webhook); Footer „Session Bericht • Zeit“ + Logo
@@ -90,6 +94,9 @@ _G.GlobalSession = GlobalSession
 -- Session: Währungen/XP (nicht in der Item-Drop-Liste / Webhook-Items)
 local _SessionCurrencyLower = { gem = true }
 for k in pairs(K.INFO) do _SessionCurrencyLower[string.lower(k)] = true end
+for _, _cur in ipairs({ "gold", "exp", "gems", "gem", "xp", "yen", "coin", "coins" }) do
+    _SessionCurrencyLower[_cur] = true
+end
 local function IsSessionCurrencyKey(name)
     if name == nil or name == "" then return true end
     if tonumber(name) ~= nil then return true end
@@ -120,6 +127,17 @@ local function FmtNum(n)
     n=math.floor(tonumber(n) or 0); local s=tostring(n); local r=""; local c=0
     for i=#s,1,-1 do c=c+1; r=s:sub(i,i)..r; if c%3==0 and i>1 then r=","..r end end
     return r
+end
+-- Human-readable Dauer: <60s nur Sekunden; ab 60s Minuten:Sekunden + „m“ (z. B. 1:05m)
+local function formatTime(sec)
+    sec = math.floor(tonumber(sec) or 0)
+    if sec < 0 then sec = 0 end
+    if sec < 60 then
+        return tostring(sec) .. "s"
+    end
+    local m = math.floor(sec / 60)
+    local s = sec % 60
+    return string.format("%d:%02dm", m, s)
 end
 local function GetInvAmt(itemName)
     local n=0
@@ -622,8 +640,9 @@ local function BuildMoonLogo(parent,sz,lx,ly)
     Stroke(ring, D.Border, 1, 0.45)
     if HAZE_ASSETS.LogoRbx ~= "" and HAZE_ASSETS.LogoRbx ~= "rbxassetid://0" then
         local img = Instance.new("ImageLabel", ring)
+        img.AnchorPoint = Vector2.new(0.5, 0.5)
         img.Size = UDim2.new(0.88, 0, 0.88, 0)
-        img.Position = UDim2.new(0.06, 0, 0.06, 0)
+        img.Position = UDim2.new(0.5, 0, 0.5, 0)
         img.BackgroundTransparency = 1
         img.Image = HAZE_ASSETS.LogoRbx
         img.ScaleType = Enum.ScaleType.Fit
@@ -668,7 +687,7 @@ end
 --  SCREEN GUI  – AnchorPoint(0.5,0.5) → zentriert
 -- ╚══════════════════════════════════════════════════════════╝
 local ScreenGui=Instance.new("ScreenGui")
-ScreenGui.Name="HazeHUB_v201"; ScreenGui.ResetOnSpawn=false
+ScreenGui.Name="HazeHUB_v202"; ScreenGui.ResetOnSpawn=false
 ScreenGui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 ScreenGui.DisplayOrder=999; ScreenGui.IgnoreGuiInset=true
 ScreenGui.Parent=guiParent
@@ -704,16 +723,17 @@ local headerLine=Instance.new("Frame",H.UI.Fr.Main)
 headerLine.Size=UDim2.new(1,0,0,1); headerLine.Position=UDim2.new(0,0,0,22)
 headerLine.BackgroundColor3=D.Border; headerLine.BackgroundTransparency=0.45; headerLine.BorderSizePixel=0
 local headerLogoSlot=Instance.new("Frame",headerStrip)
-headerLogoSlot.Size=UDim2.new(0,20,0,20); headerLogoSlot.Position=UDim2.new(0,6,0.5,-10)
+headerLogoSlot.Size=UDim2.new(0,22,0,22); headerLogoSlot.Position=UDim2.new(0,5,0.5,0); headerLogoSlot.AnchorPoint=Vector2.new(0,0.5)
 headerLogoSlot.BackgroundTransparency=1; headerLogoSlot.BorderSizePixel=0
-BuildMoonLogo(headerLogoSlot,18,0,0)
+local _headerMoon=BuildMoonLogo(headerLogoSlot,20,0,0)
+_headerMoon.AnchorPoint=Vector2.new(0.5,0.5); _headerMoon.Position=UDim2.new(0.5,0,0.5,0)
 local headerTimerLbl=Instance.new("TextLabel",headerStrip)
-headerTimerLbl.Size=UDim2.new(1,-40,1,0); headerTimerLbl.Position=UDim2.new(0,32,0,0)
-headerTimerLbl.BackgroundTransparency=1; headerTimerLbl.Text="⏱  0m 00s"
+headerTimerLbl.Size=UDim2.new(1,-36,1,0); headerTimerLbl.Position=UDim2.new(0,30,0,0)
+headerTimerLbl.BackgroundTransparency=1; headerTimerLbl.Text="⏱  Session: 0s"
 headerTimerLbl.TextColor3=D.TextLow; headerTimerLbl.TextSize=10; headerTimerLbl.Font=Enum.Font.GothamMedium
 headerTimerLbl.TextScaled=false; headerTimerLbl.RichText=true; headerTimerLbl.TextStrokeTransparency=1
 headerTimerLbl.TextXAlignment=Enum.TextXAlignment.Right; H.UI.Lbl.HeaderTimer=headerTimerLbl
-task.spawn(function() while S.Running do task.wait(1); pcall(function() H.UI.Lbl.HeaderTimer.Text="⏱  Session: "..FmtDur(os.time()-S.SessStart) end) end end)
+task.spawn(function() while S.Running do task.wait(1); pcall(function() H.UI.Lbl.HeaderTimer.Text="⏱  Session: "..formatTime(os.time()-S.SessStart) end) end end)
 
 local glow=Instance.new("Frame",H.UI.Fr.Main)
 glow.Size=UDim2.new(1,0,0.35,0); glow.BackgroundColor3=Color3.fromRGB(255,255,255); glow.BackgroundTransparency=0.965; glow.BorderSizePixel=0; Corner(glow,12)
@@ -875,17 +895,20 @@ local function SendWebhook(_a,_b,_c)
     if not S.WhEnabled then return end
     if not H.Config.WebhookURL or H.Config.WebhookURL=="" or not H.Config.WebhookURL:find("discord.com") then return end
     local gs = GlobalSession
-    local cr = gs.CurrentRound
+    local cr = math.floor(tonumber(gs.CurrentRound) or 0)
+    local totalSec = math.floor(tonumber(gs.TotalTime) or 0)
     local avgSec = 0
-    if cr > 0 then avgSec = math.floor(gs.TotalTime / cr + 0.5) end
-    local avgStr = cr > 0 and (tostring(avgSec) .. " s") or "–"
+    if cr > 0 then avgSec = math.floor(totalSec / cr + 0.5) end
+    local avgStr = cr > 0 and formatTime(avgSec) or "–"
+    local timeStr = cr > 0 and formatTime(totalSec) or "–"
     local goldN = math.floor(tonumber(gs.AllRewards.Gold) or 0)
     local gemsN = math.floor(tonumber(gs.AllRewards.Gems) or tonumber(gs.AllRewards.Gem) or 0)
     local expN = math.floor(tonumber(gs.AllRewards.Exp) or 0)
-    local currencyBlock = string.format(
-        "```\n🟡 Gold  %s\n💎 Gems  %s\n✨ Exp   %s\n```",
-        FmtNum(goldN), FmtNum(gemsN), FmtNum(expN)
-    )
+    local statsBlock = table.concat({
+        "🟡 **Gold** · `" .. FmtNum(goldN) .. "`",
+        "💎 **Gems** · `" .. FmtNum(gemsN) .. "`",
+        "✨ **Exp** · `" .. FmtNum(expN) .. "`",
+    }, "\n")
     local itemLines = {}
     local sorted = {}
     for name, amt in pairs(gs.AllRewards) do
@@ -894,9 +917,9 @@ local function SendWebhook(_a,_b,_c)
     table.sort(sorted, function(a, b) return a.total > b.total end)
     for i, it in ipairs(sorted) do
         if i > 28 then table.insert(itemLines, "… +" .. tostring(#sorted - 28) .. " weitere"); break end
-        table.insert(itemLines, string.format("▸ **%s** · `%s`", it.name, FmtNum(math.floor(tonumber(it.total) or 0))))
+        table.insert(itemLines, string.format("▸ **%s** × `%s`", it.name, FmtNum(math.floor(tonumber(it.total) or 0))))
     end
-    local itemsTxt = #itemLines > 0 and table.concat(itemLines, "\n") or "> *Keine Item-Drops in dieser Session erfasst.*"
+    local itemsTxt = #itemLines > 0 and table.concat(itemLines, "\n") or "*Keine Item-Drops in dieser Session erfasst.*"
     itemsTxt = itemsTxt:sub(1, 3200)
     local ava = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. tostring(Svc.Player.UserId) .. "&width=150&height=150&format=png"
     local logoOk = HAZE_ASSETS.LogoHttps and #HAZE_ASSETS.LogoHttps > 12 and HAZE_ASSETS.LogoHttps:find("^https?://")
@@ -904,15 +927,16 @@ local function SendWebhook(_a,_b,_c)
     local thumbUrl = logoOk and HAZE_ASSETS.LogoHttps or ava
     local tsFooter = os.date("%Y-%m-%d %H:%M:%S")
     local embed = {
-        color = 0x1a1a1a,
+        color = 0x000000,
         title = "Session Status",
         description = string.format("**%s** · kumulierte Sitzungsdaten", Svc.Player.Name),
         thumbnail = { url = thumbUrl },
         fields = {
-            { name = "📌 Status", value = "**Runde:** `" .. tostring(cr) .. "`", inline = true },
-            { name = "⏱ Ø Zeit", value = "**Ø Runde:** `" .. avgStr .. "`", inline = true },
-            { name = "💰 Währungen & XP (Session)", value = currencyBlock, inline = false },
-            { name = "📦 Items (Session)", value = itemsTxt, inline = false },
+            { name = "Runde", value = "`" .. tostring(cr) .. "`", inline = true },
+            { name = "Zeit", value = "`" .. timeStr .. "`", inline = true },
+            { name = "Ø Zeit", value = "`" .. avgStr .. "`", inline = true },
+            { name = "Statistiken", value = statsBlock, inline = false },
+            { name = "Drops", value = itemsTxt, inline = false },
         },
     }
     embed.footer = logoOk and { text = "Session Bericht • " .. tsFooter, icon_url = HAZE_ASSETS.LogoHttps }
@@ -1198,10 +1222,13 @@ end)
 --  SESSION TAB
 -- ╚══════════════════════════════════════════════════════════╝
 pcall(function()
-MkLbl(SessPage,"📊  Session",14,D.Accent,true)
-local sHCard=Card(SessPage,50); Pad(sHCard,8,12,8,12); local sHRow=Instance.new("Frame",sHCard); sHRow.Size=UDim2.new(1,0,1,0); sHRow.BackgroundTransparency=1
-H.UI.Lbl.Rounds=Instance.new("TextLabel",sHRow); H.UI.Lbl.Rounds.Size=UDim2.new(0.58,0,1,0); H.UI.Lbl.Rounds.BackgroundTransparency=1; H.UI.Lbl.Rounds.Text="Abgeschlossene Runden: 0"; H.UI.Lbl.Rounds.TextColor3=D.TextHi; H.UI.Lbl.Rounds.TextSize=16; H.UI.Lbl.Rounds.Font=Enum.Font.GothamBold; H.UI.Lbl.Rounds.TextXAlignment=Enum.TextXAlignment.Left
-H.UI.Lbl.ItemCount=Instance.new("TextLabel",sHRow); H.UI.Lbl.ItemCount.Position=UDim2.new(0.58,0,0,0); H.UI.Lbl.ItemCount.Size=UDim2.new(0.42,0,1,0); H.UI.Lbl.ItemCount.BackgroundTransparency=1; H.UI.Lbl.ItemCount.Text="Ø Rundenzeit: –"; H.UI.Lbl.ItemCount.TextColor3=D.TextMid; H.UI.Lbl.ItemCount.TextSize=12; H.UI.Lbl.ItemCount.Font=Enum.Font.GothamSemibold; H.UI.Lbl.ItemCount.TextXAlignment=Enum.TextXAlignment.Right; H.UI.Lbl.ItemCount.TextWrapped=true
+MkLbl(SessPage,"📊  Session",14,D.Accent,false)
+local sHCard=Card(SessPage); Pad(sHCard,8,12,8,12); VList(sHCard,6)
+local sHRow1=Instance.new("Frame",sHCard); sHRow1.Size=UDim2.new(1,0,0,22); sHRow1.BackgroundTransparency=1
+H.UI.Lbl.Rounds=Instance.new("TextLabel",sHRow1); H.UI.Lbl.Rounds.Size=UDim2.new(1,0,1,0); H.UI.Lbl.Rounds.BackgroundTransparency=1; H.UI.Lbl.Rounds.Text="Abgeschlossene Runden: 0"; H.UI.Lbl.Rounds.TextColor3=D.TextHi; H.UI.Lbl.Rounds.TextSize=14; H.UI.Lbl.Rounds.Font=Enum.Font.GothamMedium; H.UI.Lbl.Rounds.RichText=true; H.UI.Lbl.Rounds.TextStrokeTransparency=1; H.UI.Lbl.Rounds.TextXAlignment=Enum.TextXAlignment.Left; H.UI.Lbl.Rounds.TextScaled=false; H.UI.Lbl.Rounds.TextWrapped=true
+local sHRow2=Instance.new("Frame",sHCard); sHRow2.Size=UDim2.new(1,0,0,20); sHRow2.BackgroundTransparency=1; HList(sHRow2,10)
+H.UI.Lbl.SessRoundTime=Instance.new("TextLabel",sHRow2); H.UI.Lbl.SessRoundTime.Size=UDim2.new(0.5,-5,1,0); H.UI.Lbl.SessRoundTime.BackgroundTransparency=1; H.UI.Lbl.SessRoundTime.Text="Rundenzeit: –"; H.UI.Lbl.SessRoundTime.TextColor3=D.TextMid; H.UI.Lbl.SessRoundTime.TextSize=12; H.UI.Lbl.SessRoundTime.Font=Enum.Font.GothamMedium; H.UI.Lbl.SessRoundTime.RichText=true; H.UI.Lbl.SessRoundTime.TextStrokeTransparency=1; H.UI.Lbl.SessRoundTime.TextXAlignment=Enum.TextXAlignment.Left; H.UI.Lbl.SessRoundTime.TextScaled=false; H.UI.Lbl.SessRoundTime.TextWrapped=true
+H.UI.Lbl.ItemCount=Instance.new("TextLabel",sHRow2); H.UI.Lbl.ItemCount.Size=UDim2.new(0.5,-5,1,0); H.UI.Lbl.ItemCount.BackgroundTransparency=1; H.UI.Lbl.ItemCount.Text="Ø Zeit: –"; H.UI.Lbl.ItemCount.TextColor3=D.TextMid; H.UI.Lbl.ItemCount.TextSize=12; H.UI.Lbl.ItemCount.Font=Enum.Font.GothamMedium; H.UI.Lbl.ItemCount.RichText=true; H.UI.Lbl.ItemCount.TextStrokeTransparency=1; H.UI.Lbl.ItemCount.TextXAlignment=Enum.TextXAlignment.Right; H.UI.Lbl.ItemCount.TextScaled=false; H.UI.Lbl.ItemCount.TextWrapped=true
 local infoCard=Card(SessPage); Pad(infoCard,8,10,8,10); VList(infoCard,5); SecLbl(infoCard,"ℹ  WÄHRUNG / XP (Session)")
 local infoRow=Instance.new("Frame",infoCard); infoRow.Size=UDim2.new(1,0,0,0); infoRow.AutomaticSize=Enum.AutomaticSize.Y; infoRow.BackgroundTransparency=1; HList(infoRow,8)
 H.UI.Lbl.InfoVals={}
@@ -1229,10 +1256,10 @@ UpdateGoalsUI=function()
         local bar=Instance.new("Frame",row); bar.Size=UDim2.new(0,3,0.65,0); bar.Position=UDim2.new(0,0,0.175,0); bar.BackgroundColor3=reached and D.GreenBright or D.Purple; bar.BorderSizePixel=0; Corner(bar,2)
         local pgBg=Instance.new("Frame",row); pgBg.Size=UDim2.new(1,-52,0,3); pgBg.Position=UDim2.new(0,8,1,-6); pgBg.BackgroundColor3=Color3.fromRGB(28,38,62); pgBg.BorderSizePixel=0; Corner(pgBg,2)
         local pgF=Instance.new("Frame",pgBg); pgF.Size=UDim2.new(pct,0,1,0); pgF.BackgroundColor3=reached and D.GreenBright or D.Purple; pgF.BorderSizePixel=0; Corner(pgF,2)
-        local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,12,0,5); nL.Size=UDim2.new(1,-52,0.5,-3); nL.BackgroundTransparency=1; nL.Text=goal.item; nL.TextColor3=reached and D.GreenBright or D.TextHi; nL.TextSize=11; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
+        local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,12,0,5); nL.Size=UDim2.new(1,-52,0.5,-3); nL.BackgroundTransparency=1; nL.Text=goal.item; nL.TextColor3=reached and D.GreenBright or D.TextHi; nL.TextSize=11; nL.Font=Enum.Font.GothamMedium; nL.RichText=true; nL.TextStrokeTransparency=1; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
         local pL=Instance.new("TextLabel",row); pL.Position=UDim2.new(0,12,0.5,1); pL.Size=UDim2.new(1,-52,0.5,-5); pL.BackgroundTransparency=1
         if reached then pL.Text="✅ "..cur.." / "..goal.amount.."  ERREICHT!"; pL.TextColor3=D.GreenBright else pL.Text=cur.." / "..goal.amount.."  ("..math.floor(pct*100).."%)"; pL.TextColor3=D.TextMid end
-        pL.TextSize=10; pL.Font=Enum.Font.GothamSemibold; pL.TextXAlignment=Enum.TextXAlignment.Left
+        pL.TextSize=10; pL.Font=Enum.Font.GothamMedium; pL.RichText=true; pL.TextStrokeTransparency=1; pL.TextXAlignment=Enum.TextXAlignment.Left
         local capItem=goal.item; local xBtn=Instance.new("TextButton",row); xBtn.Size=UDim2.new(0,34,0,34); xBtn.Position=UDim2.new(1,-38,0.5,-17); xBtn.BackgroundColor3=Color3.fromRGB(50,12,12); xBtn.Text="✕"; xBtn.TextColor3=D.Red; xBtn.TextSize=13; xBtn.Font=Enum.Font.GothamBold; xBtn.AutoButtonColor=false; xBtn.BorderSizePixel=0; Corner(xBtn,7); Stroke(xBtn,D.Red,1,0.4)
         xBtn.MouseEnter:Connect(function() Tw(xBtn,{BackgroundColor3=D.RedDark}) end); xBtn.MouseLeave:Connect(function() Tw(xBtn,{BackgroundColor3=Color3.fromRGB(50,12,12)}) end)
         xBtn.MouseButton1Click:Connect(function() for i,g in ipairs(S.Goals) do if g.item==capItem then table.remove(S.Goals,i); break end end; S.GoalsNotified[capItem]=nil; SaveConfig(); UpdateGoalsUI() end)
@@ -1255,17 +1282,21 @@ end
 _G._SetGoalFromInventory=SetGoalFromInventory
 SecLbl(SessPage,"📦  GEGENSTÄNDE ERHALTEN (diese Session)")
 H.UI.Fr.SessList=Card(SessPage); Pad(H.UI.Fr.SessList,6,8,6,8); VList(H.UI.Fr.SessList,4)
-H.UI.Lbl.SessEmpty=MkLbl(H.UI.Fr.SessList,"Noch keine Belohnungen – warte auf „Rewards - Items“ vom Server.",12,D.TextLow); H.UI.Lbl.SessEmpty.Size=UDim2.new(1,0,0,30); H.UI.Lbl.SessEmpty.TextXAlignment=Enum.TextXAlignment.Center
+H.UI.Lbl.SessEmpty=MkLbl(H.UI.Fr.SessList,"Noch keine Belohnungen – warte auf „Rewards - Items“ vom Server.",12,D.TextLow); H.UI.Lbl.SessEmpty.Size=UDim2.new(1,0,0,30); H.UI.Lbl.SessEmpty.TextXAlignment=Enum.TextXAlignment.Center; H.UI.Lbl.SessEmpty.Font=Enum.Font.GothamMedium; H.UI.Lbl.SessEmpty.RichText=true; H.UI.Lbl.SessEmpty.TextStrokeTransparency=1
 local sTotCard=Card(SessPage,34); Pad(sTotCard,0,12,0,12); local sTotRow=Instance.new("Frame",sTotCard); sTotRow.Size=UDim2.new(1,0,1,0); sTotRow.BackgroundTransparency=1
-H.UI.Lbl.SessTotal=MkLbl(sTotRow,"Gesamt: 0 Items",12,D.TextMid); H.UI.Lbl.SessTotal.Size=UDim2.new(1,0,1,0); H.UI.Lbl.SessTotal.TextXAlignment=Enum.TextXAlignment.Right
+H.UI.Lbl.SessTotal=MkLbl(sTotRow,"Gesamt: 0 Items",12,D.TextMid); H.UI.Lbl.SessTotal.Size=UDim2.new(1,0,1,0); H.UI.Lbl.SessTotal.TextXAlignment=Enum.TextXAlignment.Right; H.UI.Lbl.SessTotal.Font=Enum.Font.GothamMedium; H.UI.Lbl.SessTotal.RichText=true; H.UI.Lbl.SessTotal.TextStrokeTransparency=1
 UpdateSessionUI=function()
     local gs = GlobalSession
-    H.UI.Lbl.Rounds.Text = "Abgeschlossene Runden: " .. tostring(gs.CurrentRound)
-    if gs.CurrentRound > 0 then
-        local avgSec = math.floor(gs.TotalTime / gs.CurrentRound + 0.5)
-        H.UI.Lbl.ItemCount.Text = string.format("Ø Rundenzeit: %d s", avgSec)
+    local cr = math.floor(tonumber(gs.CurrentRound) or 0)
+    local totalT = math.floor(tonumber(gs.TotalTime) or 0)
+    H.UI.Lbl.Rounds.Text = "Abgeschlossene Runden: " .. tostring(cr)
+    if cr > 0 then
+        local avgSec = math.floor(totalT / cr + 0.5)
+        H.UI.Lbl.SessRoundTime.Text = "Rundenzeit: " .. formatTime(totalT)
+        H.UI.Lbl.ItemCount.Text = "Ø Zeit: " .. formatTime(avgSec)
     else
-        H.UI.Lbl.ItemCount.Text = "Ø Rundenzeit: –"
+        H.UI.Lbl.SessRoundTime.Text = "Rundenzeit: –"
+        H.UI.Lbl.ItemCount.Text = "Ø Zeit: –"
     end
     for k, v in pairs(H.UI.Lbl.InfoVals) do v.Text = tostring(gs.AllRewards[k] or 0) end
     for _, v in pairs(H.UI.Fr.SessList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
@@ -1293,7 +1324,9 @@ UpdateSessionUI=function()
         nL.Text = name
         nL.TextColor3 = isRare and D.Red or D.TextHi
         nL.TextSize = 12
-        nL.Font = Enum.Font.GothamBold
+        nL.Font = Enum.Font.GothamMedium
+        nL.RichText = true
+        nL.TextStrokeTransparency = 1
         nL.TextXAlignment = Enum.TextXAlignment.Left
         nL.TextTruncate = Enum.TextTruncate.AtEnd
         local aL = Instance.new("TextLabel", row)
@@ -1303,7 +1336,9 @@ UpdateSessionUI=function()
         aL.Text = "×" .. tostring(amt)
         aL.TextColor3 = isRare and D.Red or D.Accent
         aL.TextSize = 13
-        aL.Font = Enum.Font.GothamBold
+        aL.Font = Enum.Font.GothamMedium
+        aL.RichText = true
+        aL.TextStrokeTransparency = 1
         aL.TextXAlignment = Enum.TextXAlignment.Right
     end
     H.UI.Lbl.SessEmpty.Visible = (count == 0)
@@ -1681,7 +1716,7 @@ if R.Remote then
             if nowc - (S._EndedScreenDebounce or 0) > 1.2 then
                 S._EndedScreenDebounce = nowc
                 if S.RoundWallStart then
-                    GlobalSession.TotalTime = GlobalSession.TotalTime + (os.time() - S.RoundWallStart)
+                    GlobalSession.TotalTime = GlobalSession.TotalTime + math.floor(os.time() - S.RoundWallStart)
                 end
                 GlobalSession.CurrentRound = GlobalSession.CurrentRound + 1
                 S.RoundWallStart = nil
