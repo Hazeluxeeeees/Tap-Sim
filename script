@@ -1,15 +1,16 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB V19 – Hauptskript  v19.9
+--  HazeHUB V20 – Hauptskript  v20.0
+--  FIXES v20.0:
+--    ✓ GlobalSession { CurrentRound, TotalTime, AllRewards } – eine Quelle für UI + Webhook
+--    ✓ Runde + Zeit: „Update - EndedScreen“ (GameEndedUI); Belohnungen: „Rewards - Items“
+--    ✓ Webhook nur Session-Status-Bericht (3 Felder); kein Auto-Webhook bei Lobby
+--    ✓ Theme: transparentes Schwarz / neutrale Akzente (kein Blau)
 --  FIXES v19.9:
---    ✓ Session-Loot: Inventar ChildAdded + Value-Tracking + Data (Gold/Gems/Exp)
---    ✓ Remote „Rewards“: auch Tabellen-Format (item/amount), Instances optional
---    ✓ Webhook: deutsche Embed-Felder, Logo avatar + thumbnail, Lobby-Ende
---  FIXES v19.8:
 --    ✓ CoreGui-Check via reines pcall
 --    ✓ Kein auto-rescan beim Start – nur DB laden
 --    ✓ Keine doppelten Header in Tabs
 --    ✓ GUI zentriert: AnchorPoint(0.5,0.5)
---    ✓ D.BorderCyan immer definiert
+--    ✓ D.BorderCyan = neutrales Grau (Legacy-Name)
 --    ✓ ViewportFrame + ImageLabel Dual-System
 --    ✓ LoadItemImage exportiert (Texture rbxassetid aus Front)
 --    ✓ LoadItemViewport exportiert (Multi-Part zentriert)
@@ -36,14 +37,13 @@ local Haze = {
     Tabs = {}, TBtns = {},
     Config = { WebhookURL="", UISize="PC", ToggleKey="F4", AutoRetry=false, SavedGoals={}, AutoFarm=false },
     S = {
-        Goals={}, GoalsNotified={}, SessTotals={}, InfoTotals={},
-        RoundCount=0, SessStart=os.time(), Running=true,
+        Goals={}, GoalsNotified={},
+        SessStart=os.time(), Running=true, RoundWallStart=nil,
         WhEnabled=true, GuiVisible=true, KeyListening=false,
         KeyConn=nil, ActiveTab=nil, SelMode="Story",
         SelWorld=nil, SelChap=nil, WorldData={}, WorldIds={},
         ScanDone=false, ChapFolderRef=nil, ChildConn=nil, DBReady=false,
-        SessionWatchActive=false, InvLastVals={}, SessionTraits={},
-        LastLobbyWebhookTs=0, SessionInvPrimary=true, MergeRemoteInstances=false,
+        _EndedScreenDebounce=0,
     },
     K = {
         INFO          = { Exp=true, Gems=true, Gold=true },
@@ -82,8 +82,10 @@ local H   = Haze
 local S   = Haze.S
 local K   = Haze.K
 local Svc = Haze.Svc
--- Zentrale Session-Tabelle (gleiche Referenzen wie S.* – Live-Updates)
-local SessionData = { Items = S.SessTotals, Info = S.InfoTotals, Traits = S.SessionTraits }
+-- Globale Session (UI + Webhook – identische Daten)
+local GlobalSession = { CurrentRound = 0, TotalTime = 0, AllRewards = {} }
+GlobalSession.Items = GlobalSession.AllRewards
+_G.GlobalSession = GlobalSession
 
 -- CoreGui-Check via reines pcall
 local guiParent = Svc.Player.PlayerGui
@@ -276,21 +278,21 @@ local HAZE_ASSETS = {
     LogoHttps = "https://www.roblox.com/asset-thumbnail/image?assetId=" .. HAZE_LOGO_ASSET_ID .. "&width=420&height=420&format=png",
 }
 local D={
-    GlassPane=0.18, GlassDeep=0.22, GlassStroke=0.35,
-    BG=Color3.fromRGB(14,14,16), Sidebar=Color3.fromRGB(10,10,12),
-    Card=Color3.fromRGB(26,26,30), CardHover=Color3.fromRGB(38,38,44),
-    Input=Color3.fromRGB(22,22,26), TabActive=Color3.fromRGB(44,44,52),
-    TabInactive=Color3.fromRGB(24,24,28),
-    Accent=Color3.fromRGB(120,220,200), AccentDim=Color3.fromRGB(72,140,124),
-    Cyan=Color3.fromRGB(120,220,200), CyanDim=Color3.fromRGB(72,140,124),
-    Green=Color3.fromRGB(90,220,140), GreenDark=Color3.fromRGB(18,52,32), GreenBright=Color3.fromRGB(120,255,170),
-    Red=Color3.fromRGB(220,72,72), RedDark=Color3.fromRGB(48,20,22),
-    Yellow=Color3.fromRGB(235,200,90), Orange=Color3.fromRGB(235,150,70),
-    Purple=Color3.fromRGB(180,120,235), Gold=Color3.fromRGB(230,195,120),
-    Teal=Color3.fromRGB(100,210,195), Lavender=Color3.fromRGB(190,175,235),
-    TextHi=Color3.fromRGB(236,236,240), TextMid=Color3.fromRGB(160,160,172),
-    TextLow=Color3.fromRGB(108,108,118), Border=Color3.fromRGB(58,58,66),
-    BorderCyan=Color3.fromRGB(150,170,175), RowSelect=Color3.fromRGB(48,50,58),
+    GlassPane=0.2, GlassDeep=0.24, GlassStroke=0.4,
+    BG=Color3.fromRGB(12,12,14), Sidebar=Color3.fromRGB(8,8,10),
+    Card=Color3.fromRGB(22,22,24), CardHover=Color3.fromRGB(34,34,38),
+    Input=Color3.fromRGB(18,18,20), TabActive=Color3.fromRGB(40,40,44),
+    TabInactive=Color3.fromRGB(22,22,24),
+    Accent=Color3.fromRGB(210,210,215), AccentDim=Color3.fromRGB(130,130,138),
+    Cyan=Color3.fromRGB(200,200,206), CyanDim=Color3.fromRGB(115,115,122),
+    Green=Color3.fromRGB(95,210,130), GreenDark=Color3.fromRGB(16,44,28), GreenBright=Color3.fromRGB(120,235,160),
+    Red=Color3.fromRGB(215,75,75), RedDark=Color3.fromRGB(44,18,20),
+    Yellow=Color3.fromRGB(220,190,85), Orange=Color3.fromRGB(220,145,70),
+    Purple=Color3.fromRGB(175,125,220), Gold=Color3.fromRGB(225,190,115),
+    Teal=Color3.fromRGB(150,175,170), Lavender=Color3.fromRGB(175,165,200),
+    TextHi=Color3.fromRGB(235,235,238), TextMid=Color3.fromRGB(155,155,162),
+    TextLow=Color3.fromRGB(105,105,112), Border=Color3.fromRGB(52,52,58),
+    BorderCyan=Color3.fromRGB(88,88,94), RowSelect=Color3.fromRGB(46,46,50),
 }
 local TF=TweenInfo.new(0.15,Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
 local TM=TweenInfo.new(0.25,Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
@@ -609,7 +611,7 @@ local function BuildMoonLogo(parent,sz,lx,ly)
     ring.BackgroundTransparency = D.GlassDeep
     ring.BorderSizePixel = 0
     Corner(ring, 99)
-    Stroke(ring, D.BorderCyan, 1, 0.45)
+    Stroke(ring, D.Border, 1, 0.45)
     if HAZE_ASSETS.LogoRbx ~= "" and HAZE_ASSETS.LogoRbx ~= "rbxassetid://0" then
         local img = Instance.new("ImageLabel", ring)
         img.Size = UDim2.new(0.88, 0, 0.88, 0)
@@ -658,7 +660,7 @@ end
 --  SCREEN GUI  – AnchorPoint(0.5,0.5) → zentriert
 -- ╚══════════════════════════════════════════════════════════╝
 local ScreenGui=Instance.new("ScreenGui")
-ScreenGui.Name="HazeHUB_v198"; ScreenGui.ResetOnSpawn=false
+ScreenGui.Name="HazeHUB_v200"; ScreenGui.ResetOnSpawn=false
 ScreenGui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 ScreenGui.DisplayOrder=999; ScreenGui.IgnoreGuiInset=true
 ScreenGui.Parent=guiParent
@@ -672,7 +674,7 @@ H.UI.Fr.Main.BackgroundColor3=D.BG
 H.UI.Fr.Main.BackgroundTransparency=0.18
 H.UI.Fr.Main.BorderSizePixel=0
 Corner(H.UI.Fr.Main,12)
-Stroke(H.UI.Fr.Main,D.BorderCyan,1.5,0.5)
+Stroke(H.UI.Fr.Main,D.Border,1.5,0.45)
 
 local headerStrip=Instance.new("Frame",H.UI.Fr.Main)
 headerStrip.Size=UDim2.new(1,0,0,22); headerStrip.Position=UDim2.new(0,0,0,0)
@@ -847,72 +849,66 @@ end
 
 local UpdateGoalsUI; local UpdateSessionUI; local RebuildWorldList
 
--- ── Webhook ───────────────────────────────────────────────────
-local function SendWebhook(rewardTable,goalItem,goalAmt)
+-- ── Webhook (nur Gesamt-Session) ─────────────────────────────
+local function SendWebhook(_a,_b,_c)
     if not S.WhEnabled then return end
     if not H.Config.WebhookURL or H.Config.WebhookURL=="" or not H.Config.WebhookURL:find("discord.com") then return end
-    local rReal={}
-    for _,item in pairs(rewardTable or {}) do
-        if typeof(item)=="Instance" then
-            local v=item:FindFirstChild("Amount") or item:FindFirstChild("Value"); local a=v and tonumber(v.Value) or 1
-            if not K.INFO[item.Name] then table.insert(rReal,{name=item.Name,amt=a,rare=K.RARE[item.Name]==true}) end
-        end
+    local gs = GlobalSession
+    local roundLabel = "Runde **" .. tostring(gs.CurrentRound) .. "**"
+    local avgMin = 0
+    if gs.CurrentRound > 0 then avgMin = (gs.TotalTime / 60) / gs.CurrentRound end
+    local avgStr = string.format("%.2f min", avgMin)
+    if gs.CurrentRound == 0 then avgStr = "– (noch keine abgeschlossene Runde)" end
+    local lines = {}
+    local sorted = {}
+    for name, amt in pairs(gs.AllRewards) do table.insert(sorted, { name = name, total = amt }) end
+    table.sort(sorted, function(a, b) return a.total > b.total end)
+    for i, it in ipairs(sorted) do
+        if i > 24 then table.insert(lines, "… +" .. tostring(#sorted - 24) .. " weitere"); break end
+        table.insert(lines, string.format("• **%s** × %s", it.name, FmtNum(it.total)))
     end
-    local sItems,sTotal={},0; for name,t in pairs(S.SessTotals) do sTotal=sTotal+t; table.insert(sItems,{name=name,total=t}) end
-    table.sort(sItems,function(a,b) return a.total>b.total end)
-    local dropTxt=#rReal==0 and "> *Keine separaten Drop-Einträge (siehe Gesammelte Items)*" or ""
-    for _,i in ipairs(rReal) do dropTxt=dropTxt..string.format("%s**%s** `×%d`\n",i.rare and "💎 " or "› ",i.name,i.amt) end
-    local itemsTxt=""
-    for i,it in ipairs(sItems) do
-        if i>12 then itemsTxt=itemsTxt..string.format("\n*+%d weitere*",#sItems-12); break end
-        local fill=math.min(8,math.ceil(it.total/math.max(1,sTotal/40)))
-        itemsTxt=itemsTxt..string.format("`%s%s`  **%s** ×%d\n",("█"):rep(fill),("░"):rep(8-fill),it.name,it.total)
-    end
-    if itemsTxt=="" then itemsTxt="> *– noch keine Items in dieser Session –*" end
-    local infoParts={}
-    for _,k in ipairs({"Gold","Gems","Exp"}) do
-        local v=S.InfoTotals[k]; if v and v~=0 then table.insert(infoParts,string.format("**%s** +%s",k,FmtNum(v))) end
-    end
-    if #infoParts==0 then for k,v in pairs(S.InfoTotals) do if v and v~=0 then table.insert(infoParts,string.format("**%s** +%s",k,FmtNum(v))) end end end
-    local curTxt=#infoParts>0 and table.concat(infoParts," · ") or "> *–*"
-    local traitLines={}
-    for _,t in ipairs(S.SessionTraits or {}) do table.insert(traitLines,tostring(t)) end
-    local traitTxt=#traitLines>0 and table.concat(traitLines,", "):sub(1,900) or "–"
-    local dur=FmtDur(os.time()-S.SessStart); local isGoal=goalItem~=nil
-    local ava="https://www.roblox.com/headshot-thumbnail/image?userId="..tostring(Svc.Player.UserId).."&width=150&height=150&format=png"
+    local rewardsTxt = #lines > 0 and table.concat(lines, "\n") or "> *Keine Belohnungen erfasst.*"
+    rewardsTxt = rewardsTxt:sub(1, 3500)
+    local ava = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. tostring(Svc.Player.UserId) .. "&width=150&height=150&format=png"
     local logoOk = HAZE_ASSETS.LogoHttps and #HAZE_ASSETS.LogoHttps > 12 and HAZE_ASSETS.LogoHttps:find("^https?://")
     local whAvatar = logoOk and HAZE_ASSETS.LogoHttps or ava
     local thumbUrl = logoOk and HAZE_ASSETS.LogoHttps or ava
-    local embed={
-        color=isGoal and 0x2DD4A3 or 0x3F3F46,
-        title=(isGoal and "🎯  ZIEL ERREICHT!  " or "🏆  ")..string.format("%s · Runde #%d",Svc.Player.Name,S.RoundCount),
-        thumbnail={url=thumbUrl},
-        fields={
-            {name="👤 Spieler",value="```"..Svc.Player.Name.."```",inline=true},
-            {name="🔢 Runde",value="```#"..S.RoundCount.."```",inline=true},
-            {name="⏱ Dauer der Session",value="`"..dur.."`",inline=true},
-            {name="📦 Gesammelte Items",value=itemsTxt:sub(1,1020),inline=false},
-            {name="🎁 Drops (Remote)",value=dropTxt:sub(1,800),inline=false},
-            {name="💎 Traits / Währung",value=(curTxt.."\n**Traits:** "..traitTxt):sub(1,1020),inline=false},
+    local embed = {
+        color = 0x1a1a1c,
+        title = "Session Status Bericht",
+        description = string.format("**%s** · Sitzung seit %s", Svc.Player.Name, FmtDur(os.time() - S.SessStart)),
+        thumbnail = { url = thumbUrl },
+        fields = {
+            { name = "Aktuelle Runde", value = roundLabel, inline = true },
+            { name = "Durchschnittliche Rundenzeit", value = "`" .. avgStr .. "`", inline = true },
+            { name = "Gesammelte Belohnungen (Gesamt)", value = rewardsTxt, inline = false },
         },
     }
-    if logoOk then
-        embed.footer={text="Haze Hub · V19.9 · "..dur,icon_url=HAZE_ASSETS.LogoHttps}
-    else
-        embed.footer={text="Haze Hub · V19.9 · "..dur}
-    end
-    if isGoal then table.insert(embed.fields,2,{name="🎯 Ziel",value=string.format("**%s** `%d/%d` ✅",goalItem,goalAmt,goalAmt),inline=false}) end
-    task.spawn(function() pcall(function()
-        local fn=request or http_request or (syn and syn.request); if not fn then return end
-        fn({Url=H.Config.WebhookURL:gsub("discord%.com","webhook.lewisakura.moe"),Method="POST",Headers={["Content-Type"]="application/json"},Body=Svc.Http:JSONEncode({username="Haze Hub",avatar_url=whAvatar,embeds={embed}})})
-    end) end)
+    embed.footer = logoOk and { text = "Haze Hub · v20.0", icon_url = HAZE_ASSETS.LogoHttps } or { text = "Haze Hub · v20.0" }
+    task.spawn(function()
+        pcall(function()
+            local fn = request or http_request or (syn and syn.request)
+            if not fn then return end
+            fn({
+                Url = H.Config.WebhookURL:gsub("discord%.com", "webhook.lewisakura.moe"),
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = Svc.Http:JSONEncode({ username = "Haze Hub", avatar_url = whAvatar, embeds = { embed } }),
+            })
+        end)
+    end)
 end
 
 local function CheckAllGoals()
-    for _,g in ipairs(S.Goals) do
+    for _, g in ipairs(S.Goals) do
         if not g.reached and not S.GoalsNotified[g.item] then
-            local cur=math.max(S.SessTotals[g.item] or 0,GetInvAmt(g.item))
-            if cur>=g.amount then g.reached=true; S.GoalsNotified[g.item]=true; task.spawn(function() SendWebhook({},g.item,cur) end); SaveConfig() end
+            local cur = math.max(GlobalSession.AllRewards[g.item] or 0, GetInvAmt(g.item))
+            if cur >= g.amount then
+                g.reached = true
+                S.GoalsNotified[g.item] = true
+                task.spawn(function() SendWebhook() end)
+                SaveConfig()
+            end
         end
     end
     if UpdateGoalsUI then pcall(UpdateGoalsUI) end
@@ -1170,16 +1166,16 @@ end)
 --  SESSION TAB
 -- ╚══════════════════════════════════════════════════════════╝
 pcall(function()
-MkLbl(SessPage,"📊  Session",14,D.Cyan,true)
+MkLbl(SessPage,"📊  Session",14,D.Accent,true)
 local sHCard=Card(SessPage,50); Pad(sHCard,8,12,8,12); local sHRow=Instance.new("Frame",sHCard); sHRow.Size=UDim2.new(1,0,1,0); sHRow.BackgroundTransparency=1
-H.UI.Lbl.Rounds=Instance.new("TextLabel",sHRow); H.UI.Lbl.Rounds.Size=UDim2.new(0.60,0,1,0); H.UI.Lbl.Rounds.BackgroundTransparency=1; H.UI.Lbl.Rounds.Text="Runden: 0"; H.UI.Lbl.Rounds.TextColor3=D.Green; H.UI.Lbl.Rounds.TextSize=18; H.UI.Lbl.Rounds.Font=Enum.Font.GothamBold; H.UI.Lbl.Rounds.TextXAlignment=Enum.TextXAlignment.Left
-H.UI.Lbl.ItemCount=Instance.new("TextLabel",sHRow); H.UI.Lbl.ItemCount.Position=UDim2.new(0.60,0,0,0); H.UI.Lbl.ItemCount.Size=UDim2.new(0.40,0,1,0); H.UI.Lbl.ItemCount.BackgroundTransparency=1; H.UI.Lbl.ItemCount.Text="0 Items"; H.UI.Lbl.ItemCount.TextColor3=D.TextMid; H.UI.Lbl.ItemCount.TextSize=13; H.UI.Lbl.ItemCount.Font=Enum.Font.GothamSemibold; H.UI.Lbl.ItemCount.TextXAlignment=Enum.TextXAlignment.Right
-local infoCard=Card(SessPage); Pad(infoCard,8,10,8,10); VList(infoCard,5); SecLbl(infoCard,"ℹ  INFO-ITEMS")
+H.UI.Lbl.Rounds=Instance.new("TextLabel",sHRow); H.UI.Lbl.Rounds.Size=UDim2.new(0.58,0,1,0); H.UI.Lbl.Rounds.BackgroundTransparency=1; H.UI.Lbl.Rounds.Text="Abgeschlossene Runden: 0"; H.UI.Lbl.Rounds.TextColor3=D.TextHi; H.UI.Lbl.Rounds.TextSize=16; H.UI.Lbl.Rounds.Font=Enum.Font.GothamBold; H.UI.Lbl.Rounds.TextXAlignment=Enum.TextXAlignment.Left
+H.UI.Lbl.ItemCount=Instance.new("TextLabel",sHRow); H.UI.Lbl.ItemCount.Position=UDim2.new(0.58,0,0,0); H.UI.Lbl.ItemCount.Size=UDim2.new(0.42,0,1,0); H.UI.Lbl.ItemCount.BackgroundTransparency=1; H.UI.Lbl.ItemCount.Text="Ø Rundenzeit: –"; H.UI.Lbl.ItemCount.TextColor3=D.TextMid; H.UI.Lbl.ItemCount.TextSize=12; H.UI.Lbl.ItemCount.Font=Enum.Font.GothamSemibold; H.UI.Lbl.ItemCount.TextXAlignment=Enum.TextXAlignment.Right; H.UI.Lbl.ItemCount.TextWrapped=true
+local infoCard=Card(SessPage); Pad(infoCard,8,10,8,10); VList(infoCard,5); SecLbl(infoCard,"ℹ  WÄHRUNG / XP (Session)")
 local infoRow=Instance.new("Frame",infoCard); infoRow.Size=UDim2.new(1,0,0,0); infoRow.AutomaticSize=Enum.AutomaticSize.Y; infoRow.BackgroundTransparency=1; HList(infoRow,8)
 H.UI.Lbl.InfoVals={}
 for _,iname in ipairs({"Exp","Gems","Gold"}) do
-    local iF=Instance.new("Frame",infoRow); iF.Size=UDim2.new(0.31,0,0,44); iF.BackgroundColor3=Color3.fromRGB(12,22,40); iF.BorderSizePixel=0; Corner(iF,8); Stroke(iF,D.Orange,1,0.5)
-    local iN=Instance.new("TextLabel",iF); iN.Size=UDim2.new(1,0,0.45,0); iN.BackgroundTransparency=1; iN.Text=iname; iN.TextColor3=D.Orange; iN.TextSize=10; iN.Font=Enum.Font.GothamSemibold; iN.TextXAlignment=Enum.TextXAlignment.Center
+    local iF=Instance.new("Frame",infoRow); iF.Size=UDim2.new(0.31,0,0,44); iF.BackgroundColor3=Color3.fromRGB(20,20,22); iF.BorderSizePixel=0; Corner(iF,8); Stroke(iF,D.Border,1,0.55)
+    local iN=Instance.new("TextLabel",iF); iN.Size=UDim2.new(1,0,0.45,0); iN.BackgroundTransparency=1; iN.Text=iname; iN.TextColor3=D.TextMid; iN.TextSize=10; iN.Font=Enum.Font.GothamSemibold; iN.TextXAlignment=Enum.TextXAlignment.Center
     local iV=Instance.new("TextLabel",iF); iV.Size=UDim2.new(1,0,0.55,0); iV.Position=UDim2.new(0,0,0.45,0); iV.BackgroundTransparency=1; iV.Text="0"; iV.TextColor3=D.TextHi; iV.TextSize=14; iV.Font=Enum.Font.GothamBold; iV.TextXAlignment=Enum.TextXAlignment.Center
     H.UI.Lbl.InfoVals[iname]=iV
 end
@@ -1195,7 +1191,7 @@ UpdateGoalsUI=function()
     for _,v in pairs(H.UI.Fr.GoalsList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
     H.UI.Lbl.GoalsEmpty.Visible=(#S.Goals==0)
     for _,goal in ipairs(S.Goals) do
-        local cur=math.max(S.SessTotals[goal.item] or 0,GetInvAmt(goal.item)); local reached=cur>=goal.amount; goal.reached=reached; local pct=math.min(1,cur/math.max(1,goal.amount))
+        local cur=math.max(GlobalSession.AllRewards[goal.item] or 0,GetInvAmt(goal.item)); local reached=cur>=goal.amount; goal.reached=reached; local pct=math.min(1,cur/math.max(1,goal.amount))
         local row=Instance.new("Frame",H.UI.Fr.GoalsList); row.Size=UDim2.new(1,0,0,44); row.BorderSizePixel=0; Corner(row,8)
         if reached then row.BackgroundColor3=D.GreenDark; Stroke(row,D.GreenBright,1.5,0) else row.BackgroundColor3=D.Card; Stroke(row,D.Border,1,0.4) end
         local bar=Instance.new("Frame",row); bar.Size=UDim2.new(0,3,0.65,0); bar.Position=UDim2.new(0,0,0.175,0); bar.BackgroundColor3=reached and D.GreenBright or D.Purple; bar.BorderSizePixel=0; Corner(bar,2)
@@ -1227,161 +1223,87 @@ end
 _G._SetGoalFromInventory=SetGoalFromInventory
 SecLbl(SessPage,"📦  GEGENSTÄNDE ERHALTEN (diese Session)")
 H.UI.Fr.SessList=Card(SessPage); Pad(H.UI.Fr.SessList,6,8,6,8); VList(H.UI.Fr.SessList,4)
-H.UI.Lbl.SessEmpty=MkLbl(H.UI.Fr.SessList,"Noch keine Items – warte auf Drops oder Inventar-Updates.",12,D.TextLow); H.UI.Lbl.SessEmpty.Size=UDim2.new(1,0,0,30); H.UI.Lbl.SessEmpty.TextXAlignment=Enum.TextXAlignment.Center
+H.UI.Lbl.SessEmpty=MkLbl(H.UI.Fr.SessList,"Noch keine Belohnungen – warte auf „Rewards - Items“ vom Server.",12,D.TextLow); H.UI.Lbl.SessEmpty.Size=UDim2.new(1,0,0,30); H.UI.Lbl.SessEmpty.TextXAlignment=Enum.TextXAlignment.Center
 local sTotCard=Card(SessPage,34); Pad(sTotCard,0,12,0,12); local sTotRow=Instance.new("Frame",sTotCard); sTotRow.Size=UDim2.new(1,0,1,0); sTotRow.BackgroundTransparency=1
 H.UI.Lbl.SessTotal=MkLbl(sTotRow,"Gesamt: 0 Items",12,D.TextMid); H.UI.Lbl.SessTotal.Size=UDim2.new(1,0,1,0); H.UI.Lbl.SessTotal.TextXAlignment=Enum.TextXAlignment.Right
 UpdateSessionUI=function()
-    H.UI.Lbl.Rounds.Text="Runden: "..S.RoundCount
-    for k,v in pairs(H.UI.Lbl.InfoVals) do v.Text=tostring(S.InfoTotals[k] or 0) end
-    for _,v in pairs(H.UI.Fr.SessList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
-    local total,count=0,0
-    for name,amt in pairs(S.SessTotals) do
-        total=total+amt; count=count+1; local isRare=K.RARE[name]==true
-        local row=Instance.new("Frame",H.UI.Fr.SessList); row.Size=UDim2.new(1,0,0,34); row.BorderSizePixel=0; Corner(row,7)
-        if isRare then row.BackgroundColor3=D.RedDark; Stroke(row,D.Red,1.5,0) else row.BackgroundColor3=D.CardHover; Stroke(row,D.Border,1,0.5) end
-        local bar=Instance.new("Frame",row); bar.Size=UDim2.new(0,3,0.55,0); bar.Position=UDim2.new(0,0,0.225,0); bar.BackgroundColor3=isRare and D.Red or D.Cyan; bar.BorderSizePixel=0; Corner(bar,2)
-        local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,12,0,0); nL.Size=UDim2.new(1,-70,1,0); nL.BackgroundTransparency=1; nL.Text=name; nL.TextColor3=isRare and D.Red or D.TextHi; nL.TextSize=12; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
-        local aL=Instance.new("TextLabel",row); aL.Position=UDim2.new(1,-62,0,0); aL.Size=UDim2.new(0,56,1,0); aL.BackgroundTransparency=1; aL.Text="×"..tostring(amt); aL.TextColor3=isRare and D.Red or D.Cyan; aL.TextSize=13; aL.Font=Enum.Font.GothamBold; aL.TextXAlignment=Enum.TextXAlignment.Right
+    local gs = GlobalSession
+    H.UI.Lbl.Rounds.Text = "Abgeschlossene Runden: " .. tostring(gs.CurrentRound)
+    if gs.CurrentRound > 0 then
+        local avgMin = (gs.TotalTime / 60) / gs.CurrentRound
+        H.UI.Lbl.ItemCount.Text = string.format("Ø Rundenzeit: %.2f min", avgMin)
+    else
+        H.UI.Lbl.ItemCount.Text = "Ø Rundenzeit: –"
     end
-    H.UI.Lbl.SessEmpty.Visible=(count==0); H.UI.Lbl.SessTotal.Text="Gesamt: "..tostring(total).." Items"; H.UI.Lbl.ItemCount.Text=tostring(total).." Items"
+    for k, v in pairs(H.UI.Lbl.InfoVals) do v.Text = tostring(gs.AllRewards[k] or 0) end
+    for _, v in pairs(H.UI.Fr.SessList:GetChildren()) do if v:IsA("Frame") then v:Destroy() end end
+    local total, count = 0, 0
+    for name, amt in pairs(gs.AllRewards) do
+        total = total + amt
+        count = count + 1
+        local isRare = K.RARE[name] == true
+        local row = Instance.new("Frame", H.UI.Fr.SessList)
+        row.Size = UDim2.new(1, 0, 0, 34)
+        row.BorderSizePixel = 0
+        Corner(row, 7)
+        if isRare then row.BackgroundColor3 = D.RedDark; Stroke(row, D.Red, 1.5, 0) else row.BackgroundColor3 = D.CardHover; Stroke(row, D.Border, 1, 0.5) end
+        local bar = Instance.new("Frame", row)
+        bar.Size = UDim2.new(0, 3, 0.55, 0)
+        bar.Position = UDim2.new(0, 0, 0.225, 0)
+        bar.BackgroundColor3 = isRare and D.Red or D.AccentDim
+        bar.BorderSizePixel = 0
+        Corner(bar, 2)
+        local nL = Instance.new("TextLabel", row)
+        nL.Position = UDim2.new(0, 12, 0, 0)
+        nL.Size = UDim2.new(1, -70, 1, 0)
+        nL.BackgroundTransparency = 1
+        nL.Text = name
+        nL.TextColor3 = isRare and D.Red or D.TextHi
+        nL.TextSize = 12
+        nL.Font = Enum.Font.GothamBold
+        nL.TextXAlignment = Enum.TextXAlignment.Left
+        nL.TextTruncate = Enum.TextTruncate.AtEnd
+        local aL = Instance.new("TextLabel", row)
+        aL.Position = UDim2.new(1, -62, 0, 0)
+        aL.Size = UDim2.new(0, 56, 1, 0)
+        aL.BackgroundTransparency = 1
+        aL.Text = "×" .. tostring(amt)
+        aL.TextColor3 = isRare and D.Red or D.Accent
+        aL.TextSize = 13
+        aL.Font = Enum.Font.GothamBold
+        aL.TextXAlignment = Enum.TextXAlignment.Right
+    end
+    H.UI.Lbl.SessEmpty.Visible = (count == 0)
+    H.UI.Lbl.SessTotal.Text = "Gesamt (Stück): " .. tostring(total)
     if UpdateGoalsUI then pcall(UpdateGoalsUI) end
 end
 NeonBtn(SessPage,"🗑  Session zurücksetzen",D.Red,34).MouseButton1Click:Connect(function()
-    local function clearTab(t) if table.clear then table.clear(t) else for k in pairs(t) do t[k]=nil end end end
-    clearTab(S.SessTotals); clearTab(S.InfoTotals); clearTab(S.InvLastVals); clearTab(S.SessionTraits)
-    S.RoundCount=0; S.SessStart=os.time()
-    for _,g in ipairs(S.Goals) do g.reached=false end; S.GoalsNotified={}
-    pcall(DisconnectSessionInvListeners)
-    if not IsInLobby() then S.SessionWatchActive=true; pcall(ConnectSessionInvListeners) end
+    GlobalSession.CurrentRound = 0
+    GlobalSession.TotalTime = 0
+    if table.clear then table.clear(GlobalSession.AllRewards) else for k in pairs(GlobalSession.AllRewards) do GlobalSession.AllRewards[k] = nil end end
+    S.SessStart = os.time()
+    S.RoundWallStart = not IsInLobby() and os.time() or nil
+    for _, g in ipairs(S.Goals) do g.reached = false end
+    S.GoalsNotified = {}
     UpdateSessionUI()
 end)
 end) -- end pcall Session Tab
 
 -- ╔══════════════════════════════════════════════════════════╗
---  SESSION – Inventar / Data Live-Tracking (nach UpdateSessionUI)
+--  Belohnungen aus Remote „Rewards - Items“ → GlobalSession
 -- ╚══════════════════════════════════════════════════════════╝
-local SessionInvConns = {}
-local ItemsChildAddedConn = nil
-
-local function ApplySessionItemGain(itemName, delta)
-    delta = math.floor(tonumber(delta) or 0)
-    if delta <= 0 or not itemName or itemName == "" then return end
-    if K.INFO[itemName] then
-        S.InfoTotals[itemName] = (S.InfoTotals[itemName] or 0) + delta
-    else
-        S.SessTotals[itemName] = (S.SessTotals[itemName] or 0) + delta
-    end
-    if UpdateSessionUI then pcall(UpdateSessionUI) end
-    pcall(CheckAllGoals)
-end
-
-function DisconnectSessionInvListeners()
-    for _, c in ipairs(SessionInvConns) do
-        pcall(function() if c and c.Disconnect then c:Disconnect() end end)
-    end
-    SessionInvConns = {}
-    pcall(function() if ItemsChildAddedConn then ItemsChildAddedConn:Disconnect() end end)
-    ItemsChildAddedConn = nil
-end
-
-local function shouldTrackInvItem(inst)
-    if not inst then return false end
-    if inst:IsA("UIGridLayout") or inst:IsA("UIListLayout") or inst:IsA("UIPadding") then return false end
-    return (inst:FindFirstChild("Value") or inst:FindFirstChild("Amount"))
-        or inst:IsA("IntValue") or inst:IsA("NumberValue")
-end
-
-local function readInvItemQty(inst)
-    local v = inst:FindFirstChild("Value") or inst:FindFirstChild("Amount")
-    if v then return tonumber(v.Value) or 0 end
-    if inst:IsA("IntValue") or inst:IsA("NumberValue") then return tonumber(inst.Value) or 0 end
-    return 0
-end
-
-function ConnectSessionInvListeners()
-    DisconnectSessionInvListeners()
-    local itemsFolder, dataFolder
-    pcall(function()
-        local pd = Svc.RS:WaitForChild("Player_Data", 8):WaitForChild(Svc.Player.Name, 8)
-        itemsFolder = pd:FindFirstChild("Items") or pd:WaitForChild("Items", 5)
-        dataFolder = pd:FindFirstChild("Data")
-    end)
-    if not itemsFolder then return end
-
-    local function bindItem(inst)
-        if not shouldTrackInvItem(inst) then return end
-        local name = inst.Name
-        S.InvLastVals[name] = readInvItemQty(inst)
-        local valInst = inst:FindFirstChild("Value") or inst:FindFirstChild("Amount")
-        local function onChanged()
-            if not S.SessionWatchActive then return end
-            local now = readInvItemQty(inst)
-            local prev = S.InvLastVals[name] or 0
-            if now > prev then ApplySessionItemGain(name, now - prev) end
-            S.InvLastVals[name] = now
-        end
-        if valInst then
-            table.insert(SessionInvConns, valInst:GetPropertyChangedSignal("Value"):Connect(onChanged))
-        elseif inst:IsA("IntValue") or inst:IsA("NumberValue") then
-            table.insert(SessionInvConns, inst:GetPropertyChangedSignal("Value"):Connect(onChanged))
-        end
-    end
-
-    for _, ch in ipairs(itemsFolder:GetChildren()) do bindItem(ch) end
-    ItemsChildAddedConn = itemsFolder.ChildAdded:Connect(function(ch)
-        task.defer(function() bindItem(ch) end)
-    end)
-
-    if dataFolder then
-        for key in pairs(K.INFO) do
-            local v = dataFolder:FindFirstChild(key)
-            if v and v:IsA("ValueBase") then
-                local storageKey = "__data_" .. key
-                S.InvLastVals[storageKey] = tonumber(v.Value) or 0
-                table.insert(SessionInvConns, v:GetPropertyChangedSignal("Value"):Connect(function()
-                    if not S.SessionWatchActive then return end
-                    local now = tonumber(v.Value) or 0
-                    local prev = S.InvLastVals[storageKey] or 0
-                    if now > prev then ApplySessionItemGain(key, now - prev) end
-                    S.InvLastVals[storageKey] = now
-                end))
-            end
-        end
-    end
-end
-
-local function ProcessRemoteRewardsPayload(data)
+local function AccumulateRewards(data)
     if not data then return end
-    if S.SessionInvPrimary then
-        for _, item in pairs(data) do
-            if typeof(item) ~= "Instance" and type(item) == "table" then
-                local n = item.item or item.Item or item.Name or item.name or item.ItemName
-                local a = tonumber(item.amount or item.Amount or item.count or item.Count or item.qty or 1) or 1
-                if type(n) == "string" and n ~= "" then ApplySessionItemGain(n, a) end
-            end
-        end
-        if S.MergeRemoteInstances then
-            for _, item in pairs(data) do
-                if typeof(item) == "Instance" then
-                    local v = item:FindFirstChild("Amount") or item:FindFirstChild("Value")
-                    local amt = v and tonumber(v.Value) or 1
-                    if K.INFO[item.Name] then S.InfoTotals[item.Name] = (S.InfoTotals[item.Name] or 0) + amt
-                    else S.SessTotals[item.Name] = (S.SessTotals[item.Name] or 0) + amt end
-                end
-            end
-        end
-        return
-    end
     for _, item in pairs(data) do
         if typeof(item) == "Instance" then
             local v = item:FindFirstChild("Amount") or item:FindFirstChild("Value")
-            local amt = v and tonumber(v.Value) or 1
-            if K.INFO[item.Name] then S.InfoTotals[item.Name] = (S.InfoTotals[item.Name] or 0) + amt
-            else S.SessTotals[item.Name] = (S.SessTotals[item.Name] or 0) + amt end
+            local amt = math.floor(tonumber(v and v.Value) or 1)
+            local name = item.Name
+            if name and name ~= "" then GlobalSession.AllRewards[name] = (GlobalSession.AllRewards[name] or 0) + amt end
         elseif type(item) == "table" then
-            local n = item.item or item.Item or item.Name or item.name
-            local a = tonumber(item.amount or item.Amount or item.count or 1) or 1
-            if type(n) == "string" and n ~= "" then ApplySessionItemGain(n, a) end
+            local n = item.item or item.Item or item.Name or item.name or item.ItemName
+            local a = math.floor(tonumber(item.amount or item.Amount or item.count or item.Count or item.qty or 1) or 1)
+            if type(n) == "string" and n ~= "" then GlobalSession.AllRewards[n] = (GlobalSession.AllRewards[n] or 0) + a end
         end
     end
     if UpdateSessionUI then pcall(UpdateSessionUI) end
@@ -1662,8 +1584,8 @@ NeonBtn(lobCard,"🏠  Back to Lobby",D.Orange,38).MouseButton1Click:Connect(fun
 local kbCard=Card(SettPage); Pad(kbCard,10,10,10,10); VList(kbCard,8); SecLbl(kbCard,"GUI KEYBIND")
 local kbRow=Instance.new("Frame",kbCard); kbRow.Size=UDim2.new(1,0,0,34); kbRow.BackgroundTransparency=1; HList(kbRow,8)
 MkLbl(kbRow,"Toggle-Taste:",12,D.TextMid).Size=UDim2.new(0.52,0,1,0)
-H.UI.Btn.KeyBtn=Instance.new("TextButton",kbRow); H.UI.Btn.KeyBtn.Size=UDim2.new(0.46,0,0,34); H.UI.Btn.KeyBtn.BackgroundColor3=D.CardHover; H.UI.Btn.KeyBtn.Text="[ F4 ]"; H.UI.Btn.KeyBtn.TextColor3=D.Cyan; H.UI.Btn.KeyBtn.TextSize=13; H.UI.Btn.KeyBtn.Font=Enum.Font.GothamBold; H.UI.Btn.KeyBtn.AutoButtonColor=false; H.UI.Btn.KeyBtn.BorderSizePixel=0; Corner(H.UI.Btn.KeyBtn,8); Stroke(H.UI.Btn.KeyBtn,D.Cyan,1,0.3)
-local function SetKeyDisplay(k) H.UI.Btn.KeyBtn.Text="[ "..(k or "F4").." ]"; H.UI.Btn.KeyBtn.TextColor3=D.Cyan; Stroke(H.UI.Btn.KeyBtn,D.Cyan,1,0.3) end
+H.UI.Btn.KeyBtn=Instance.new("TextButton",kbRow); H.UI.Btn.KeyBtn.Size=UDim2.new(0.46,0,0,34); H.UI.Btn.KeyBtn.BackgroundColor3=D.CardHover; H.UI.Btn.KeyBtn.Text="[ F4 ]"; H.UI.Btn.KeyBtn.TextColor3=D.Accent; H.UI.Btn.KeyBtn.TextSize=13; H.UI.Btn.KeyBtn.Font=Enum.Font.GothamBold; H.UI.Btn.KeyBtn.AutoButtonColor=false; H.UI.Btn.KeyBtn.BorderSizePixel=0; Corner(H.UI.Btn.KeyBtn,8); Stroke(H.UI.Btn.KeyBtn,D.Accent,1,0.3)
+local function SetKeyDisplay(k) H.UI.Btn.KeyBtn.Text="[ "..(k or "F4").." ]"; H.UI.Btn.KeyBtn.TextColor3=D.Accent; Stroke(H.UI.Btn.KeyBtn,D.Accent,1,0.3) end
 _G._SetKeyDisplay=SetKeyDisplay
 H.UI.Btn.KeyBtn.MouseButton1Click:Connect(function()
     if S.KeyListening then return end; S.KeyListening=true; H.UI.Btn.KeyBtn.Text="⌨ Taste drücken..."; H.UI.Btn.KeyBtn.TextColor3=D.Yellow; Stroke(H.UI.Btn.KeyBtn,D.Yellow,1.5,0)
@@ -1672,20 +1594,19 @@ H.UI.Btn.KeyBtn.MouseButton1Click:Connect(function()
         if inp.UserInputType~=Enum.UserInputType.Keyboard then return end
         for _,k in ipairs({Enum.KeyCode.LeftShift,Enum.KeyCode.RightShift,Enum.KeyCode.LeftControl,Enum.KeyCode.RightControl,Enum.KeyCode.LeftAlt,Enum.KeyCode.RightAlt}) do if inp.KeyCode==k then return end end
         S.KeyListening=false; if S.KeyConn then S.KeyConn:Disconnect() end; S.KeyConn=nil
-        H.Config.ToggleKey=inp.KeyCode.Name; SaveConfig(); SetKeyDisplay(H.Config.ToggleKey); Tw(H.UI.Btn.KeyBtn,{BackgroundColor3=D.CardHover}); Stroke(H.UI.Btn.KeyBtn,D.Green,2,0); task.delay(0.8,function() Stroke(H.UI.Btn.KeyBtn,D.Cyan,1,0.3) end)
+        H.Config.ToggleKey=inp.KeyCode.Name; SaveConfig(); SetKeyDisplay(H.Config.ToggleKey); Tw(H.UI.Btn.KeyBtn,{BackgroundColor3=D.CardHover}); Stroke(H.UI.Btn.KeyBtn,D.Green,2,0); task.delay(0.8,function() Stroke(H.UI.Btn.KeyBtn,D.Accent,1,0.3) end)
     end)
 end)
 MkLbl(kbCard,"Klicke, dann drücke die gewünschte Taste.",10,D.TextLow).Size=UDim2.new(1,0,0,14)
 local whCard=Card(SettPage); Pad(whCard,12,12,12,12); VList(whCard,8); SecLbl(whCard,"DISCORD WEBHOOK")
 local whOuter,whBox=MkInput(whCard,"https://discord.com/api/webhooks/..."); whOuter.Size=UDim2.new(1,0,0,36); H.UI.Inp.Webhook=whBox
-local wLine=Instance.new("Frame",whOuter); wLine.Size=UDim2.new(0,0,0,2); wLine.Position=UDim2.new(0,0,1,-2); wLine.BackgroundColor3=D.Cyan; wLine.BorderSizePixel=0; Corner(wLine,2)
-whBox.Focused:Connect(function() Stroke(whOuter,D.Cyan,1,0.2); Tw(wLine,{Size=UDim2.new(1,0,0,2)},TM) end)
+local wLine=Instance.new("Frame",whOuter); wLine.Size=UDim2.new(0,0,0,2); wLine.Position=UDim2.new(0,0,1,-2); wLine.BackgroundColor3=D.AccentDim; wLine.BorderSizePixel=0; Corner(wLine,2)
+whBox.Focused:Connect(function() Stroke(whOuter,D.Accent,1,0.2); Tw(wLine,{Size=UDim2.new(1,0,0,2)},TM) end)
 whBox.FocusLost:Connect(function() H.Config.WebhookURL=whBox.Text; SaveConfig(); Stroke(whOuter,D.Border,1,0.2); Tw(wLine,{Size=UDim2.new(0,0,0,2)},TM) end)
-NeonBtn(whCard,"📤  Test senden",D.CyanDim,34).MouseButton1Click:Connect(function() SendWebhook({},nil,nil) end)
+NeonBtn(whCard,"📤  Test senden",D.CyanDim,34).MouseButton1Click:Connect(function() SendWebhook() end)
 NeonBtn(SettPage,"⏏  GUI vollständig entladen",D.Red,34).MouseButton1Click:Connect(function()
-    S.Running=false; S.WhEnabled=false; S.SessionWatchActive=false; H.Config.AutoFarm=false; SaveSettings()
+    S.Running=false; S.WhEnabled=false; H.Config.AutoFarm=false; SaveSettings()
     if S.ChildConn then pcall(function() S.ChildConn:Disconnect() end) end
-    pcall(DisconnectSessionInvListeners)
     if _G.HazeShared and _G.HazeShared.StopFarm then pcall(_G.HazeShared.StopFarm) end
     pcall(function() ScreenGui:Destroy() end); pcall(function() H.UI.Fr.MiniBtn:Destroy() end)
 end)
@@ -1698,10 +1619,10 @@ H.UI.Fr.MiniBtn.AnchorPoint=Vector2.new(1,0); H.UI.Fr.MiniBtn.Position=UDim2.new
 H.UI.Fr.MiniBtn.BackgroundColor3=D.BG; H.UI.Fr.MiniBtn.BackgroundTransparency=0.2
 H.UI.Fr.MiniBtn.Text=""; H.UI.Fr.MiniBtn.AutoButtonColor=false; H.UI.Fr.MiniBtn.BorderSizePixel=0; Corner(H.UI.Fr.MiniBtn,99)
 local MBRing=Instance.new("Frame",H.UI.Fr.MiniBtn); MBRing.Size=UDim2.new(1,10,1,10); MBRing.Position=UDim2.new(0.5,0,0.5,0); MBRing.AnchorPoint=Vector2.new(0.5,0.5)
-MBRing.BackgroundTransparency=1; MBRing.BorderSizePixel=0; MBRing.ZIndex=0; Corner(MBRing,99); Stroke(MBRing,D.BorderCyan,1.5,0.45)
+MBRing.BackgroundTransparency=1; MBRing.BorderSizePixel=0; MBRing.ZIndex=0; Corner(MBRing,99); Stroke(MBRing,D.Border,1.5,0.45)
 local mbLogo=BuildMoonLogo(H.UI.Fr.MiniBtn,30,0,0); mbLogo.AnchorPoint=Vector2.new(0.5,0.5); mbLogo.Position=UDim2.new(0.5,0,0.5,0); mbLogo.ZIndex=2
 H.UI.Fr.MiniBtn.MouseEnter:Connect(function() Tw(H.UI.Fr.MiniBtn,{BackgroundTransparency=0.08},TM); Stroke(MBRing,D.Accent,2,0.25) end)
-H.UI.Fr.MiniBtn.MouseLeave:Connect(function() Tw(H.UI.Fr.MiniBtn,{BackgroundTransparency=0.2},TM); Stroke(MBRing,D.BorderCyan,1.5,0.45) end)
+H.UI.Fr.MiniBtn.MouseLeave:Connect(function() Tw(H.UI.Fr.MiniBtn,{BackgroundTransparency=0.2},TM); Stroke(MBRing,D.Border,1.5,0.45) end)
 H.UI.Fr.MiniBtn.MouseButton1Down:Connect(function() Tw(H.UI.Fr.MiniBtn,{Size=UDim2.new(0,46,0,46)},TF) end)
 H.UI.Fr.MiniBtn.MouseButton1Up:Connect(function() Tw(H.UI.Fr.MiniBtn,{Size=UDim2.new(0,52,0,52)},TF) end)
 H.UI.Fr.MiniBtn.MouseButton1Click:Connect(function() S.GuiVisible=not S.GuiVisible; H.UI.Fr.Main.Visible=S.GuiVisible end)
@@ -1713,42 +1634,42 @@ Svc.Input.InputBegan:Connect(function(inp,processed)
     end
 end)
 
--- ── Game Events ───────────────────────────────────────────────
+-- ── Game Events (GameEndedUI) ─────────────────────────────────
 if R.Remote then
-    R.Remote.OnClientEvent:Connect(function(cat,data)
-        if cat=="GameEnded_TextAnimation" and data=="Won" then if H.Config.AutoRetry then FireVoteRetry() end; return end
-        if cat=="Rewards - Items" then
-            S.RoundCount=S.RoundCount+1
-            ProcessRemoteRewardsPayload(data)
-            if UpdateSessionUI then pcall(UpdateSessionUI) end
-            pcall(CheckAllGoals)
-            SendWebhook(data,nil,nil)
+    R.Remote.OnClientEvent:Connect(function(cat, data)
+        if cat == "GameEnded_TextAnimation" and data == "Won" then
+            if H.Config.AutoRetry then FireVoteRetry() end
+            return
+        end
+        local catStr = tostring(cat)
+        if cat == "Update - EndedScreen" or catStr == "Update - EndedScreen" or (catStr:find("Update", 1, true) and catStr:find("EndedScreen", 1, true)) then
+            local nowc = os.clock()
+            if nowc - (S._EndedScreenDebounce or 0) > 1.2 then
+                S._EndedScreenDebounce = nowc
+                if S.RoundWallStart then
+                    GlobalSession.TotalTime = GlobalSession.TotalTime + (os.time() - S.RoundWallStart)
+                end
+                GlobalSession.CurrentRound = GlobalSession.CurrentRound + 1
+                S.RoundWallStart = nil
+                if UpdateSessionUI then pcall(UpdateSessionUI) end
+                SendWebhook()
+            end
+            return
+        end
+        if cat == "Rewards - Items" then
+            AccumulateRewards(data)
         end
     end)
 end
 
--- Lobby ↔ Runde: Tracking starten/stoppen, Webhook bei Rundenende (Lobby)
+-- Rundenzeit: Startzeit wenn Lobby → Spiel
 task.spawn(function()
     local wasLobby = IsInLobby()
-    if not wasLobby then
-        S.SessionWatchActive = true
-        pcall(ConnectSessionInvListeners)
-    end
+    if not wasLobby then S.RoundWallStart = os.time() end
     while S.Running do
         task.wait(0.45)
         local lobby = IsInLobby()
-        if wasLobby and not lobby then
-            S.SessionWatchActive = true
-            pcall(ConnectSessionInvListeners)
-        elseif not wasLobby and lobby then
-            S.SessionWatchActive = false
-            pcall(DisconnectSessionInvListeners)
-            local now = os.time()
-            if now - (S.LastLobbyWebhookTs or 0) >= 15 then
-                S.LastLobbyWebhookTs = now
-                task.spawn(function() pcall(function() SendWebhook({}, nil, nil) end) end)
-            end
-        end
+        if wasLobby and not lobby then S.RoundWallStart = os.time() end
         wasLobby = lobby
     end
 end)
@@ -1772,11 +1693,12 @@ _G.HazeShared.TeleportToLobby    = TeleportToLobby
 _G.HazeShared.SaveConfig         = SaveConfig
 _G.HazeShared.SaveSettings       = SaveSettings
 _G.HazeShared.SendWebhook        = SendWebhook
-_G.HazeShared.SessionData        = SessionData
+_G.HazeShared.SessionData        = GlobalSession
+_G.HazeShared.GlobalSession      = GlobalSession
 _G.HazeShared.RecordSessionTrait = function(name)
     if not name or name == "" then return end
-    table.insert(S.SessionTraits, tostring(name))
-    if #S.SessionTraits > 48 then table.remove(S.SessionTraits, 1) end
+    local k = "Trait · " .. tostring(name):sub(1, 120)
+    GlobalSession.AllRewards[k] = (GlobalSession.AllRewards[k] or 0) + 1
     if UpdateSessionUI then pcall(UpdateSessionUI) end
 end
 _G.HazeShared.UpdateSessionUI    = function() if UpdateSessionUI then pcall(UpdateSessionUI) end end
