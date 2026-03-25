@@ -37,12 +37,21 @@ if _G.HazHubLoaded then return end
 _G.HazHubLoaded = true
 
 -- ★ Account-spezifische Dynamik (für Multi-Account korrekt)
-local LP = game.Players.LocalPlayer
+local LP = game:GetService('Players').LocalPlayer
+if not LP then repeat task.wait(0.1) LP = game:GetService('Players').LocalPlayer until LP end
+local PlayerGui = nil
+pcall(function()
+    PlayerGui = LP:WaitForChild('PlayerGui', 10)
+end)
+if not PlayerGui then
+    warn("[HazeHub] PlayerGui konnte nicht innerhalb von 10s geladen werden. Script stoppt, um Absturz zu vermeiden.")
+    return
+end
 
 -- ★ CRITICAL: GUI Duplication Guard (Anti-Loop)
 local function HazHubMainExists()
     -- je nach Setup kann ScreenGui in PlayerGui oder CoreGui liegen
-    if LP and LP.PlayerGui and LP.PlayerGui:FindFirstChild("HazHub_Main") then
+    if PlayerGui and PlayerGui:FindFirstChild("HazHub_Main") then
         return true
     end
     local ok, cg = pcall(function() return game:GetService("CoreGui") end)
@@ -121,11 +130,10 @@ local function IsSessionCurrencyKey(name)
 end
 
 -- CoreGui-Check via reines pcall
-local guiParent = Svc.Player.PlayerGui
+local guiParent = PlayerGui
 pcall(function()
     local cg = game:GetService("CoreGui")
-    local _ = cg.Name
-    guiParent = cg
+    if not guiParent and cg then guiParent = cg end
 end)
 if makefolder then pcall(function() makefolder(K.FOLDER) end) end
 
