@@ -1,5 +1,9 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB V20 – Hauptskript  v20.2
+--  HazeHUB V20 – Hauptskript  v20.3
+--  FIXES v20.3:
+--    ✓ Settings + AutoSave pro LocalPlayer (…/Spielername_settings.json, …_autosave.json)
+--    ✓ Früh-Load AutoFarm liest dieselbe account-spezifische Datei (kein Überschreiben zwischen Accounts)
+--    ✓ Webhook: schwarzes Embed; Inline Account / Runde·Ø·Zeit; Währungen & Items getrennt
 --  FIXES v20.2:
 --    ✓ formatTime(seconds): <60 → „27s“, sonst „M:SSm“; Session-Tab + Webhook + Header-Timer
 --    ✓ Webhook: Embed 0x000000; Inline Runde / Zeit / Ø Zeit; Felder „Statistiken“ + „Drops“
@@ -21,18 +25,8 @@
 --    ✓ Neuer Traits-Tab (lädt trait.lua Modul)
 -- ╚══════════════════════════════════════════════════════════╝
 
--- ── Früh-Check Settings ───────────────────────────────────────
-local _SETTINGS_FILE_EARLY = "HazeHUB/HazeHUB_Settings.json"
+-- ── Früh-Flag (AutoFarm aus account-spezifischer settings-Datei, siehe nach Services) ──
 local _earlyAutoFarm = false
-pcall(function()
-    if isfile and isfile(_SETTINGS_FILE_EARLY) then
-        local raw = readfile(_SETTINGS_FILE_EARLY)
-        if raw and #raw > 2 then
-            local ok, d = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
-            if ok and d and d.AutoFarm == true then _earlyAutoFarm = true; _G.AutoFarmRunning = true end
-        end
-    end
-end)
 
 -- ── Haupttabelle ──────────────────────────────────────────────
 local Haze = {
@@ -53,8 +47,6 @@ local Haze = {
         INFO          = { Exp=true, Gems=true, Gold=true },
         RARE          = { ["Legendary Stone"]=true, ["Mythic Egg"]=true },
         FOLDER        = "HazeHUB",
-        SAVE_FILE     = "HazeHUB/HazeHUB_AutoSave.json",
-        SETTINGS_FILE = "HazeHUB/HazeHUB_Settings.json",
         LOBBY_ID      = 111446873000464,
         AF_URL        = "https://raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/autofarm.lua",
         SHOP_URL      = "https://raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/Shops",
@@ -112,6 +104,30 @@ pcall(function()
 end)
 if makefolder then pcall(function() makefolder(K.FOLDER) end) end
 
+-- ── Account-spezifische Dateien (kein Überschreiben zwischen mehreren Accounts) ──
+local function SanitizePlayerFileStem(name)
+    return (tostring(name or "Player")):gsub("[\\/:%*%?\"<>|]", "_")
+end
+local function GetSettingsFilePath()
+    local lp = Svc.Player
+    local stem = lp and SanitizePlayerFileStem(lp.Name) or "_unknown"
+    return K.FOLDER .. "/" .. stem .. "_settings.json"
+end
+local function GetAutoSaveFilePath()
+    local lp = Svc.Player
+    local stem = lp and SanitizePlayerFileStem(lp.Name) or "_unknown"
+    return K.FOLDER .. "/" .. stem .. "_autosave.json"
+end
+pcall(function()
+    if not (isfile and readfile) then return end
+    local path = GetSettingsFilePath()
+    if not isfile(path) then return end
+    local raw = readfile(path)
+    if not raw or #raw < 3 then return end
+    local ok, d = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
+    if ok and d and d.AutoFarm == true then _earlyAutoFarm = true; _G.AutoFarmRunning = true end
+end)
+
 -- ── Helpers ──────────────────────────────────────────────────
 local function TeleportToLobby()
     pcall(function() game:GetService("TeleportService"):Teleport(K.LOBBY_ID) end)
@@ -155,11 +171,12 @@ end
 local function SaveConfig()
     H.Config.SavedGoals={}
     for _,g in ipairs(S.Goals) do table.insert(H.Config.SavedGoals,{item=g.item,amount=g.amount}) end
-    if writefile then pcall(function() writefile(K.SAVE_FILE,Svc.Http:JSONEncode(H.Config)) end) end
+    if writefile then pcall(function() writefile(GetAutoSaveFilePath(), Svc.Http:JSONEncode(H.Config)) end) end
 end
 local function LoadConfig()
-    if not (isfile and isfile(K.SAVE_FILE)) then return end
-    local ok,data=pcall(function() return Svc.Http:JSONDecode(readfile(K.SAVE_FILE)) end)
+    local savePath = GetAutoSaveFilePath()
+    if not (isfile and isfile(savePath)) then return end
+    local ok,data=pcall(function() return Svc.Http:JSONDecode(readfile(savePath)) end)
     if not ok or not data then return end
     local C=H.Config
     if data.WebhookURL~=nil then C.WebhookURL=data.WebhookURL end
@@ -177,11 +194,12 @@ local function LoadConfig()
 end
 local function SaveSettings()
     if not writefile then return end
-    pcall(function() writefile(K.SETTINGS_FILE,Svc.Http:JSONEncode({AutoFarm=H.Config.AutoFarm,ts=os.time()})) end)
+    pcall(function() writefile(GetSettingsFilePath(), Svc.Http:JSONEncode({ AutoFarm = H.Config.AutoFarm, ts = os.time() })) end)
 end
 local function LoadSettings()
-    if not (isfile and isfile(K.SETTINGS_FILE)) then return end
-    local ok,data=pcall(function() return Svc.Http:JSONDecode(readfile(K.SETTINGS_FILE)) end)
+    local stPath = GetSettingsFilePath()
+    if not (isfile and isfile(stPath)) then return end
+    local ok, data = pcall(function() return Svc.Http:JSONDecode(readfile(stPath)) end)
     if not ok or not data then return end
     if data.AutoFarm~=nil then H.Config.AutoFarm=data.AutoFarm end
 end
@@ -687,7 +705,7 @@ end
 --  SCREEN GUI  – AnchorPoint(0.5,0.5) → zentriert
 -- ╚══════════════════════════════════════════════════════════╝
 local ScreenGui=Instance.new("ScreenGui")
-ScreenGui.Name="HazeHUB_v202"; ScreenGui.ResetOnSpawn=false
+ScreenGui.Name="HazeHUB_v203"; ScreenGui.ResetOnSpawn=false
 ScreenGui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 ScreenGui.DisplayOrder=999; ScreenGui.IgnoreGuiInset=true
 ScreenGui.Parent=guiParent
@@ -905,9 +923,9 @@ local function SendWebhook(_a,_b,_c)
     local gemsN = math.floor(tonumber(gs.AllRewards.Gems) or tonumber(gs.AllRewards.Gem) or 0)
     local expN = math.floor(tonumber(gs.AllRewards.Exp) or 0)
     local statsBlock = table.concat({
-        "🟡 **Gold** · `" .. FmtNum(goldN) .. "`",
-        "💎 **Gems** · `" .. FmtNum(gemsN) .. "`",
-        "✨ **Exp** · `" .. FmtNum(expN) .. "`",
+        "🟡 Gold · `" .. FmtNum(goldN) .. "`",
+        "💎 Gems · `" .. FmtNum(gemsN) .. "`",
+        "✨ Exp · `" .. FmtNum(expN) .. "`",
     }, "\n")
     local itemLines = {}
     local sorted = {}
@@ -928,15 +946,16 @@ local function SendWebhook(_a,_b,_c)
     local tsFooter = os.date("%Y-%m-%d %H:%M:%S")
     local embed = {
         color = 0x000000,
-        title = "Session Status",
-        description = string.format("**%s** · kumulierte Sitzungsdaten", Svc.Player.Name),
+        title = "Session · Haze Hub",
+        description = "*Kumulierte Werte dieser Sitzung*",
         thumbnail = { url = thumbUrl },
         fields = {
+            { name = "Account", value = "`" .. Svc.Player.Name .. "`", inline = true },
             { name = "Runde", value = "`" .. tostring(cr) .. "`", inline = true },
-            { name = "Zeit", value = "`" .. timeStr .. "`", inline = true },
             { name = "Ø Zeit", value = "`" .. avgStr .. "`", inline = true },
-            { name = "Statistiken", value = statsBlock, inline = false },
-            { name = "Drops", value = itemsTxt, inline = false },
+            { name = "Rundenzeit (gesamt)", value = "`" .. timeStr .. "`", inline = false },
+            { name = "Währungen & XP", value = statsBlock, inline = false },
+            { name = "Items", value = itemsTxt, inline = false },
         },
     }
     embed.footer = logoOk and { text = "Session Bericht • " .. tsFooter, icon_url = HAZE_ASSETS.LogoHttps }
@@ -1761,6 +1780,8 @@ _G.HazeShared.IsInLobby          = IsInLobby
 _G.HazeShared.TeleportToLobby    = TeleportToLobby
 _G.HazeShared.SaveConfig         = SaveConfig
 _G.HazeShared.SaveSettings       = SaveSettings
+_G.HazeShared.GetSettingsFilePath = GetSettingsFilePath
+_G.HazeShared.GetAutoSaveFilePath = GetAutoSaveFilePath
 _G.HazeShared.SendWebhook        = SendWebhook
 _G.HazeShared.SessionData        = GlobalSession
 _G.HazeShared.GlobalSession      = GlobalSession
