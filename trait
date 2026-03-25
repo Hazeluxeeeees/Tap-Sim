@@ -80,6 +80,10 @@ local TR = {
     Rolling = false,
     RollCount = 0,
     TargetTraits = {},
+    StatRolling = false,
+    StatRollCount = 0,
+    SelectedStatMode = "All", -- "All" | potential object name
+    TargetStatRating = "S",
     UI = { Lbl = {}, Fr = {}, Btn = {}, Inp = {} },
 }
 
@@ -223,6 +227,70 @@ local function GetUnitTraits(unitInstance)
         end
     end)
     return main, sub
+end
+
+local STAT_NAMES = {
+    "AttackCooldownPotential",
+    "DamagePotential",
+    "HealthPotential",
+    "RangePotential",
+    "SpeedPotential",
+}
+local STAT_RANK_VALUE = {
+    ["C"] = 1, ["C+"] = 2,
+    ["B"] = 3, ["B+"] = 4,
+    ["A"] = 5, ["A+"] = 6,
+    ["S"] = 7, ["S+"] = 8,
+    ["O"] = 9, ["O+"] = 10,
+}
+local function ToRankString(v)
+    local s = tostring(v or ""):upper():gsub("%s+", "")
+    s = s:gsub("PLUS", "+")
+    if STAT_RANK_VALUE[s] then return s end
+    local n = tonumber(v)
+    if n then
+        if n >= 10 then return "O+" end
+        if n >= 9 then return "O" end
+        if n >= 8 then return "S+" end
+        if n >= 7 then return "S" end
+        if n >= 6 then return "A+" end
+        if n >= 5 then return "A" end
+        if n >= 4 then return "B+" end
+        if n >= 3 then return "B" end
+        if n >= 2 then return "C+" end
+        return "C"
+    end
+    return "C"
+end
+local function RankAtLeast(rank, target)
+    return (STAT_RANK_VALUE[ToRankString(rank)] or 0) >= (STAT_RANK_VALUE[ToRankString(target)] or 0)
+end
+local function GetPotentialObject(unitInstance, statName)
+    if not unitInstance then return nil end
+    local direct = unitInstance:FindFirstChild(statName)
+    if direct then return direct end
+    local stats = unitInstance:FindFirstChild("Stats")
+    if stats and stats:FindFirstChild(statName) then return stats:FindFirstChild(statName) end
+    local pot = unitInstance:FindFirstChild("Potentials")
+    if pot and pot:FindFirstChild(statName) then return pot:FindFirstChild(statName) end
+    return unitInstance:FindFirstChild(statName, true)
+end
+local function GetStatRatings(unitInstance)
+    local out = {}
+    for _, statName in ipairs(STAT_NAMES) do
+        local obj = GetPotentialObject(unitInstance, statName)
+        local raw = obj and obj.Value or nil
+        out[statName] = { raw = raw, rating = ToRankString(raw), obj = obj }
+    end
+    return out
+end
+local function GetBestStat(ratings)
+    local bestN, bestR, bestV = nil, "C", 0
+    for n, d in pairs(ratings or {}) do
+        local rv = STAT_RANK_VALUE[d.rating] or 0
+        if rv > bestV then bestV = rv; bestN = n; bestR = d.rating end
+    end
+    return bestN, bestR
 end
 
 local function UpdateLiveTraitDisplay()
@@ -507,6 +575,8 @@ local function FillViewportWithUnit(vp, unitName)
     return ok
 end
 
+local RefreshStatPanel
+
 local function BuildUnitList(filter)
     for _, v in pairs(TR.UI.Fr.UnitList:GetChildren()) do
         if v:IsA("Frame") then v:Destroy() end
@@ -563,6 +633,7 @@ local function BuildUnitList(filter)
             TR.SelectedUnit = capU.instance
             BuildUnitList(filter)
             UpdateLiveTraitDisplay()
+            pcall(function() if RefreshStatPanel then RefreshStatPanel() end end)
         end)
         clickBtn.MouseEnter:Connect(function() if TR.SelectedUnit ~= capU.instance then Tw(row, { BackgroundColor3 = D.CardHover }) end end)
         clickBtn.MouseLeave:Connect(function() if TR.SelectedUnit ~= capU.instance then Tw(row, { BackgroundColor3 = D.CardHover }) end end)
@@ -713,6 +784,69 @@ MkLbl(delayRow, "zwischen Rolls", 14, D.TextLow).Size = UDim2.new(0.22, 0, 1, 0)
 
 local singleRollBtn = NeonBtn(rerollCard, "🎲  Einmal Rollen (Main)", D.CyanDim, 30)
 
+-- ── Auto-Stat-Reroll ─────────────────────────────────────────
+SecLbl(rerollCard, "📈 AUTO-STAT-REROLL (C .. O+)")
+TR.UI.Lbl.StatHeader = MkLbl(rerollCard, "Keine Einheit gewählt", 13, D.TextLow, true)
+TR.UI.Lbl.StatHeader.Size = UDim2.new(1, 0, 0, 18)
+
+local statKeyRow = Instance.new("Frame", rerollCard); statKeyRow.Size = UDim2.new(1, 0, 0, 20); statKeyRow.BackgroundTransparency = 1; HList(statKeyRow, 8)
+TR.UI.Lbl.StatKeyCount = MkLbl(statKeyRow, "Stats Key: –", 13, D.Gold, true); TR.UI.Lbl.StatKeyCount.Size = UDim2.new(0.5, 0, 1, 0)
+TR.UI.Lbl.PerfectStatKeyCount = MkLbl(statKeyRow, "Perfect Stats Key: –", 13, D.Cyan, true); TR.UI.Lbl.PerfectStatKeyCount.Size = UDim2.new(0.5, 0, 1, 0); TR.UI.Lbl.PerfectStatKeyCount.TextXAlignment = Enum.TextXAlignment.Right
+
+local statList = Instance.new("Frame", rerollCard); statList.Size = UDim2.new(1, 0, 0, 0); statList.AutomaticSize = Enum.AutomaticSize.Y; statList.BackgroundTransparency = 1; VList(statList, 3)
+TR.UI.Fr.StatRows = {}
+for _, statName in ipairs(STAT_NAMES) do
+    local row = Instance.new("Frame", statList); row.Size = UDim2.new(1, 0, 0, 24); row.BackgroundColor3 = D.Card; row.BackgroundTransparency = D.GlassPane or 0.18; row.BorderSizePixel = 0; Corner(row, 6); Stroke(row, D.Border, 1, 0.45)
+    local nL = Instance.new("TextLabel", row); nL.Position = UDim2.new(0, 8, 0, 0); nL.Size = UDim2.new(0.72, 0, 1, 0); nL.BackgroundTransparency = 1
+    nL.Text = statName; nL.TextColor3 = D.TextMid; nL.TextSize = 11; nL.Font = Enum.Font.GothamMedium; nL.TextScaled = false; nL.RichText = true; nL.TextStrokeTransparency = 1; nL.TextXAlignment = Enum.TextXAlignment.Left; nL.TextWrapped = true; nL.TextTruncate = Enum.TextTruncate.None
+    local vL = Instance.new("TextLabel", row); vL.Position = UDim2.new(0.72, 0, 0, 0); vL.Size = UDim2.new(0.28, -6, 1, 0); vL.BackgroundTransparency = 1
+    vL.Text = "–"; vL.TextColor3 = D.TextLow; vL.TextSize = 12; vL.Font = Enum.Font.GothamBold; vL.TextScaled = false; vL.RichText = true; vL.TextStrokeTransparency = 1; vL.TextXAlignment = Enum.TextXAlignment.Right
+    TR.UI.Fr.StatRows[statName] = { nameLbl = nL, valLbl = vL, row = row }
+end
+
+local statModeCard = Instance.new("Frame", rerollCard); statModeCard.Size = UDim2.new(1, 0, 0, 0); statModeCard.AutomaticSize = Enum.AutomaticSize.Y; statModeCard.BackgroundTransparency = 1; VList(statModeCard, 4)
+SecLbl(statModeCard, "Reroll-Modus")
+local statModeGrid = Instance.new("Frame", statModeCard); statModeGrid.Size = UDim2.new(1, 0, 0, 0); statModeGrid.AutomaticSize = Enum.AutomaticSize.Y; statModeGrid.BackgroundTransparency = 1
+local statModeLayout = Instance.new("UIGridLayout", statModeGrid); statModeLayout.CellSize = UDim2.new(0.49, 0, 0, 26); statModeLayout.CellPadding = UDim2.new(0, 6, 0, 6)
+TR.UI.Btn.StatMode = {}
+local function SetStatMode(mode)
+    TR.SelectedStatMode = mode
+    for k, b in pairs(TR.UI.Btn.StatMode) do
+        local active = (k == mode)
+        Tw(b, { BackgroundColor3 = active and (D.RowSelect or Color3.fromRGB(48, 50, 58)) or D.CardHover })
+        local s = b:FindFirstChildOfClass("UIStroke"); if s then s.Transparency = active and 0 or 0.4; s.Color = active and D.Cyan or D.Border end
+    end
+end
+local allBtn = Instance.new("TextButton", statModeGrid); allBtn.BackgroundColor3 = D.CardHover; allBtn.Text = "All"; allBtn.TextColor3 = D.Cyan; allBtn.TextSize = 12; allBtn.Font = Enum.Font.GothamBold; allBtn.TextScaled = false; allBtn.RichText = true; allBtn.TextStrokeTransparency = 1; allBtn.AutoButtonColor = false; allBtn.BorderSizePixel = 0; Corner(allBtn, 6); Stroke(allBtn, D.Cyan, 1, 0.2)
+TR.UI.Btn.StatMode["All"] = allBtn
+allBtn.MouseButton1Click:Connect(function() SetStatMode("All") end)
+for _, statName in ipairs(STAT_NAMES) do
+    local b = Instance.new("TextButton", statModeGrid)
+    b.BackgroundColor3 = D.CardHover; b.Text = statName; b.TextColor3 = D.TextMid; b.TextSize = 11; b.Font = Enum.Font.GothamMedium; b.TextScaled = false; b.RichText = true; b.TextStrokeTransparency = 1; b.AutoButtonColor = false; b.BorderSizePixel = 0
+    b.TextTruncate = Enum.TextTruncate.AtEnd
+    Corner(b, 6); Stroke(b, D.Border, 1, 0.4)
+    TR.UI.Btn.StatMode[statName] = b
+    b.MouseButton1Click:Connect(function() SetStatMode(statName) end)
+end
+SetStatMode("All")
+
+local targetRow = Instance.new("Frame", rerollCard); targetRow.Size = UDim2.new(1, 0, 0, 28); targetRow.BackgroundTransparency = 1; HList(targetRow, 6)
+MkLbl(targetRow, "Zielrating:", 13, D.TextLow).Size = UDim2.new(0.35, 0, 1, 0)
+local targetRatings = { "C", "C+", "B", "B+", "A", "A+", "S", "S+", "O", "O+" }
+local targetDropdown = Instance.new("TextButton", targetRow); targetDropdown.Size = UDim2.new(0.30, 0, 1, 0); targetDropdown.BackgroundColor3 = D.CardHover; targetDropdown.Text = "S"; targetDropdown.TextColor3 = D.Cyan; targetDropdown.TextSize = 13; targetDropdown.Font = Enum.Font.GothamBold; targetDropdown.TextScaled = false; targetDropdown.RichText = true; targetDropdown.TextStrokeTransparency = 1; targetDropdown.AutoButtonColor = false; targetDropdown.BorderSizePixel = 0; Corner(targetDropdown, 6); Stroke(targetDropdown, D.Cyan, 1, 0.2)
+local rateIndex = 7
+TR.TargetStatRating = targetRatings[rateIndex]
+targetDropdown.MouseButton1Click:Connect(function()
+    rateIndex = rateIndex + 1; if rateIndex > #targetRatings then rateIndex = 1 end
+    TR.TargetStatRating = targetRatings[rateIndex]
+    targetDropdown.Text = TR.TargetStatRating
+end)
+TR.UI.Lbl.StatRollRate = MkLbl(targetRow, "", 12, D.TextLow); TR.UI.Lbl.StatRollRate.Size = UDim2.new(0.35, 0, 1, 0); TR.UI.Lbl.StatRollRate.TextXAlignment = Enum.TextXAlignment.Right
+
+local statCtrlRow = Instance.new("Frame", rerollCard); statCtrlRow.Size = UDim2.new(1, 0, 0, 34); statCtrlRow.BackgroundTransparency = 1; HList(statCtrlRow, 8)
+TR.UI.Btn.StartStat = Instance.new("TextButton", statCtrlRow); TR.UI.Btn.StartStat.Size = UDim2.new(0.58, 0, 1, 0); TR.UI.Btn.StartStat.BackgroundColor3 = Color3.fromRGB(14, 42, 28); TR.UI.Btn.StartStat.BackgroundTransparency = 0.22; TR.UI.Btn.StartStat.Text = "▶  Start Stat-Reroll"; TR.UI.Btn.StartStat.TextColor3 = D.GreenBright; TR.UI.Btn.StartStat.TextSize = 13; TR.UI.Btn.StartStat.Font = Enum.Font.GothamBold; TR.UI.Btn.StartStat.TextScaled = false; TR.UI.Btn.StartStat.RichText = true; TR.UI.Btn.StartStat.TextStrokeTransparency = 1; TR.UI.Btn.StartStat.AutoButtonColor = false; TR.UI.Btn.StartStat.BorderSizePixel = 0; Corner(TR.UI.Btn.StartStat, 8); Stroke(TR.UI.Btn.StartStat, D.Green, 1.5, 0.3)
+TR.UI.Btn.StopStat = Instance.new("TextButton", statCtrlRow); TR.UI.Btn.StopStat.Size = UDim2.new(0.38, 0, 1, 0); TR.UI.Btn.StopStat.BackgroundColor3 = Color3.fromRGB(48, 16, 18); TR.UI.Btn.StopStat.BackgroundTransparency = 0.22; TR.UI.Btn.StopStat.Text = "■  Stop"; TR.UI.Btn.StopStat.TextColor3 = D.Red; TR.UI.Btn.StopStat.TextSize = 13; TR.UI.Btn.StopStat.Font = Enum.Font.GothamBold; TR.UI.Btn.StopStat.TextScaled = false; TR.UI.Btn.StopStat.RichText = true; TR.UI.Btn.StopStat.TextStrokeTransparency = 1; TR.UI.Btn.StopStat.AutoButtonColor = false; TR.UI.Btn.StopStat.BorderSizePixel = 0; Corner(TR.UI.Btn.StopStat, 8); Stroke(TR.UI.Btn.StopStat, D.Red, 1.5, 0.28)
+
 local function CheckGoalReached()
     if not TR.SelectedUnit then return false end
     local main, sub = GetUnitTraits(TR.SelectedUnit)
@@ -739,6 +873,55 @@ local function DoSingleReroll()
         RerollRemote:FireServer(TR.SelectedUnit, "Reroll", "Main", TR_SELECTED_CURRENCY, { curMain, curSub })
     end)
     if ok then TR.RollCount = TR.RollCount + 1 end
+    return ok
+end
+
+local function ResolveStatRerollRemote()
+    local rr = nil
+    pcall(function()
+        local g = RS:WaitForChild("Remote", 5):WaitForChild("Server", 5):WaitForChild("Gambling", 5)
+        for _, n in ipairs({ "RerollPotential", "RerollStat", "RerollStats", "PotentialReroll" }) do
+            local r = g:FindFirstChild(n)
+            if r then rr = r; break end
+        end
+    end)
+    return rr
+end
+local function GetItemAmount(itemName)
+    local n = 0
+    pcall(function()
+        local items = RS:WaitForChild("Player_Data", 3):WaitForChild(LP.Name, 3):WaitForChild("Items", 3)
+        local it = items:FindFirstChild(itemName)
+        if not it then return end
+        local a = it:FindFirstChild("Amount") or it:FindFirstChild("Value")
+        n = tonumber(a and a.Value or it.Value) or 0
+    end)
+    return n
+end
+local function StatGoalReached()
+    if not TR.SelectedUnit then return false end
+    local ratings = GetStatRatings(TR.SelectedUnit)
+    local _, bestRank = GetBestStat(ratings)
+    return RankAtLeast(bestRank, TR.TargetStatRating), bestRank
+end
+local function HasAnyStatKey()
+    return (GetItemAmount("Stats Key") > 0) or (GetItemAmount("Perfect Stats Key") > 0)
+end
+local function DoSingleStatReroll()
+    if not TR.SelectedUnit then SetStatus("⚠ Keine Einheit gewählt!", D.Orange); return false end
+    local statRemote = ResolveStatRerollRemote()
+    if not statRemote then SetStatus("⚠ RerollPotential Remote nicht gefunden!", D.Orange); return false end
+    if not HasAnyStatKey() then SetStatus("⚠ Keine Stats Keys mehr.", D.Orange); return false end
+    local ok = pcall(function()
+        if TR.SelectedStatMode == "All" then
+            statRemote:FireServer(TR.SelectedUnit, "All")
+        else
+            local pObj = GetPotentialObject(TR.SelectedUnit, TR.SelectedStatMode)
+            if not pObj then error("Potential fehlt: " .. tostring(TR.SelectedStatMode)) end
+            statRemote:FireServer(TR.SelectedUnit, pObj)
+        end
+    end)
+    if ok then TR.StatRollCount = TR.StatRollCount + 1 end
     return ok
 end
 
@@ -794,6 +977,67 @@ stopRerollBtn.MouseButton1Click:Connect(function()
     SetStatus("⏹ Auto-Reroll gestoppt.", D.TextMid)
 end)
 
+function RefreshStatPanel()
+    if not TR.UI.Fr.StatRows then return end
+    if not TR.SelectedUnit then
+        TR.UI.Lbl.StatHeader.Text = "Keine Einheit gewählt"; TR.UI.Lbl.StatHeader.TextColor3 = D.TextLow
+        for n, r in pairs(TR.UI.Fr.StatRows) do
+            r.nameLbl.Text = n; r.valLbl.Text = "–"; r.valLbl.TextColor3 = D.TextLow
+        end
+        return
+    end
+    TR.UI.Lbl.StatHeader.Text = "Stat-Scan: " .. TR.SelectedUnit.Name; TR.UI.Lbl.StatHeader.TextColor3 = D.Cyan
+    local ratings = GetStatRatings(TR.SelectedUnit)
+    for n, r in pairs(TR.UI.Fr.StatRows) do
+        local d = ratings[n]
+        local rating = d and d.rating or "C"
+        local raw = d and d.raw or "-"
+        local col = RankAtLeast(rating, "S") and D.GreenBright or (RankAtLeast(rating, "A") and D.Yellow or D.TextMid)
+        r.nameLbl.Text = n
+        r.valLbl.Text = tostring(rating) .. "  (" .. tostring(raw) .. ")"
+        r.valLbl.TextColor3 = col
+    end
+end
+
+local function AutoStatRerollLoop()
+    TR.StatRolling = true
+    TR.StatRollCount = 0
+    TR.UI.Btn.StartStat.Text = "⏳ Rollt..."; TR.UI.Btn.StartStat.TextColor3 = D.Yellow; Stroke(TR.UI.Btn.StartStat, D.Yellow, 2, 0.15)
+    SetStatus("🎯 Auto-Stat-Reroll läuft...", D.Gold)
+    local t0 = os.clock()
+    while TR.StatRolling do
+        if not TR.SelectedUnit then SetStatus("⚠ Keine Einheit gewählt!", D.Orange); break end
+        local reached, bestRank = StatGoalReached()
+        if reached then
+            SetStatus("✅ Zielrating erreicht: " .. tostring(bestRank), D.GreenBright)
+            if RankAtLeast(bestRank, "S") and HS.SendWebhook then pcall(HS.SendWebhook) end
+            break
+        end
+        if not HasAnyStatKey() then SetStatus("⛔ Stats Key leer. Stop.", D.Orange); break end
+        local ok = DoSingleStatReroll()
+        if not ok then SetStatus("❌ Stat-Reroll fehlgeschlagen.", D.Red); break end
+        local dt = os.clock() - t0
+        if dt > 0 and TR.UI.Lbl.StatRollRate then
+            TR.UI.Lbl.StatRollRate.Text = string.format("%.1f r/min", TR.StatRollCount / dt * 60)
+        end
+        task.wait(math.max(0.15, tonumber(delayBox.Text) or 0.5))
+        pcall(RefreshStatPanel)
+    end
+    TR.StatRolling = false
+    TR.UI.Btn.StartStat.Text = "▶  Start Stat-Reroll"; TR.UI.Btn.StartStat.TextColor3 = D.GreenBright; Stroke(TR.UI.Btn.StartStat, D.Green, 1.5, 0.3)
+    Tw(TR.UI.Btn.StartStat, { BackgroundColor3 = Color3.fromRGB(14, 42, 28), BackgroundTransparency = 0.22 })
+end
+
+TR.UI.Btn.StartStat.MouseButton1Click:Connect(function()
+    if TR.StatRolling then SetStatus("⚠ Stat-Reroll läuft bereits.", D.Yellow); return end
+    if not TR.SelectedUnit then SetStatus("⚠ Keine Einheit gewählt!", D.Orange); return end
+    task.spawn(AutoStatRerollLoop)
+end)
+TR.UI.Btn.StopStat.MouseButton1Click:Connect(function()
+    TR.StatRolling = false
+    SetStatus("⏹ Stat-Reroll gestoppt.", D.TextMid)
+end)
+
 task.spawn(function()
     while true do
         task.wait(1)
@@ -806,7 +1050,12 @@ task.spawn(function()
                 if amt then rr = tostring(amt.Value) end
             end
         end)
-        pcall(function() TR.UI.Lbl.RollCount.Text = "Trait Reroll: " .. rr end)
+        pcall(function()
+            TR.UI.Lbl.RollCount.Text = "Trait Reroll: " .. rr
+            TR.UI.Lbl.StatKeyCount.Text = "Stats Key: " .. tostring(GetItemAmount("Stats Key"))
+            TR.UI.Lbl.PerfectStatKeyCount.Text = "Perfect Stats Key: " .. tostring(GetItemAmount("Perfect Stats Key"))
+            RefreshStatPanel()
+        end)
     end
 end)
 
