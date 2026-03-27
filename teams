@@ -34,6 +34,7 @@ local LP = game.Players.LocalPlayer
 local RS = game:GetService("ReplicatedStorage")
 
 -- ── Dateipfad (account-spezifisch) ──────────────────────────
+-- REQUIRED: Dateiname basiert auf LP.Name → kein Account-Überschreiben
 local FOLDER     = "HazeHUB"
 local TEAMS_FILE = FOLDER .. "/" .. LP.Name .. "_teams.json"
 if makefolder then pcall(function() makefolder(FOLDER) end) end
@@ -49,7 +50,9 @@ local TM_State = {
 local RemoteUnits = nil
 task.spawn(function()
     pcall(function()
-        RemoteUnits = RS:WaitForChild("Remote", 15):WaitForChild("Server", 15):WaitForChild("Units", 15)
+        RemoteUnits = RS:WaitForChild("Remote", 15)
+                        :WaitForChild("Server", 15)
+                        :WaitForChild("Units",  15)
     end)
 end)
 
@@ -80,10 +83,10 @@ end
 -- Liest UnitLoadout1..6 aus Player_Data[LP.Name].Data
 -- Liest AutoUpgradeConfig aus Player_Data[LP.Name].AutoUpgradeConfig
 local function ScanCurrentLoadout()
-    local slots = {}
-    local autoUp = {}
+    local slots   = {}
+    local autoUp  = {}
     pcall(function()
-        local pd = RS:WaitForChild("Player_Data", 5):WaitForChild(LP.Name, 5)
+        local pd   = RS:WaitForChild("Player_Data", 5):WaitForChild(LP.Name, 5)
         local data = pd:WaitForChild("Data", 5)
         for i = 1, 6 do
             local lv = data:FindFirstChild("UnitLoadout" .. i)
@@ -143,17 +146,23 @@ MkLbl(TeamsPage, "Teams v" .. VERSION .. " | " .. LP.Name, 12, D.TextLow).Size =
 
 -- ── Status-Label ──────────────────────────────────────────────
 local tmStatusCard = Card(TeamsPage, 26); Pad(tmStatusCard, 4, 10, 4, 10)
-local tmStatusLbl = Instance.new("TextLabel", tmStatusCard)
-tmStatusLbl.Size = UDim2.new(1, 0, 1, 0)
+local tmStatusLbl  = Instance.new("TextLabel", tmStatusCard)
+tmStatusLbl.Size                  = UDim2.new(1, 0, 1, 0)
 tmStatusLbl.BackgroundTransparency = 1
-tmStatusLbl.Text = "⏳ Initialisiere..."
-tmStatusLbl.TextColor3 = D.Yellow
-tmStatusLbl.TextSize = 13
-tmStatusLbl.Font = Enum.Font.GothamMedium
-tmStatusLbl.TextScaled = false; tmStatusLbl.RichText = true; tmStatusLbl.TextStrokeTransparency = 1
-tmStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
+tmStatusLbl.Text                  = "⏳ Initialisiere..."
+tmStatusLbl.TextColor3            = D.Yellow
+tmStatusLbl.TextSize              = 13
+tmStatusLbl.Font                  = Enum.Font.GothamMedium
+tmStatusLbl.TextScaled            = false
+tmStatusLbl.RichText              = true
+tmStatusLbl.TextStrokeTransparency = 1
+tmStatusLbl.TextXAlignment        = Enum.TextXAlignment.Left
+
 local function SetTMStatus(txt, col)
-    pcall(function() tmStatusLbl.Text = txt; tmStatusLbl.TextColor3 = col or D.TextMid end)
+    pcall(function()
+        tmStatusLbl.Text       = txt
+        tmStatusLbl.TextColor3 = col or D.TextMid
+    end)
 end
 
 -- ── Sektion: Aktuelles Loadout scannen & speichern ────────────
@@ -163,83 +172,94 @@ SecLbl(saveCard, "💾  TEAM SPEICHERN")
 
 -- Slot-Vorschau (6 Zeilen, read-only)
 local slotPreviewFrame = Instance.new("Frame", saveCard)
-slotPreviewFrame.Size = UDim2.new(1, 0, 0, 0)
-slotPreviewFrame.AutomaticSize = Enum.AutomaticSize.Y
+slotPreviewFrame.Size                = UDim2.new(1, 0, 0, 0)
+slotPreviewFrame.AutomaticSize       = Enum.AutomaticSize.Y
 slotPreviewFrame.BackgroundTransparency = 1
 VList(slotPreviewFrame, 3)
 
 local slotPreviews = {}
 for i = 1, 6 do
     local row = Instance.new("Frame", slotPreviewFrame)
-    row.Size = UDim2.new(1, 0, 0, 24)
-    row.BackgroundColor3 = D.CardHover
-    row.BackgroundTransparency = 0.5
-    row.BorderSizePixel = 0
+    row.Size                    = UDim2.new(1, 0, 0, 24)
+    row.BackgroundColor3        = D.CardHover
+    row.BackgroundTransparency  = 0.5
+    row.BorderSizePixel         = 0
     Corner(row, 6); Stroke(row, D.Border, 1, 0.5)
+
     local badge = Instance.new("TextLabel", row)
-    badge.Size = UDim2.new(0, 24, 1, 0)
-    badge.BackgroundColor3 = D.TabActive
-    badge.BackgroundTransparency = 0.3
-    badge.Text = tostring(i)
-    badge.TextColor3 = D.CyanDim
-    badge.TextSize = 11
-    badge.Font = Enum.Font.GothamBold
-    badge.TextXAlignment = Enum.TextXAlignment.Center
-    badge.BorderSizePixel = 0
+    badge.Size                    = UDim2.new(0, 24, 1, 0)
+    badge.BackgroundColor3        = D.TabActive
+    badge.BackgroundTransparency  = 0.3
+    badge.Text                    = tostring(i)
+    badge.TextColor3              = D.CyanDim
+    badge.TextSize                = 11
+    badge.Font                    = Enum.Font.GothamBold
+    badge.TextXAlignment          = Enum.TextXAlignment.Center
+    badge.BorderSizePixel         = 0
     Corner(badge, 6)
+
     local lbl = Instance.new("TextLabel", row)
-    lbl.Position = UDim2.new(0, 30, 0, 0)
-    lbl.Size = UDim2.new(1, -34, 1, 0)
+    lbl.Position       = UDim2.new(0, 30, 0, 0)
+    lbl.Size           = UDim2.new(1, -34, 1, 0)
     lbl.BackgroundTransparency = 1
-    lbl.Text = "—  (leer)"
-    lbl.TextColor3 = D.TextLow
-    lbl.TextSize = 11; lbl.Font = Enum.Font.GothamMedium
+    lbl.Text           = "—  (leer)"
+    lbl.TextColor3     = D.TextLow
+    lbl.TextSize       = 11
+    lbl.Font           = Enum.Font.GothamMedium
     lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.TextTruncate = Enum.TextTruncate.AtEnd
+    lbl.TextTruncate   = Enum.TextTruncate.AtEnd
     slotPreviews[i] = lbl
 end
 
 -- Scan-Button
 local scanSaveBtn = NeonBtn(saveCard, "🔍  Loadout scannen", D.CyanDim, 30)
+
 local function RefreshSlotPreview()
     local slots, autoUp = ScanCurrentLoadout()
     for i = 1, 6 do
         local lbl = slotPreviews[i]
         if slots[i] then
             local auTxt = autoUp[i] ~= nil and ("  [AU: " .. tostring(autoUp[i]) .. "]") or ""
-            lbl.Text = slots[i] .. auTxt
+            lbl.Text       = slots[i] .. auTxt
             lbl.TextColor3 = D.TextHi
         else
-            lbl.Text = "—  (leer)"
+            lbl.Text       = "—  (leer)"
             lbl.TextColor3 = D.TextLow
         end
     end
     SetTMStatus("✅ Loadout gescannt!", D.Green)
 end
+
 scanSaveBtn.MouseButton1Click:Connect(function()
-    scanSaveBtn.Text = "⏳ Scanne..."; scanSaveBtn.TextColor3 = D.Yellow
+    scanSaveBtn.Text       = "⏳ Scanne..."
+    scanSaveBtn.TextColor3 = D.Yellow
     task.spawn(function()
         pcall(RefreshSlotPreview)
-        pcall(function() scanSaveBtn.Text = "🔍  Loadout scannen"; scanSaveBtn.TextColor3 = D.CyanDim end)
+        pcall(function()
+            scanSaveBtn.Text       = "🔍  Loadout scannen"
+            scanSaveBtn.TextColor3 = D.CyanDim
+        end)
     end)
 end)
 
 -- Team-Name Input + Speichern-Button
 local nameRow = Instance.new("Frame", saveCard)
-nameRow.Size = UDim2.new(1, 0, 0, 32)
+nameRow.Size                = UDim2.new(1, 0, 0, 32)
 nameRow.BackgroundTransparency = 1
 HList(nameRow, 6)
+
 local nameOuter, nameBox = MkInput(nameRow, "Team-Name eingeben...")
 nameOuter.Size = UDim2.new(0.67, 0, 0, 32)
+
 local confirmSaveBtn = Instance.new("TextButton", nameRow)
-confirmSaveBtn.Size = UDim2.new(0.30, 0, 0, 32)
-confirmSaveBtn.BackgroundColor3 = D.Green
-confirmSaveBtn.Text = "💾 Speichern"
-confirmSaveBtn.TextColor3 = Color3.new(1, 1, 1)
-confirmSaveBtn.TextSize = 11
-confirmSaveBtn.Font = Enum.Font.GothamBold
-confirmSaveBtn.AutoButtonColor = false
-confirmSaveBtn.BorderSizePixel = 0
+confirmSaveBtn.Size                 = UDim2.new(0.30, 0, 0, 32)
+confirmSaveBtn.BackgroundColor3     = D.Green
+confirmSaveBtn.Text                 = "💾 Speichern"
+confirmSaveBtn.TextColor3           = Color3.new(1, 1, 1)
+confirmSaveBtn.TextSize             = 11
+confirmSaveBtn.Font                 = Enum.Font.GothamBold
+confirmSaveBtn.AutoButtonColor      = false
+confirmSaveBtn.BorderSizePixel      = 0
 Corner(confirmSaveBtn, 7); Stroke(confirmSaveBtn, D.Green, 1, 0.2)
 confirmSaveBtn.MouseEnter:Connect(function() Tw(confirmSaveBtn, { BackgroundColor3 = Color3.fromRGB(0, 160, 80) }) end)
 confirmSaveBtn.MouseLeave:Connect(function() Tw(confirmSaveBtn, { BackgroundColor3 = D.Green }) end)
@@ -250,7 +270,7 @@ saveFeedback.Size = UDim2.new(1, 0, 0, 16)
 confirmSaveBtn.MouseButton1Click:Connect(function()
     local teamName = (nameBox.Text or ""):match("^%s*(.-)%s*$")
     if teamName == "" then
-        saveFeedback.Text = "⚠ Bitte einen Team-Namen eingeben!"
+        saveFeedback.Text       = "⚠ Bitte einen Team-Namen eingeben!"
         saveFeedback.TextColor3 = D.Orange
         return
     end
@@ -259,7 +279,7 @@ confirmSaveBtn.MouseButton1Click:Connect(function()
     local unitCount = 0
     for i = 1, 6 do if slots[i] then unitCount = unitCount + 1 end end
     if unitCount == 0 then
-        saveFeedback.Text = "⚠ Kein Loadout gefunden. Bitte erst scannen."
+        saveFeedback.Text       = "⚠ Kein Loadout gefunden. Bitte erst scannen."
         saveFeedback.TextColor3 = D.Orange
         return
     end
@@ -268,18 +288,26 @@ confirmSaveBtn.MouseButton1Click:Connect(function()
     for i, t in ipairs(TM_State.Teams) do
         if t.name == teamName then existIdx = i; break end
     end
-    local entry = { name = teamName, slots = slots, autoUpgrade = autoUp, savedAt = os.time(), unitCount = unitCount }
+    local entry = {
+        name        = teamName,
+        slots       = slots,
+        autoUpgrade = autoUp,
+        savedAt     = os.time(),
+        unitCount   = unitCount,
+    }
     if existIdx then
         TM_State.Teams[existIdx] = entry
-        saveFeedback.Text = "✅ Team '" .. teamName .. "' überschrieben! (" .. unitCount .. "/6 Einheiten)"
+        saveFeedback.Text        = "✅ Team '" .. teamName .. "' überschrieben! (" .. unitCount .. "/6 Einheiten)"
     else
         table.insert(TM_State.Teams, entry)
-        saveFeedback.Text = "✅ Team '" .. teamName .. "' gespeichert! (" .. unitCount .. "/6 Einheiten)"
+        saveFeedback.Text        = "✅ Team '" .. teamName .. "' gespeichert! (" .. unitCount .. "/6 Einheiten)"
     end
     saveFeedback.TextColor3 = D.GreenBright
     nameBox.Text = ""
     SaveTeamsFile()
-    task.delay(5, function() pcall(function() if saveFeedback then saveFeedback.Text = "" end end) end)
+    task.delay(5, function()
+        pcall(function() if saveFeedback then saveFeedback.Text = "" end end)
+    end)
     pcall(_G._RebuildTeamsList)
 end)
 
@@ -290,15 +318,15 @@ SecLbl(loadCard, "📋  GESPEICHERTE TEAMS")
 
 -- ★ Mobile-optimiertes ScrollingFrame mit AutomaticCanvasSize
 local teamListFrame = Instance.new("ScrollingFrame", loadCard)
-teamListFrame.Size = UDim2.new(1, 0, 0, 230)
-teamListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+teamListFrame.Size                = UDim2.new(1, 0, 0, 230)
+teamListFrame.CanvasSize          = UDim2.new(0, 0, 0, 0)
 teamListFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-teamListFrame.ScrollBarThickness = 5
+teamListFrame.ScrollBarThickness  = 5
 teamListFrame.ScrollBarImageColor3 = D.CyanDim
 teamListFrame.BackgroundTransparency = 1
-teamListFrame.BorderSizePixel = 0
-teamListFrame.ScrollingEnabled = true
-teamListFrame.ScrollingDirection = Enum.ScrollingDirection.Y
+teamListFrame.BorderSizePixel     = 0
+teamListFrame.ScrollingEnabled    = true
+teamListFrame.ScrollingDirection  = Enum.ScrollingDirection.Y
 VList(teamListFrame, 5)
 
 local teamListEmpty = MkLbl(teamListFrame, "Keine Teams gespeichert.", 11, D.TextLow)
@@ -313,32 +341,37 @@ SecLbl(detailCard, "🔍  TEAM-DETAILS")
 local detailSlotLabels = {}
 for i = 1, 6 do
     local dRow = Instance.new("Frame", detailCard)
-    dRow.Size = UDim2.new(1, 0, 0, 24)
-    dRow.BackgroundColor3 = D.CardHover
+    dRow.Size                   = UDim2.new(1, 0, 0, 24)
+    dRow.BackgroundColor3       = D.CardHover
     dRow.BackgroundTransparency = 0.4
-    dRow.BorderSizePixel = 0
+    dRow.BorderSizePixel        = 0
     Corner(dRow, 6); Stroke(dRow, D.Border, 1, 0.5)
+
     local db = Instance.new("TextLabel", dRow)
-    db.Size = UDim2.new(0, 24, 1, 0)
-    db.BackgroundColor3 = D.TabActive
+    db.Size                   = UDim2.new(0, 24, 1, 0)
+    db.BackgroundColor3       = D.TabActive
     db.BackgroundTransparency = 0.3
-    db.Text = tostring(i)
-    db.TextColor3 = D.CyanDim
-    db.TextSize = 11; db.Font = Enum.Font.GothamBold
-    db.TextXAlignment = Enum.TextXAlignment.Center
-    db.BorderSizePixel = 0
+    db.Text                   = tostring(i)
+    db.TextColor3             = D.CyanDim
+    db.TextSize               = 11
+    db.Font                   = Enum.Font.GothamBold
+    db.TextXAlignment         = Enum.TextXAlignment.Center
+    db.BorderSizePixel        = 0
     Corner(db, 6)
+
     local dl = Instance.new("TextLabel", dRow)
-    dl.Position = UDim2.new(0, 30, 0, 0)
-    dl.Size = UDim2.new(1, -34, 1, 0)
+    dl.Position       = UDim2.new(0, 30, 0, 0)
+    dl.Size           = UDim2.new(1, -34, 1, 0)
     dl.BackgroundTransparency = 1
-    dl.Text = "—"
-    dl.TextColor3 = D.TextLow
-    dl.TextSize = 11; dl.Font = Enum.Font.GothamMedium
+    dl.Text           = "—"
+    dl.TextColor3     = D.TextLow
+    dl.TextSize       = 11
+    dl.Font           = Enum.Font.GothamMedium
     dl.TextXAlignment = Enum.TextXAlignment.Left
-    dl.TextTruncate = Enum.TextTruncate.AtEnd
+    dl.TextTruncate   = Enum.TextTruncate.AtEnd
     detailSlotLabels[i] = dl
 end
+
 VList(detailCard, 3)
 
 local loadTeamBtn  = NeonBtn(detailCard, "⚡  Team laden (Equip)", D.Green, 34)
@@ -351,54 +384,63 @@ local function RebuildTeamsList()
         if v:IsA("Frame") then v:Destroy() end
     end
     teamListEmpty.Visible = (#TM_State.Teams == 0)
+
     for idx, team in ipairs(TM_State.Teams) do
         local isSelected = (TM_State.SelIdx == idx)
+
         local row = Instance.new("Frame", teamListFrame)
-        row.Size = UDim2.new(1, 0, 0, 48)
-        row.BackgroundColor3 = isSelected and D.TabActive or D.CardHover
+        row.Size                   = UDim2.new(1, 0, 0, 48)
+        row.BackgroundColor3       = isSelected and D.TabActive or D.CardHover
         row.BackgroundTransparency = 0.3
-        row.BorderSizePixel = 0
+        row.BorderSizePixel        = 0
         Corner(row, 8)
         Stroke(row, isSelected and D.Cyan or D.Border, 1.5, isSelected and 0 or 0.5)
 
         local nameLbl = Instance.new("TextLabel", row)
-        nameLbl.Position = UDim2.new(0, 10, 0, 4)
-        nameLbl.Size = UDim2.new(1, -90, 0, 20)
+        nameLbl.Position       = UDim2.new(0, 10, 0, 4)
+        nameLbl.Size           = UDim2.new(1, -90, 0, 20)
         nameLbl.BackgroundTransparency = 1
-        nameLbl.Text = "⚔  " .. team.name
-        nameLbl.TextColor3 = isSelected and D.Cyan or D.TextHi
-        nameLbl.TextSize = 12; nameLbl.Font = Enum.Font.GothamBold
+        nameLbl.Text           = "⚔  " .. team.name
+        nameLbl.TextColor3     = isSelected and D.Cyan or D.TextHi
+        nameLbl.TextSize       = 12
+        nameLbl.Font           = Enum.Font.GothamBold
         nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-        nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+        nameLbl.TextTruncate   = Enum.TextTruncate.AtEnd
 
         local unitCount = 0
         for i = 1, 6 do if team.slots and team.slots[i] then unitCount = unitCount + 1 end end
+
         local subLbl = Instance.new("TextLabel", row)
-        subLbl.Position = UDim2.new(0, 10, 0, 26)
-        subLbl.Size = UDim2.new(1, -90, 0, 14)
+        subLbl.Position       = UDim2.new(0, 10, 0, 26)
+        subLbl.Size           = UDim2.new(1, -90, 0, 14)
         subLbl.BackgroundTransparency = 1
-        subLbl.Text = unitCount .. "/6 Einheiten · " .. os.date("%d.%m.%Y", team.savedAt or 0)
-        subLbl.TextColor3 = D.TextMid
-        subLbl.TextSize = 10; subLbl.Font = Enum.Font.GothamMedium
+        subLbl.Text           = unitCount .. "/6 Einheiten · " .. os.date("%d.%m.%Y", team.savedAt or 0)
+        subLbl.TextColor3     = D.TextMid
+        subLbl.TextSize       = 10
+        subLbl.Font           = Enum.Font.GothamMedium
         subLbl.TextXAlignment = Enum.TextXAlignment.Left
 
         -- Löschen-Button
         local delBtn = Instance.new("TextButton", row)
-        delBtn.Size = UDim2.new(0, 32, 0, 32)
-        delBtn.Position = UDim2.new(1, -38, 0.5, -16)
-        delBtn.BackgroundColor3 = Color3.fromRGB(50, 12, 12)
-        delBtn.Text = "✕"; delBtn.TextColor3 = D.Red
-        delBtn.TextSize = 12; delBtn.Font = Enum.Font.GothamBold
-        delBtn.AutoButtonColor = false; delBtn.BorderSizePixel = 0
+        delBtn.Size              = UDim2.new(0, 32, 0, 32)
+        delBtn.Position          = UDim2.new(1, -38, 0.5, -16)
+        delBtn.BackgroundColor3  = Color3.fromRGB(50, 12, 12)
+        delBtn.Text              = "✕"
+        delBtn.TextColor3        = D.Red
+        delBtn.TextSize          = 12
+        delBtn.Font              = Enum.Font.GothamBold
+        delBtn.AutoButtonColor   = false
+        delBtn.BorderSizePixel   = 0
         Corner(delBtn, 7); Stroke(delBtn, D.Red, 1, 0.4)
         delBtn.MouseEnter:Connect(function() Tw(delBtn, { BackgroundColor3 = D.RedDark or Color3.fromRGB(80, 20, 20) }) end)
         delBtn.MouseLeave:Connect(function() Tw(delBtn, { BackgroundColor3 = Color3.fromRGB(50, 12, 12) }) end)
 
         -- Auswählen (ganzer Row außer Löschen-Button)
         local selBtn = Instance.new("TextButton", row)
-        selBtn.Size = UDim2.new(1, -40, 1, 0)
+        selBtn.Size                  = UDim2.new(1, -40, 1, 0)
         selBtn.BackgroundTransparency = 1
-        selBtn.Text = ""; selBtn.BorderSizePixel = 0
+        selBtn.Text                  = ""
+        selBtn.BorderSizePixel       = 0
         local capIdx = idx
 
         selBtn.MouseButton1Click:Connect(function()
@@ -407,14 +449,15 @@ local function RebuildTeamsList()
             if t then
                 detailCard.Visible = true
                 for i = 1, 6 do
-                    local lbl = detailSlotLabels[i]
+                    local lbl  = detailSlotLabels[i]
                     local unit = t.slots and t.slots[i]
                     if unit then
                         local auVal = t.autoUpgrade and t.autoUpgrade[i]
-                        lbl.Text = unit .. (auVal ~= nil and ("  [AutoUp: " .. tostring(auVal) .. "]") or "")
+                        lbl.Text       = unit .. (auVal ~= nil and ("  [AutoUp: " .. tostring(auVal) .. "]") or "")
                         lbl.TextColor3 = D.TextHi
                     else
-                        lbl.Text = "—  (leer)"; lbl.TextColor3 = D.TextLow
+                        lbl.Text       = "—  (leer)"
+                        lbl.TextColor3 = D.TextLow
                     end
                 end
             end
@@ -423,10 +466,12 @@ local function RebuildTeamsList()
 
         delBtn.MouseButton1Click:Connect(function()
             if TM_State.SelIdx == capIdx then
-                TM_State.SelIdx = nil; detailCard.Visible = false
+                TM_State.SelIdx    = nil
+                detailCard.Visible = false
             end
             table.remove(TM_State.Teams, capIdx)
-            SaveTeamsFile(); RebuildTeamsList()
+            SaveTeamsFile()
+            RebuildTeamsList()
             SetTMStatus("🗑 Team gelöscht.", D.TextMid)
         end)
     end
@@ -437,15 +482,15 @@ _G._RebuildTeamsList = RebuildTeamsList
 loadTeamBtn.MouseButton1Click:Connect(function()
     local idx = TM_State.SelIdx
     if not idx or not TM_State.Teams[idx] then
-        loadFeedback.Text = "⚠ Kein Team ausgewählt!"
+        loadFeedback.Text       = "⚠ Kein Team ausgewählt!"
         loadFeedback.TextColor3 = D.Orange
         return
     end
     local team = TM_State.Teams[idx]
-    loadFeedback.Text = "⏳ UnEquip alle..."
+    loadFeedback.Text       = "⏳ UnEquip alle..."
     loadFeedback.TextColor3 = D.Yellow
-    loadTeamBtn.Text = "⏳ Lade..."
-    loadTeamBtn.TextColor3 = D.Yellow
+    loadTeamBtn.Text        = "⏳ Lade..."
+    loadTeamBtn.TextColor3  = D.Yellow
     SetTMStatus("⏳ Lade Team '" .. team.name .. "'...", D.Yellow)
 
     task.spawn(function()
@@ -475,10 +520,10 @@ loadTeamBtn.MouseButton1Click:Connect(function()
             end
         end
 
-        loadFeedback.Text = "✅ Team '" .. team.name .. "' geladen!"
+        loadFeedback.Text       = "✅ Team '" .. team.name .. "' geladen!"
         loadFeedback.TextColor3 = D.GreenBright
-        loadTeamBtn.Text = "⚡  Team laden (Equip)"
-        loadTeamBtn.TextColor3 = Color3.new(1, 1, 1)
+        loadTeamBtn.Text        = "⚡  Team laden (Equip)"
+        loadTeamBtn.TextColor3  = Color3.new(1, 1, 1)
         SetTMStatus("✅ Team '" .. team.name .. "' aktiv.", D.Green)
         task.delay(5, function()
             pcall(function() loadFeedback.Text = "" end)
@@ -492,4 +537,5 @@ pcall(RefreshSlotPreview)
 pcall(RebuildTeamsList)
 SetTMStatus("✅ Teams v" .. VERSION .. " geladen | " .. #TM_State.Teams .. " Teams", D.Green)
 
-print(string.format("[HazeHub] teams.lua v%s geladen | Spieler: %s | Teams: %d", VERSION, LP.Name, #TM_State.Teams))
+print(string.format("[HazeHub] teams.lua v%s geladen | Spieler: %s | Teams: %d",
+    VERSION, LP.Name, #TM_State.Teams))
