@@ -2457,6 +2457,32 @@ end)
 local function LoadModule(url,name,delay,onErr)
     task.spawn(function()
         task.wait(delay or 1)
+        
+        -- Stelle sicher, dass alle globalen Funktionen verfügbar sind
+        if not _G.HazeHubFunctions then
+            _G.HazeHubFunctions = {}
+        end
+        
+        -- Fülle fehlende Funktionen auf
+        if not _G.HazeHubFunctions.ToggleAntiAFK then
+            _G.HazeHubFunctions.ToggleAntiAFK = function() warn("[HazeHUB] ToggleAntiAFK nicht implementiert") end
+        end
+        if not _G.HazeHubFunctions.StartRaid then
+            _G.HazeHubFunctions.StartRaid = function() warn("[HazeHUB] StartRaid nicht implementiert") end
+        end
+        if not _G.HazeHubFunctions.StopRaid then
+            _G.HazeHubFunctions.StopRaid = function() warn("[HazeHUB] StopRaid nicht implementiert") end
+        end
+        if not _G.HazeHubFunctions.SetGoalFromInventory then
+            _G.HazeHubFunctions.SetGoalFromInventory = function() warn("[HazeHUB] SetGoalFromInventory nicht implementiert") end
+        end
+        if not _G.HazeHubFunctions.SetKeyDisplay then
+            _G.HazeHubFunctions.SetKeyDisplay = function() warn("[HazeHUB] SetKeyDisplay nicht implementiert") end
+        end
+        if not _G.HazeHubFunctions.UpdateAutoRetryUI then
+            _G.HazeHubFunctions.UpdateAutoRetryUI = function() warn("[HazeHUB] UpdateAutoRetryUI nicht implementiert") end
+        end
+        
         local httpOk,raw=pcall(function() return game:HttpGet(url) end)
         if not httpOk or not raw or #raw<20 then
             warn("[HazeHUB] "..name..": HttpGet fehlgeschlagen")
