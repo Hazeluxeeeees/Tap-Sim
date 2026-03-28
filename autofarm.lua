@@ -1,12 +1,7 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB – autofarm.lua  v2.8.2
+--  HazeHUB – autofarm.lua  v2.8.1
 --  GitHub: Hazeluxeeeees/HazeHub-Modules
 --
---  v2.8.2:
---    + Fire() / GetPlayRoomEvent(): kanonisch RS.Remote.Server.PlayRoom.Event (fix: nil Fire → Zeile 628)
---    + ScanAllRewards: nil-sichere WorldData/story/ranger; Raid-Tasks aus Player_Data[LP.Name].ChapterLevels
---    + Challenge-Scanner: RS.Gameplay.Game.Challenge.Items + Metadaten aus Challenge-Ordner (Values)
---    + Queue-Wechsel: EsperRaid / JJKRaid + optional Difficulty
 --  v2.8.1:
 --    + Alle Pfade nutzen LP.Name (dynamisch, kein Hardcode)
 --    + TeleportToLobby via TeleportService (ID: 111446873000464)
@@ -17,43 +12,41 @@
 --    + Location-Check via workspace:FindFirstChild("Lobby")
 -- ╚══════════════════════════════════════════════════════════╝
 
-local VERSION    = "2.8.2"
+local VERSION    = "2.8.1"
 local LOBBY_ID   = 111446873000464
 local MAIN_URL   = "https://raw.githubusercontent.com/Hazeluxeeeees/Tap-Sim/refs/heads/main/script"
 
 -- ============================================================
---  WARTEN BIS HAZEHUB BEREIT (max 10s)
+--  WARTEN BIS SHARED BEREIT (max 10s)
 -- ============================================================
--- FIX: Sicherer Start & Pfad-Check
-local LP = game:GetService("Players").LocalPlayer
-local RS = game:GetService("ReplicatedStorage")
+local waited = 0
+while not (_G.HazeShared and _G.HazeShared.Container and _G.HazeShared.SetModuleLoaded) do
+    task.wait(0.3); waited = waited + 0.3
+    if waited >= 10 then warn("[HazeHub] _G.HazeShared nicht bereit."); return end
+end
 
--- Warte bis das Hauptskript vollständig geladen ist
-repeat task.wait(1) until _G.HazeHUB_Ready == true
-
 -- ============================================================
---  GLOBALE HAZEHUB REFERENZEN
+--  SHARED ALIASE
 -- ============================================================
-local HH = _G.HazeHUB
-local HS = _G.HazeShared
+local HS          = _G.HazeShared
 local CFG         = HS.Config
 local ST          = HS.State
 local D           = HS.D
-local TF          = HS.TF;  local TM = HS.TM;  local Tw = HH.Tw
+local TF          = HS.TF;  local TM = HS.TM;  local Tw = HS.Tw
 local Svc         = HS.Svc
-local Card        = HH.Card;    local NeonBtn  = HH.NeonBtn
-local MkLbl       = HH.MkLbl;  local SecLbl   = HH.SecLbl
-local MkInput     = HH.MkInput; local VList    = HH.VList
-local HList       = HH.HList;   local Pad      = HH.Pad
-local Corner      = HH.Corner;  local Stroke   = HH.Stroke
+local Card        = HS.Card;    local NeonBtn  = HS.NeonBtn
+local MkLbl       = HS.MkLbl;  local SecLbl   = HS.SecLbl
+local MkInput     = HS.MkInput; local VList    = HS.VList
+local HList       = HS.HList;   local Pad      = HS.Pad
+local Corner      = HS.Corner;  local Stroke   = HS.Stroke
 local PR          = HS.PR
-local SaveConfig  = HH.SaveConfig
-local SaveSettings = HH.SaveSettings
+local SaveConfig  = HS.SaveConfig
+local SaveSettings = HS.SaveSettings
 local SendWebhook = HS.SendWebhook
 local Container   = HS.Container
 
--- ★ TeleportToLobby aus HazeHUB (falls schon gesetzt), sonst lokal
-local TeleportToLobby = HH.TeleportToLobby or function()
+-- ★ TeleportToLobby aus Main (falls schon gesetzt), sonst lokal
+local TeleportToLobby = HS.TeleportToLobby or function()
     pcall(function() game:GetService("TeleportService"):Teleport(LOBBY_ID) end)
 end
 
@@ -130,60 +123,33 @@ task.spawn(function()
     else warn("[HazeHub] PlayRoomEvent nicht gefunden!") end
 end)
 
--- ★ Wie autofarm_FULL_CORRECTED: zuerst PlayRoom Event, sonst HS.PR (mit nil-Check!)
---    Remote.Server.PlayRoom.Event z. B. :FireServer("Change-World", { ["World"] = "JJKRaid" })
-local function GetPlayRoomEvent()
+-- Sync Remote (sofortiger Versuch, falls task.spawn noch nicht fertig)
+local function ResolvePlayRoomEvent()
     if PlayRoomEvent and PlayRoomEvent.Parent then return PlayRoomEvent end
     local ok, ev = pcall(function()
-        return RS:WaitForChild("Remote", 8)
-            :WaitForChild("Server", 8)
-            :WaitForChild("PlayRoom", 8)
-            :WaitForChild("Event", 8)
+        return RS:WaitForChild("Remote", 6)
+            :WaitForChild("Server", 6)
+            :WaitForChild("PlayRoom", 6)
+            :WaitForChild("Event", 6)
     end)
-    if ok and ev then
-        PlayRoomEvent = ev
-        return ev
-    end
+    if ok and ev then PlayRoomEvent = ev; return ev end
     return nil
 end
 
 local function Fire(action, data)
-    local ev = GetPlayRoomEvent()
+    local ev = ResolvePlayRoomEvent()
     if ev then
-        local ok, err = pcall(function()
+        pcall(function()
             if data ~= nil then ev:FireServer(action, data)
             else ev:FireServer(action) end
         end)
-        if not ok then warn("[HazeHub] Fire-Fehler: " .. tostring(err)) end
-    else
-        warn("[HazeHub] Fire-Fehler: PlayRoom Event ist NIL!")
-    end
-end
-
--- Fallback-Suche (nur wenn kanonischer Pfad fehlt)
-local function GetPlayRoomRemote()
-    local ev = GetPlayRoomEvent()
-    if ev then return ev end
-    local remoteFolder = RS:FindFirstChild("Remote") or RS:FindFirstChild("Remotes")
-    if not remoteFolder then return nil end
-    return remoteFolder:FindFirstChild("Event", true) or remoteFolder:FindFirstChild("PlayRoomEvent", true)
-end
-
--- ★ Nil-sicherer SafeFire (wie Fire: PR-Fallback)
-local function SafeFire(action, data)
-    local remote = GetPlayRoomRemote()
-    if remote then
-        local ok, err = pcall(function()
-            if data then remote:FireServer(action, data)
-            else remote:FireServer(action) end
-        end)
-        if not ok then warn("[HazeHub] SafeFire Fehler (" .. tostring(action) .. "): " .. tostring(err)) end
     elseif PR and type(PR) == "function" then
         pcall(function() PR(action, data) end)
     else
-        warn("[HazeHub] SafeFire abgebrochen – Remote + PR nil. Action: " .. tostring(action))
+        warn("[HazeHub] Fire: PlayRoomEvent + PR fehlen – " .. tostring(action))
     end
 end
+
 -- ============================================================
 --  INVENTAR  (★ LP.Name dynamisch)
 -- ============================================================
@@ -254,7 +220,10 @@ local function SaveQueueFile()
     pcall(function()
         local out = {}
         for _, q in ipairs(AF.Queue) do
-            if not q.done then table.insert(out, { item = q.item, amount = q.amount }) end
+            if not q.done then
+                local amt = tonumber(q.amount) or tonumber(q.needed) or 1
+                table.insert(out, { item = q.item, amount = amt })
+            end
         end
         writefile(QUEUE_FILE, Svc.Http:JSONEncode(out))
     end)
@@ -268,8 +237,9 @@ local function LoadQueueFile()
     if not ok or type(data) ~= "table" then return false end
     AF.Queue = {}
     for _, q in ipairs(data) do
-        if q.item and tonumber(q.amount) and tonumber(q.amount) > 0 then
-            table.insert(AF.Queue, { item = q.item, amount = tonumber(q.amount), done = false })
+        local amt = tonumber(q.amount) or tonumber(q.needed)
+        if q.item and amt and amt > 0 then
+            table.insert(AF.Queue, { item = q.item, amount = amt, done = false })
         end
     end
     print("[HazeHub] Queue: " .. #AF.Queue .. " Items geladen")
@@ -289,9 +259,9 @@ local function SyncInventoryWithQueue()
         local q = AF.Queue[i]
         if not q.done then
             local cur = GetLiveInvAmt(q.item)
-            local need = tonumber(q.amount) or 1
-            if need < 1 then need = 1 end
-            if cur >= need then table.remove(AF.Queue, i); changed = true end
+            local amt = tonumber(q.amount) or tonumber(q.needed) or 1
+            if amt < 1 then amt = 1 end
+            if cur >= amt then table.remove(AF.Queue, i); changed = true end
         end
     end
     if changed then SaveQueueFile() end
@@ -431,158 +401,22 @@ end
 -- ============================================================
 --  STATUS
 -- ============================================================
--- ============================================================
---  SICHERE STATUS-UPDATE FUNKTION (beugt nil-Errors vor)
--- ============================================================
-local function UpdateStatus(label, message, color)
-    if label and typeof(label) == "Instance" and label:IsA("TextLabel") then
-        label.Text = message
-        if color then label.TextColor3 = color end
-    end
-end
-
 local function SetStatus(text, color)
-    UpdateStatus(AF.UI.Lbl.Status, text, color)
+    pcall(function()
+        AF.UI.Lbl.Status.Text       = text
+        AF.UI.Lbl.Status.TextColor3 = color or D.TextMid
+    end)
 end
 
 local function SetScanProgress(current, total, label)
     local pct = math.max(0, math.min(1, current / math.max(1, total)))
     local txt = string.format("%s  (%d/%d – %.0f%%)", label, current, total, pct * 100)
-    UpdateStatus(AF.UI.Lbl.ScanProgress, txt, D.Yellow)
-    if AF.UI.Fr.ScanBar and AF.UI.Fr.ScanBarFill then
-        AF.UI.Fr.ScanBar.Visible = true
-        Tw(AF.UI.Fr.ScanBarFill, { Size = UDim2.new(pct, 0, 1, 0) }, TF)
-    end
-end
-
--- ============================================================
---  ★ RAID_DEFS + ChapterLevels-Scanner (vor Deep-Scan & UI)
--- ============================================================
-local RAID_DEFS = {
-    {
-        id        = "EsperRaid",
-        label     = "🔮 Esper Raid",
-        world     = "EsperRaid",
-        chapters  = {
-            { id = "Esper_Raid_Chapter1", label = "Chapter 1", modes = {"Normal","Nightmare"} },
-        },
-        scanPath  = "ChapterLevels",
-        itemsPath = "PlayRoom.Main.GameStage.Main.Base.Rewards.ItemsList",
-        accent    = Color3.fromRGB(160, 80, 255),
-    },
-    {
-        id        = "JJKRaid",
-        label     = "🌀 JJK Raid",
-        world     = "JJKRaid",
-        chapters  = {
-            { id = "JJK_Raid_Chapter1", label = "Chapter 1", modes = {"Normal"} },
-            { id = "JJK_Raid_Chapter2", label = "Chapter 2", modes = {"Normal"} },
-        },
-        scanPath  = "ChapterLevels",
-        itemsPath = "PlayRoom.Main.GameStage.Main.Base.Rewards.ItemsList",
-        accent    = Color3.fromRGB(80, 140, 255),
-    },
-}
-
-local RaidState = {
-    Active   = false,
-    Running  = false,
-    SelRaid  = nil,
-    SelChap  = nil,
-    SelMode  = "Normal",
-    BestChap = nil,
-    BestMode = nil,
-}
-
-local function ReadChapterIdsFromFolder(folder)
-    local ids = {}
-    local seen = {}
-    if not folder then return ids end
-    for _, ch in ipairs(folder:GetChildren()) do
-        if ch:IsA("UIGridLayout") or ch:IsA("UIListLayout") or ch:IsA("UIPadding") or ch:IsA("UICorner") then
-            continue
-        end
-        if ch:IsA("Folder") then
-            for _, c2 in ipairs(ch:GetChildren()) do
-                local id = tostring(c2.Name)
-                if id ~= "" and not seen[id] then
-                    seen[id] = true
-                    table.insert(ids, id)
-                end
-            end
-        else
-            local id = tostring(ch.Name)
-            if id ~= "" and not seen[id] then
-                seen[id] = true
-                table.insert(ids, id)
-            end
-        end
-    end
-    return ids
-end
-
--- RS.Player_Data[LP.Name].ChapterLevels → Raid-Kapitel-IDs (Fallback: RAID_DEFS)
-local function GetRaidChapterIdsFromPlayerData(worldKey, fallbackChapters)
-    local ids = {}
-    local seen = {}
-    local function add(id)
-        id = tostring(id or "")
-        if id == "" or seen[id] then return end
-        seen[id] = true
-        table.insert(ids, id)
-    end
     pcall(function()
-        local pd = RS:FindFirstChild("Player_Data")
-        if not pd then return end
-        local pf = pd:FindFirstChild(LP.Name)
-        if not pf then return end
-        local cl = pf:FindFirstChild("ChapterLevels")
-        if not cl then return end
-        local candidates = {
-            worldKey,
-            (worldKey:gsub("Raid", "_Raid")),
-            worldKey == "EsperRaid" and "Esper" or nil,
-            worldKey == "JJKRaid" and "JJK" or nil,
-        }
-        local sub = nil
-        for _, name in ipairs(candidates) do
-            if name and cl:FindFirstChild(name) then
-                sub = cl:FindFirstChild(name)
-                break
-            end
-        end
-        if sub then
-            for _, id in ipairs(ReadChapterIdsFromFolder(sub)) do
-                add(id)
-            end
-        end
+        AF.UI.Lbl.ScanProgress.Text       = txt
+        AF.UI.Lbl.ScanProgress.TextColor3 = D.Yellow
+        AF.UI.Fr.ScanBar.Visible          = true
+        Tw(AF.UI.Fr.ScanBarFill, { Size = UDim2.new(pct, 0, 1, 0) }, TF)
     end)
-    if #ids == 0 and type(fallbackChapters) == "table" then
-        for _, ch in ipairs(fallbackChapters) do
-            if ch and ch.id then add(ch.id) end
-        end
-    end
-    return ids
-end
-
-local function AppendRaidScanTasks(tasks)
-    local esperIds = GetRaidChapterIdsFromPlayerData("EsperRaid", RAID_DEFS[1] and RAID_DEFS[1].chapters)
-    for _, cid in ipairs(esperIds) do
-        table.insert(tasks, { worldId = "EsperRaid", chapId = cid, mode = "EsperRaid", difficulty = "Normal" })
-        table.insert(tasks, { worldId = "EsperRaid", chapId = cid, mode = "EsperRaid", difficulty = "Nightmare" })
-    end
-    local jjkIds = GetRaidChapterIdsFromPlayerData("JJKRaid", RAID_DEFS[2] and RAID_DEFS[2].chapters)
-    for _, cid in ipairs(jjkIds) do
-        table.insert(tasks, { worldId = "JJKRaid", chapId = cid, mode = "JJKRaid", difficulty = "Normal" })
-    end
-end
-
-local function RewardDbKeyForTask(t)
-    local base = tostring(t.chapId or "unknown")
-    if t.mode == "EsperRaid" and t.difficulty == "Nightmare" then
-        return base .. " [Nightmare]"
-    end
-    return base
 end
 
 -- ============================================================
@@ -670,155 +504,73 @@ local function ScanAllRewards(onProgress)
         return false
     end
     AF.Scanning = true; AF.RewardDatabase = {}
-    local WorldData = nil
-    local WorldIds = nil
-    pcall(function() WorldData = HS.GetWorldData() end)
-    pcall(function() WorldIds = HS.GetWorldIds() end)
-    if type(WorldData) ~= "table" then WorldData = {} end
-    if type(WorldIds) ~= "table" then WorldIds = {} end
-
+    local WorldData = HS.GetWorldData(); local WorldIds = HS.GetWorldIds()
     local tasks = {}
     for _, wid in ipairs(WorldIds) do
-        local wkey = tostring(wid or "")
-        if wkey == "" then continue end
-        local wd = WorldData[wkey]
-        if type(wd) ~= "table" then continue end
-        local storyList = wd.story
-        local rangerList = wd.ranger
-        if type(storyList) ~= "table" then storyList = {} end
-        if type(rangerList) ~= "table" then rangerList = {} end
-        local isCal = wkey:lower():find("calamity") ~= nil
-        for _, cid in ipairs(storyList) do
-            if cid == nil or tostring(cid) == "" then continue end
-            table.insert(tasks, { worldId = wkey, chapId = cid, mode = isCal and "Calamity" or "Story" })
-        end
-        for _, cid in ipairs(rangerList) do
-            if cid == nil or tostring(cid) == "" then continue end
-            table.insert(tasks, { worldId = wkey, chapId = cid, mode = "Ranger" })
-        end
+        local wd = WorldData[wid] or {}; local isCal = wid:lower():find("calamity") ~= nil
+        for _, cid in ipairs(wd.story or {})  do table.insert(tasks, { worldId=wid, chapId=cid, mode=isCal and "Calamity" or "Story" }) end
+        for _, cid in ipairs(wd.ranger or {}) do table.insert(tasks, { worldId=wid, chapId=cid, mode="Ranger" }) end
     end
-
-    pcall(function() AppendRaidScanTasks(tasks) end)
-
-    local total = 0
-    for _ in ipairs(tasks) do total = total + 1 end
-    local scanned = 0
-    local failed = 0
-    local retried = 0
-    if total == 0 then
-        AF.Scanning = false
-        pcall(function() onProgress("Keine Chapters!") end)
-        return false
-    end
+    local total=0; for _ in ipairs(tasks) do total=total+1 end
+    local scanned=0; local failed=0; local retried=0
+    if total == 0 then AF.Scanning=false; pcall(function() onProgress("Keine Chapters!") end); return false end
     print(string.format("[HazeHub] DEEP-SCAN START: %d Chapters", total))
-    Fire("Create")
-    task.wait(1.5)
+    Fire("Create"); task.wait(1.5)
 
     for _, t in ipairs(tasks) do
         if not AF.Scanning then break end
         scanned = scanned + 1
-        local diffLabel = (t.difficulty and t.difficulty ~= "Normal") and (" " .. tostring(t.difficulty)) or ""
-        SetScanProgress(scanned, total, string.format("Scanne: %s %s%s...", t.worldId or "?", tostring(t.chapId), diffLabel))
-        pcall(function()
-            onProgress(string.format("Scanne %d/%d: [%s] %s%s", scanned, total, tostring(t.mode), tostring(t.chapId), diffLabel))
-        end)
-        print(string.format("[HazeHub] [%s] %s > %s (%d/%d)", tostring(t.mode), tostring(t.worldId), tostring(t.chapId), scanned, total))
+        SetScanProgress(scanned, total, string.format("Scanne: %s %s...", t.worldId, t.chapId))
+        pcall(function() onProgress(string.format("Scanne %d/%d: [%s] %s", scanned, total, t.mode, t.chapId)) end)
+        print(string.format("[HazeHub] [%s] %s > %s (%d/%d)", t.mode, t.worldId, t.chapId, scanned, total))
 
         if t.mode == "Story" then
-            Fire("Create")
-            task.wait(0.5)
-            Fire("Change-World", { World = t.worldId })
-            task.wait(0.5)
+            Fire("Create");                                             task.wait(0.5)
+            Fire("Change-World",   { World   = t.worldId });           task.wait(0.5)
             Fire("Change-Chapter", { Chapter = t.chapId })
             task.wait(2.0)
         elseif t.mode == "Ranger" then
-            Fire("Create")
-            task.wait(0.5)
-            Fire("Change-Mode", { KeepWorld = t.worldId, Mode = "Ranger Stage" })
+            Fire("Create");                                             task.wait(0.5)
+            Fire("Change-Mode", { KeepWorld=t.worldId, Mode="Ranger Stage" })
             task.wait(1.0)
-            Fire("Change-World", { World = t.worldId })
-            task.wait(0.5)
+            Fire("Change-World",   { World   = t.worldId });           task.wait(0.5)
             Fire("Change-Chapter", { Chapter = t.chapId })
             task.wait(2.0)
         elseif t.mode == "Calamity" then
-            Fire("Create")
-            task.wait(0.5)
-            Fire("Change-Mode", { Mode = "Calamity" })
-            task.wait(0.5)
+            Fire("Create");                                             task.wait(0.5)
+            Fire("Change-Mode",    { Mode    = "Calamity" });          task.wait(0.5)
             Fire("Change-Chapter", { Chapter = t.chapId })
             task.wait(2.0)
-        elseif t.mode == "EsperRaid" then
-            Fire("Create")
-            task.wait(0.5)
-            Fire("Change-World", { ["World"] = "EsperRaid" })
-            task.wait(0.4)
-            Fire("Change-Chapter", { Chapter = t.chapId })
-            task.wait(2.0)
-            if t.difficulty == "Nightmare" then
-                Fire("Change-Difficulty", { Difficulty = "Nightmare" })
-                task.wait(0.35)
-            end
-        elseif t.mode == "JJKRaid" then
-            Fire("Create")
-            task.wait(0.5)
-            Fire("Change-World", { ["World"] = "JJKRaid" })
-            task.wait(0.4)
-            Fire("Change-Chapter", { Chapter = t.chapId })
-            task.wait(2.0)
-        else
-            failed = failed + 1
-            warn(string.format("[HazeHub] Scan: unbekannter Modus – überspringe (%s)", tostring(t.mode)))
-            pcall(function() onProgress("SKIP: " .. tostring(t.chapId)) end)
-            continue
         end
 
         local filled = WaitForItemsListFilled(3)
         if not filled then
-            print(string.format("[HazeHub] Retry für %s...", tostring(t.chapId)))
-            task.wait(2.0)
-            filled = WaitForItemsListFilled(2)
+            print(string.format("[HazeHub] Retry für %s...", t.chapId))
+            task.wait(2.0); filled = WaitForItemsListFilled(2)
             if filled then retried = retried + 1 end
         end
 
-        local dbKey = RewardDbKeyForTask(t)
         if filled then
             local items, hasItems = ScanRewardsSafe()
-            local cnt = 0
-            for _ in pairs(items) do cnt = cnt + 1 end
+            local cnt = 0; for _ in pairs(items) do cnt=cnt+1 end
             if hasItems then
-                AF.RewardDatabase[dbKey] = {
-                    world = t.worldId,
-                    mode = t.mode,
-                    chapId = t.chapId,
-                    items = items,
-                    difficulty = t.difficulty,
-                }
-                print(string.format("[HazeHub] OK [%s] %s: %d Items (DB-Key: %s)", t.mode, tostring(t.chapId), cnt, dbKey))
+                AF.RewardDatabase[t.chapId] = { world=t.worldId, mode=t.mode, chapId=t.chapId, items=items }
+                print(string.format("[HazeHub] OK [%s] %s: %d Items", t.mode, t.chapId, cnt))
             else
-                failed = failed + 1
-                warn(string.format("[HazeHub] LEER [%s] %s", t.mode, tostring(t.chapId)))
-                pcall(function() onProgress("LEER: " .. tostring(t.chapId)) end)
+                failed=failed+1; warn(string.format("[HazeHub] LEER [%s] %s", t.mode, t.chapId))
+                pcall(function() onProgress("LEER: "..t.chapId) end)
             end
         else
-            failed = failed + 1
-            warn(string.format("[HazeHub] TIMEOUT [%s] %s", t.mode, tostring(t.chapId)))
-            pcall(function() onProgress("TIMEOUT: " .. tostring(t.chapId)) end)
+            failed=failed+1; warn(string.format("[HazeHub] TIMEOUT [%s] %s", t.mode, t.chapId))
+            pcall(function() onProgress("TIMEOUT: "..t.chapId) end)
         end
 
-        pcall(function()
-            Fire("Submit")
-            task.wait(0.4)
-            Fire("Create")
-            task.wait(0.6)
-        end)
+        pcall(function() Fire("Submit"); task.wait(0.4); Fire("Create"); task.wait(0.6) end)
     end
 
     if DBCount() > 0 then
         SaveDB()
         _G.HazeShared._AutoFarm_RewardDB = AF.RewardDatabase
-        pcall(function()
-            if HS.SaveWorldCache then HS.SaveWorldCache() end
-        end)
     end
     AF.Scanning = false
     local c=DBCount(); local ok=c>0
@@ -826,9 +578,9 @@ local function ScanAllRewards(onProgress)
     print("[HazeHub] " .. msg); pcall(function() onProgress(msg) end)
     pcall(function()
         local col = ok and D.Green or D.Orange
-        UpdateStatus(AF.UI.Lbl.ScanProgress, msg, col)
+        AF.UI.Lbl.ScanProgress.Text=msg; AF.UI.Lbl.ScanProgress.TextColor3=col
         Tw(AF.UI.Fr.ScanBarFill, { Size=UDim2.new(ok and 1 or 0,0,1,0), BackgroundColor3=col }, TM)
-        UpdateStatus(AF.UI.Lbl.DBStatus, msg, col)
+        AF.UI.Lbl.DBStatus.Text=msg; AF.UI.Lbl.DBStatus.TextColor3=col
         if AF.UI.Btn.ForceRescan then AF.UI.Btn.ForceRescan.Text="DATENBANK NEU SCANNEN"; AF.UI.Btn.ForceRescan.TextColor3=Color3.new(1,1,1) end
         if AF.UI.Btn.UpdateDB   then AF.UI.Btn.UpdateDB.Text="Update Database";           AF.UI.Btn.UpdateDB.TextColor3=D.Accent or D.Cyan             end
     end)
@@ -840,26 +592,15 @@ end
 --  BESTES CHAPTER
 -- ============================================================
 local function FindBestChapter(itemName)
-    local bestChapId = nil
-    local bestRate = -1
-    local bestWorldId = nil
-    local bestMode = nil
+    local bestChapId=nil; local bestRate=-1; local bestWorldId=nil; local bestMode=nil
     for chapId, data in pairs(AF.RewardDatabase) do
         if data.items and data.items[itemName] then
             local r = data.items[itemName].dropRate or 0
-            if r > bestRate then
-                bestRate = r
-                bestChapId = data.chapId or chapId
-                bestWorldId = data.world
-                bestMode = data.mode
-            end
+            if r > bestRate then bestRate=r; bestChapId=data.chapId or chapId; bestWorldId=data.world; bestMode=data.mode end
         end
     end
-    if bestChapId then
-        print(string.format("[HazeHub] Best '%s': [%s] %s (%.1f%%)", itemName, bestMode, bestChapId, bestRate))
-    else
-        warn("[HazeHub] '" .. itemName .. "' nicht in DB.")
-    end
+    if bestChapId then print(string.format("[HazeHub] Best '%s': [%s] %s (%.1f%%)", itemName, bestMode, bestChapId, bestRate))
+    else warn("[HazeHub] '"..itemName.."' nicht in DB.") end
     return bestChapId, bestWorldId, bestMode, bestRate
 end
 
@@ -878,10 +619,8 @@ UpdateQueueUI = function()
     end
     for i, q in ipairs(AF.Queue) do
         if q.done then continue end
-        local qa = math.max(1, tonumber(q.amount) or 1)
-        local inv = GetLiveInvAmt(q.item)
-        local pct = math.min(1, inv / qa)
-        local isNext = (NextItem() == q)
+        local tgt = math.max(1, tonumber(q.amount) or tonumber(q.needed) or 1)
+        local inv=GetLiveInvAmt(q.item); local pct=math.min(1,inv/math.max(1,tgt)); local isNext=(NextItem()==q)
         local row=Instance.new("Frame",AF.UI.Fr.List); row.Size=UDim2.new(1,0,0,44); row.BorderSizePixel=0; Corner(row,8)
         if isNext then row.BackgroundColor3=D.RowSelect or D.TabActive; Stroke(row,D.Accent or D.Cyan,1.5,0)
         else            row.BackgroundColor3=D.Card;                 Stroke(row,D.Border,1,0.4) end
@@ -890,7 +629,7 @@ UpdateQueueUI = function()
         local pgBg=Instance.new("Frame",row); pgBg.Size=UDim2.new(1,-52,0,3); pgBg.Position=UDim2.new(0,8,1,-6); pgBg.BackgroundColor3=D.Input; pgBg.BackgroundTransparency=D.GlassPane or 0.18; pgBg.BorderSizePixel=0; Corner(pgBg,2)
         local pgF=Instance.new("Frame",pgBg); pgF.Size=UDim2.new(pct,0,1,0); pgF.BackgroundColor3=barC; pgF.BorderSizePixel=0; Corner(pgF,2)
         local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,12,0,5); nL.Size=UDim2.new(1,-52,0.5,-3); nL.BackgroundTransparency=1; nL.Text=(isNext and "▶ " or "")..q.item; nL.TextColor3=isNext and (D.Accent or D.Cyan) or D.TextHi; nL.TextSize=11; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
-        local pL=Instance.new("TextLabel",row); pL.Position=UDim2.new(0,12,0.5,1); pL.Size=UDim2.new(1,-52,0.5,-5); pL.BackgroundTransparency=1; pL.Text=string.format("%d / %d  (%.0f%%)",inv,qa,pct*100); pL.TextColor3=D.TextMid; pL.TextSize=10; pL.Font=Enum.Font.GothamSemibold; pL.TextXAlignment=Enum.TextXAlignment.Left
+        local pL=Instance.new("TextLabel",row); pL.Position=UDim2.new(0,12,0.5,1); pL.Size=UDim2.new(1,-52,0.5,-5); pL.BackgroundTransparency=1; pL.Text=string.format("%d / %d  (%.0f%%)",inv,tgt,pct*100); pL.TextColor3=D.TextMid; pL.TextSize=10; pL.Font=Enum.Font.GothamSemibold; pL.TextXAlignment=Enum.TextXAlignment.Left
         local ci=i
         local xBtn=Instance.new("TextButton",row); xBtn.Size=UDim2.new(0,34,0,34); xBtn.Position=UDim2.new(1,-38,0.5,-17); xBtn.BackgroundColor3=Color3.fromRGB(50,12,12); xBtn.Text="✕"; xBtn.TextColor3=D.Red; xBtn.TextSize=13; xBtn.Font=Enum.Font.GothamBold; xBtn.AutoButtonColor=false; xBtn.BorderSizePixel=0; Corner(xBtn,7); Stroke(xBtn,D.Red,1,0.4)
         xBtn.MouseEnter:Connect(function() Tw(xBtn,{BackgroundColor3=D.RedDark}) end)
@@ -905,21 +644,22 @@ end
 --  ★ RUNDEN-MONITOR
 -- ============================================================
 local function RoundMonitorLoop(q)
-    local need = math.max(1, tonumber(q.amount) or 1)
+    local tgt = math.max(1, tonumber(q.amount) or tonumber(q.needed) or 1)
     print("[HazeHub] RUNDE: Tracker '" .. q.item .. "'")
     SetStatus(string.format("RUNDE: Warte auf '%s'", q.item), D.TextMid)
     local deadline = os.time() + 600
     while AF.Running and os.time() < deadline do
         if CheckIsLobby() then print("[HazeHub] Tracker: Lobby erkannt."); break end
         task.wait(4)
+        -- ★ Dynamisch: GetLiveInvAmt nutzt LP.Name intern
         local cur = GetLiveInvAmt(q.item)
-        print(string.format("[HazeHub] '%s': %d/%d", q.item, cur, need))
+        print(string.format("[HazeHub] '%s': %d/%d", q.item, cur, tgt))
         SetStatus(string.format("RUNDE: '%s'  %d/%d  (%.0f%%)",
-            q.item, cur, need, math.min(100, cur / need * 100)), D.Cyan)
+            q.item, cur, tgt, math.min(100, cur/math.max(1,tgt)*100)), D.Cyan)
         pcall(UpdateQueueUI); pcall(function() HS.UpdateGoalsUI() end)
 
-        if cur >= need then
-            print(string.format("[HazeHub] ZIEL ERREICHT: '%s' %d/%d → Teleport zur Lobby!", q.item, cur, need))
+        if cur >= tgt then
+            print(string.format("[HazeHub] ZIEL ERREICHT: '%s' %d/%d → Teleport zur Lobby!", q.item, cur, tgt))
             task.spawn(function() pcall(function() SendWebhook({}, q.item, cur) end) end)
             RemoveFromQueue(q.item); pcall(UpdateQueueUI)
             SetStatus(string.format("✅ '%s' erreicht! Teleportiere...", q.item), D.GreenBright)
@@ -959,11 +699,11 @@ local function LobbyActionLoop(delaySeconds)
     end
     local useChapId, worldId, mode = FindBestChapter(q.item)
     if not useChapId then
-        for cid, data in pairs(AF.RewardDatabase) do worldId=data.world; mode=data.mode; useChapId=data.chapId or cid; break end
+        for cid,data in pairs(AF.RewardDatabase) do worldId=data.world; mode=data.mode; useChapId=data.chapId or cid; break end
     end
     if not useChapId then
-        local ids = HS.GetWorldIds and HS.GetWorldIds() or {}
-        if #ids>0 then local wd=(HS.GetWorldData and HS.GetWorldData() or {})[ids[1]] or {}; if wd.story and #wd.story>0 then worldId=ids[1]; mode="Story"; useChapId=wd.story[1] end end
+        local ids=HS.GetWorldIds()
+        if #ids>0 then local wd=HS.GetWorldData()[ids[1]] or {}; if wd.story and #wd.story>0 then worldId=ids[1]; mode="Story"; useChapId=wd.story[1] end end
     end
     if not useChapId then SetStatus("Kein Level für '"..q.item.."'!", D.Orange); RemoveFromQueue(q.item); pcall(UpdateQueueUI); return true end
     SetStatus(string.format("LOBBY: [%s] '%s' → %s", mode or "?", q.item, useChapId), D.Cyan)
@@ -996,7 +736,7 @@ local function AddOrUpdateQueueItem(itemName, amount)
 
     for _, q in ipairs(AF.Queue) do
         if q.item == iname then
-            q.amount = math.max(1, (tonumber(q.amount) or 0) + iamt)
+            q.amount = math.max(1, (tonumber(q.amount) or tonumber(q.needed) or 0) + iamt)
             q.done = false
             SaveQueueFile()
             pcall(UpdateQueueUI)
@@ -1060,7 +800,7 @@ HS.StartFarmFromMain = function()
         AF.Running=true; _G.AutoFarmRunning=true; SaveState()
         task.spawn(function()
             local ok=ScanAllRewards(function(msg)
-                UpdateStatus(AF.UI.Lbl.DBStatus, msg, D.Yellow)
+                pcall(function() AF.UI.Lbl.DBStatus.Text=msg; AF.UI.Lbl.DBStatus.TextColor3=D.Yellow end)
             end)
             if ok and AF.Running and not AF.Active and GetNextItem() then task.spawn(FarmLoop) end
         end)
@@ -1079,12 +819,14 @@ local function RunScanTask(forceDelete, thenStartFarm)
     task.spawn(function()
         if forceDelete then ClearDB() end
         pcall(function()
-            UpdateStatus(AF.UI.Lbl.ScanProgress, "Deep-Scan startet...", D.Yellow)
+            AF.UI.Fr.ScanBar.Visible=true; AF.UI.Fr.ScanBarFill.Size=UDim2.new(0,0,1,0)
+            AF.UI.Fr.ScanBarFill.BackgroundColor3=D.Purple
+            AF.UI.Lbl.ScanProgress.Text="Deep-Scan startet..."; AF.UI.Lbl.ScanProgress.TextColor3=D.Yellow
             if AF.UI.Btn.ForceRescan then AF.UI.Btn.ForceRescan.Text="Scannt..."; AF.UI.Btn.ForceRescan.TextColor3=D.Yellow end
         end)
         SetStatus("Deep-Scan läuft...", D.Purple)
         local ok=ScanAllRewards(function(msg)
-            UpdateStatus(AF.UI.Lbl.DBStatus, msg, D.Yellow)
+            pcall(function() AF.UI.Lbl.DBStatus.Text=msg; AF.UI.Lbl.DBStatus.TextColor3=D.Yellow end)
         end)
         pcall(function()
             if AF.UI.Btn.ForceRescan then AF.UI.Btn.ForceRescan.Text="DATENBANK NEU SCANNEN"; AF.UI.Btn.ForceRescan.TextColor3=Color3.new(1,1,1) end
@@ -1201,7 +943,45 @@ task.spawn(function()
     end) end
 end)
 
--- DB-KARTE wurde entfernt - Status wird jetzt im Header angezeigt
+-- DB-KARTE
+local dbCard=Card(Container); Pad(dbCard,10,10,10,10); VList(dbCard,7)
+SecLbl(dbCard,"REWARD-DATENBANK")
+AF.UI.Lbl.DBStatus=MkLbl(dbCard,"Keine DB geladen.",11,D.TextLow); AF.UI.Lbl.DBStatus.Size=UDim2.new(1,0,0,18)
+local spLbl=Instance.new("TextLabel",dbCard); spLbl.Size=UDim2.new(1,0,0,16); spLbl.BackgroundTransparency=1
+spLbl.Text=""; spLbl.TextColor3=D.Yellow; spLbl.TextSize=10; spLbl.Font=Enum.Font.Gotham
+spLbl.TextXAlignment=Enum.TextXAlignment.Left; spLbl.TextTruncate=Enum.TextTruncate.AtEnd; AF.UI.Lbl.ScanProgress=spLbl
+local barBg=Instance.new("Frame",dbCard); barBg.Size=UDim2.new(1,0,0,7); barBg.BackgroundColor3=D.Input; barBg.BackgroundTransparency=D.GlassPane or 0.18; barBg.BorderSizePixel=0; barBg.Visible=false; Corner(barBg,3); AF.UI.Fr.ScanBar=barBg
+local barFill=Instance.new("Frame",barBg); barFill.Size=UDim2.new(0,0,1,0); barFill.BackgroundColor3=D.Purple; barFill.BorderSizePixel=0; Corner(barFill,3); AF.UI.Fr.ScanBarFill=barFill
+
+-- DB LADEN
+local loadDbBtn=Instance.new("TextButton",dbCard); loadDbBtn.Size=UDim2.new(1,0,0,28); loadDbBtn.BackgroundColor3=D.CardHover; loadDbBtn.BackgroundTransparency=D.GlassPane or 0.18; loadDbBtn.Text="DB laden"; loadDbBtn.TextColor3=D.CyanDim; loadDbBtn.TextSize=11; loadDbBtn.Font=Enum.Font.GothamBold; loadDbBtn.AutoButtonColor=false; loadDbBtn.BorderSizePixel=0; Corner(loadDbBtn,8); Stroke(loadDbBtn,D.CyanDim,1,0.3)
+loadDbBtn.MouseEnter:Connect(function() Tw(loadDbBtn,{BackgroundColor3=D.TabActive}) end)
+loadDbBtn.MouseLeave:Connect(function() Tw(loadDbBtn,{BackgroundColor3=D.CardHover}) end)
+loadDbBtn.MouseButton1Click:Connect(function()
+    if LoadDB() or BuildDBFromModuleData() then
+        local c=DBCount(); AF.UI.Lbl.DBStatus.Text=string.format("✅ DB: %d Chapters",c); AF.UI.Lbl.DBStatus.TextColor3=D.Green
+        _G.HazeHUB_Database = AF.RewardDatabase
+        NotifyDBReady(c,string.format("Datenbank geladen! (%d Chapters)",c))
+    else AF.UI.Lbl.DBStatus.Text="Keine gültige DB."; AF.UI.Lbl.DBStatus.TextColor3=D.Orange end
+end)
+
+-- UPDATE DATABASE
+local updateDbBtn=Instance.new("TextButton",dbCard); updateDbBtn.Size=UDim2.new(1,0,0,34); updateDbBtn.BackgroundColor3=D.CardHover; updateDbBtn.BackgroundTransparency=D.GlassPane or 0.18; updateDbBtn.Text="Update Database"; updateDbBtn.TextColor3=D.Accent or D.Cyan; updateDbBtn.TextSize=12; updateDbBtn.Font=Enum.Font.GothamBold; updateDbBtn.AutoButtonColor=false; updateDbBtn.BorderSizePixel=0; Corner(updateDbBtn,8); Stroke(updateDbBtn,D.Accent or D.Cyan,1.5,0.2); AF.UI.Btn.UpdateDB=updateDbBtn
+updateDbBtn.MouseEnter:Connect(function() Tw(updateDbBtn,{BackgroundColor3=D.TabActive}) end)
+updateDbBtn.MouseLeave:Connect(function() Tw(updateDbBtn,{BackgroundColor3=D.CardHover}) end)
+updateDbBtn.MouseButton1Click:Connect(function()
+    if not CheckIsLobby() then SetStatus("Update DB: Nur in Lobby!",D.Orange); Tw(updateDbBtn,{BackgroundColor3=D.RedDark}); task.wait(0.5); Tw(updateDbBtn,{BackgroundColor3=D.CardHover}); return end
+    if AF.Scanning then SetStatus("Scan läuft!",D.Yellow); return end
+    updateDbBtn.Text="Scannt..."; updateDbBtn.TextColor3=D.Yellow; RunScanTask(true,false)
+end)
+
+-- FORCE RESCAN
+local forceBtn=Instance.new("TextButton",dbCard); forceBtn.Size=UDim2.new(1,0,0,40); forceBtn.BackgroundColor3=Color3.fromRGB(68,10,108); forceBtn.Text="DATENBANK NEU SCANNEN"; forceBtn.TextColor3=Color3.new(1,1,1); forceBtn.TextSize=13; forceBtn.Font=Enum.Font.GothamBold; forceBtn.AutoButtonColor=false; forceBtn.BorderSizePixel=0; Corner(forceBtn,9); Stroke(forceBtn,Color3.fromRGB(180,80,255),2,0); AF.UI.Btn.ForceRescan=forceBtn
+forceBtn.MouseEnter:Connect(function()   Tw(forceBtn,{BackgroundColor3=Color3.fromRGB(110,22,170)}) end)
+forceBtn.MouseLeave:Connect(function()   Tw(forceBtn,{BackgroundColor3=Color3.fromRGB(68,10,108)})  end)
+forceBtn.MouseButton1Down:Connect(function() Tw(forceBtn,{BackgroundColor3=Color3.fromRGB(40,5,72)}) end)
+forceBtn.MouseButton1Up:Connect(function()   Tw(forceBtn,{BackgroundColor3=Color3.fromRGB(110,22,170)}) end)
+forceBtn.MouseButton1Click:Connect(function() RunScanTask(true,false) end)
 
 -- QUEUE-KARTE
 local qCard=Card(Container); Pad(qCard,10,10,10,10); VList(qCard,8); SecLbl(qCard,"AUTO-FARM QUEUE")
@@ -1219,7 +999,7 @@ qAddBtn.MouseButton1Click:Connect(function()
     local inQ=false; for _,q in ipairs(AF.Queue) do if q.item==iname then inQ=true; break end end
     if not inQ then table.insert(AF.Queue,{item=iname,amount=iamt,done=false}); SaveQueueFile() end
     qItemBox.Text=""; qAmtBox.Text=""; UpdateQueueUI(); pcall(function() HS.UpdateGoalsUI() end)
-    UpdateStatus(AF.UI.Lbl.QueueFileInfo, "Queue: "..#AF.Queue.." Items", D.Green)
+    pcall(function() AF.UI.Lbl.QueueFileInfo.Text="Queue: "..#AF.Queue.." Items"; AF.UI.Lbl.QueueFileInfo.TextColor3=D.Green end)
 end)
 local ctrlRow=Instance.new("Frame",qCard); ctrlRow.Size=UDim2.new(1,0,0,32); ctrlRow.BackgroundTransparency=1; ctrlRow.LayoutOrder=3; HList(ctrlRow,8)
 local startBtn=Instance.new("TextButton",ctrlRow); startBtn.Size=UDim2.new(0.48,0,0,32); startBtn.BackgroundColor3=D.Green; startBtn.Text="Start Queue"; startBtn.TextColor3=Color3.new(1,1,1); startBtn.TextSize=12; startBtn.Font=Enum.Font.GothamBold; startBtn.AutoButtonColor=false; startBtn.BorderSizePixel=0; Corner(startBtn,8); Stroke(startBtn,D.Green,1,0.2)
@@ -1242,7 +1022,7 @@ local clearBtn=NeonBtn(qCard,"Queue leeren",D.Red,28)
 clearBtn.LayoutOrder=4
 clearBtn.MouseButton1Click:Connect(function()
     AF.Queue={}; SaveQueueFile(); UpdateQueueUI()
-    UpdateStatus(AF.UI.Lbl.QueueFileInfo, "Queue geleert.", D.TextLow)
+    pcall(function() AF.UI.Lbl.QueueFileInfo.Text="Queue geleert."; AF.UI.Lbl.QueueFileInfo.TextColor3=D.TextLow end)
 end)
 AF.UI.Fr.List=Instance.new("ScrollingFrame",qCard)
 AF.UI.Fr.List.LayoutOrder=5
@@ -1258,493 +1038,17 @@ AF.UI.Lbl.QueueEmpty=MkLbl(AF.UI.Fr.List,"Queue leer.",11,D.TextLow)
 AF.UI.Lbl.QueueEmpty.Size=UDim2.new(1,0,0,24)
 
 -- ============================================================
---  ★ AUTO-CHALLENGE
--- ============================================================
-local AF_Challenge = {
-    Items    = {},  -- { name, displayName, dropRate, minDrop, maxDrop, chapName, world, chapter }
-    Active   = false,
-    Running  = false,
-    SelIdx   = nil,
-    Title    = "Challenge",
-}
-
-local function ReadChallengeMetaFromFolder(folder)
-    local chapName, world, chapter = "Challenge", "Unknown", "Unknown"
-    if not folder then return chapName, world, chapter end
-    pcall(function()
-        local function gv(name)
-            local o = folder:FindFirstChild(name)
-            if o and (o:IsA("StringValue") or o:IsA("IntValue") or o:IsA("NumberValue") or o:IsA("ObjectValue")) then
-                return tostring(o.Value)
-            end
-            return nil
-        end
-        chapName = gv("ChallengeName") or chapName
-        world = gv("World") or world
-        chapter = gv("Chapter") or chapter
-    end)
-    return chapName, world, chapter
-end
-
-local function ScanChallengeItems()
-    AF_Challenge.Items = {}
-    AF_Challenge.Title = "Challenge"
-    local challengeFolder = nil
-    local ok = pcall(function()
-        challengeFolder = RS:WaitForChild("Gameplay", 10):WaitForChild("Game", 10):WaitForChild("Challenge", 10)
-    end)
-    if not ok or not challengeFolder then
-        warn("[HazeHub] ScanChallengeItems: RS.Gameplay.Game.Challenge nicht gefunden.")
-        return 0
-    end
-
-    local chapName, world, chapter = ReadChallengeMetaFromFolder(challengeFolder)
-    AF_Challenge.Title = chapName
-
-    local itemsFolder = challengeFolder:FindFirstChild("Items")
-    if not itemsFolder then
-        warn("[HazeHub] ScanChallengeItems: RS.Gameplay.Game.Challenge.Items fehlt.")
-        return 0
-    end
-
-    for _, item in ipairs(itemsFolder:GetChildren()) do
-        if item:IsA("UIGridLayout") or item:IsA("UIListLayout")
-            or item:IsA("UIPadding") or item:IsA("UICorner") or item:IsA("UIScale") then
-            continue
-        end
-
-        local dropRate = tonumber(item:GetAttribute("DropRate")) or 0
-        local maxDrop  = tonumber(item:GetAttribute("MaxDrop")) or 1
-        local minDrop  = tonumber(item:GetAttribute("MinDrop")) or 1
-
-        if dropRate == 0 then
-            local dr = item:FindFirstChild("DropRate")
-            if dr and dr.Value ~= nil then dropRate = tonumber(dr.Value) or 0 end
-        end
-        if maxDrop == 1 then
-            local md = item:FindFirstChild("MaxDrop")
-            if md and md.Value ~= nil then maxDrop = tonumber(md.Value) or 1 end
-        end
-        if minDrop == 1 then
-            local mi = item:FindFirstChild("MinDrop")
-            if mi and mi.Value ~= nil then minDrop = tonumber(mi.Value) or 1 end
-        end
-
-        local avgDrop = (minDrop + maxDrop) / 2
-        local score = dropRate * avgDrop
-
-        local displayName = item.Name
-        pcall(function()
-            local inf = item:FindFirstChild("Info")
-            local nv = (inf and inf:FindFirstChild("ItemNames")) or item:FindFirstChild("ItemNames")
-            if nv and nv.Value ~= nil and tostring(nv.Value) ~= "" then
-                displayName = tostring(nv.Value)
-            end
-        end)
-
-        table.insert(AF_Challenge.Items, {
-            name         = item.Name,
-            displayName = displayName,
-            chapName    = chapName,
-            world       = world,
-            chapter     = chapter,
-            dropRate    = dropRate,
-            minDrop     = minDrop,
-            maxDrop     = maxDrop,
-            score       = score,
-        })
-    end
-
-    table.sort(AF_Challenge.Items, function(a, b)
-        return a.score > b.score
-    end)
-
-    print(string.format("[HazeHub] ScanChallengeItems: %d Items gefunden.", #AF_Challenge.Items))
-    return #AF_Challenge.Items
-end
-
-local function StartChallengeLoop()
-    if AF_Challenge.Running then return end
-    local sel = AF_Challenge.SelIdx and AF_Challenge.Items[AF_Challenge.SelIdx]
-    if not sel then
-        SetStatus("⚠ Kein Challenge-Item gewählt!", D.Orange)
-        return
-    end
-    AF_Challenge.Active = true
-    AF_Challenge.Running = true
-    task.spawn(function()
-        SetStatus(string.format("⚡ Challenge: %s", sel.displayName or sel.name), D.Cyan)
-        pcall(function()
-            Fire("Create", { ["CreateChallengeRoom"] = true })
-        end)
-        while AF_Challenge.Running and AF_Challenge.Active do
-            task.wait(2)
-        end
-        AF_Challenge.Running = false
-        AF_Challenge.Active = false
-        SetStatus("Challenge beendet.", D.TextMid)
-    end)
-end
-
--- ── Challenge UI ──────────────────────────────────────────────
-local chalCard = Card(Container)
-Pad(chalCard, 10, 10, 10, 10); VList(chalCard, 8)
-SecLbl(chalCard, "⚡  AUTO-CHALLENGE")
-
-local chalStatusLbl = MkLbl(chalCard, "Challenge Items nicht gescannt.", 10, D.TextLow)
-chalStatusLbl.Size = UDim2.new(1, 0, 0, 16)
-
-local chalTitleLbl = MkLbl(chalCard, "", 12, D.Cyan, true)
-chalTitleLbl.Size = UDim2.new(1, 0, 0, 22)
-chalTitleLbl.Text = ""
-chalTitleLbl.Visible = false
-chalTitleLbl.TextXAlignment = Enum.TextXAlignment.Left
-chalTitleLbl.TextWrapped = true
-
-local chalListFrame = Instance.new("ScrollingFrame", chalCard)
-chalListFrame.Size                = UDim2.new(1, 0, 0, 160)
-chalListFrame.CanvasSize          = UDim2.new(0, 0, 0, 0)
-chalListFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-chalListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-chalListFrame.BackgroundTransparency = 1
-chalListFrame.BorderSizePixel     = 0
-chalListFrame.ScrollBarThickness  = 0
-chalListFrame.ScrollBarImageColor3 = D.CyanDim
-chalListFrame.ScrollingEnabled    = true
-chalListFrame.ScrollingDirection  = Enum.ScrollingDirection.Y
-VList(chalListFrame, 4)
-
-local chalEmptyLbl = MkLbl(chalListFrame, "Keine Items gescannt.", 10, D.TextLow)
-chalEmptyLbl.Size = UDim2.new(1, 0, 0, 22)
-
-local function RebuildChallengeList()
-    for _, v in pairs(chalListFrame:GetChildren()) do
-        if v:IsA("Frame") then v:Destroy() end
-    end
-    local has = #AF_Challenge.Items > 0
-    chalEmptyLbl.Visible = not has
-    chalTitleLbl.Text = has and (AF_Challenge.Title or "Challenge") or ""
-    chalTitleLbl.Visible = has
-    for i, item in ipairs(AF_Challenge.Items) do
-        local isSel = (AF_Challenge.SelIdx == i)
-        local row = Instance.new("Frame", chalListFrame)
-        row.Size                   = UDim2.new(1, 0, 0, 44)
-        row.BackgroundColor3       = isSel and D.TabActive or D.CardHover
-        row.BackgroundTransparency = 0.3
-        row.BorderSizePixel        = 0
-        Corner(row, 7)
-        Stroke(row, isSel and D.Cyan or D.Border, 1.5, isSel and 0 or 0.5)
-
-        local nL = Instance.new("TextLabel", row)
-        nL.Position = UDim2.new(0, 8, 0, 3); nL.Size = UDim2.new(1, -16, 0, 18)
-        nL.BackgroundTransparency = 1
-        nL.Text = item.displayName or item.name
-        nL.TextColor3 = isSel and D.Cyan or D.TextHi
-        nL.TextSize = 11; nL.Font = Enum.Font.GothamBold
-        nL.TextXAlignment = Enum.TextXAlignment.Left; nL.TextTruncate = Enum.TextTruncate.AtEnd
-
-        local sL = Instance.new("TextLabel", row)
-        sL.Position = UDim2.new(0, 8, 0, 23); sL.Size = UDim2.new(1, -16, 0, 14)
-        sL.BackgroundTransparency = 1
-        sL.Text = string.format("Drop: %.1f%%  ·  Min:%d  Max:%d  ·  %s › %s",
-            item.dropRate, item.minDrop, item.maxDrop, item.world, item.chapter)
-        sL.TextColor3 = D.TextMid; sL.TextSize = 9; sL.Font = Enum.Font.Gotham
-        sL.TextXAlignment = Enum.TextXAlignment.Left
-
-        local btn = Instance.new("TextButton", row)
-        btn.Size = UDim2.new(1, 0, 1, 0); btn.BackgroundTransparency = 1
-        btn.Text = ""; btn.BorderSizePixel = 0
-        local capI = i
-        btn.MouseButton1Click:Connect(function()
-            AF_Challenge.SelIdx = capI; RebuildChallengeList()
-        end)
-    end
-end
-
-local chalScanBtn = NeonBtn(chalCard, "🔍 Challenge Items scannen", D.CyanDim, 28)
-chalScanBtn.MouseButton1Click:Connect(function()
-    chalScanBtn.Text = "⏳ Scanne..."; chalScanBtn.TextColor3 = D.Yellow
-    task.spawn(function()
-        local n = ScanChallengeItems()
-        RebuildChallengeList()
-        chalStatusLbl.Text = n > 0
-            and string.format("✅ %d Challenge-Items gefunden.", n)
-            or  "⚠ Keine Items gefunden (Pfad prüfen)."
-        chalStatusLbl.TextColor3 = n > 0 and D.Green or D.Orange
-        chalScanBtn.Text = "🔍 Challenge Items scannen"
-        chalScanBtn.TextColor3 = D.CyanDim
-    end)
-end)
-
-local chalCtrlRow = Instance.new("Frame", chalCard)
-chalCtrlRow.Size = UDim2.new(1, 0, 0, 32); chalCtrlRow.BackgroundTransparency = 1
-HList(chalCtrlRow, 8)
-
-local chalStartBtn = Instance.new("TextButton", chalCtrlRow)
-chalStartBtn.Size = UDim2.new(0.58, 0, 0, 32)
-chalStartBtn.BackgroundColor3 = D.Green; chalStartBtn.Text = "▶ Start Challenge"
-chalStartBtn.TextColor3 = Color3.new(1,1,1); chalStartBtn.TextSize = 11
-chalStartBtn.Font = Enum.Font.GothamBold; chalStartBtn.AutoButtonColor = false
-chalStartBtn.BorderSizePixel = 0; Corner(chalStartBtn, 8); Stroke(chalStartBtn, D.Green, 1, 0.2)
-
-local chalStopBtn = Instance.new("TextButton", chalCtrlRow)
-chalStopBtn.Size = UDim2.new(0.38, 0, 0, 32)
-chalStopBtn.BackgroundColor3 = D.RedDark; chalStopBtn.Text = "■ Stop"
-chalStopBtn.TextColor3 = D.Red; chalStopBtn.TextSize = 11
-chalStopBtn.Font = Enum.Font.GothamBold; chalStopBtn.AutoButtonColor = false
-chalStopBtn.BorderSizePixel = 0; Corner(chalStopBtn, 8); Stroke(chalStopBtn, D.Red, 1, 0.4)
-
-chalStartBtn.MouseButton1Click:Connect(function()
-    if AF_Challenge.Active then SetStatus("⚠ Challenge läuft!", D.Yellow); return end
-    StartChallengeLoop()
-end)
-chalStopBtn.MouseButton1Click:Connect(function()
-    AF_Challenge.Active = false; AF_Challenge.Running = false
-    SetStatus("⏹ Challenge gestoppt.", D.TextMid)
-end)
-
--- ============================================================
---  ★ RAID FUNCTION (Esper & JJK)  — RAID_DEFS / RaidState weiter oben
--- ============================================================
-
--- Scanne Drop-Daten aus dem PlayRoom GUI
-local function ScanRaidDrops(raidId)
-    local results = {}
-    pcall(function()
-        local plr = game.Players.LocalPlayer
-        if not plr or not plr.PlayerGui then return end
-        local itemsList = nil
-        pcall(function()
-            itemsList = plr.PlayerGui.PlayRoom.Main.GameStage.Main.Base.Rewards.ItemsList
-        end)
-        if not itemsList then return end
-        for _, item in ipairs(itemsList:GetChildren()) do
-            if item:IsA("UIGridLayout") or item:IsA("UIListLayout") then continue end
-            local iname    = item.Name
-            local dropAmt  = 0
-            local dropRate = 0
-            pcall(function()
-                local frame     = item:FindFirstChild("Frame")
-                local itemFrame = frame and frame:FindFirstChild("ItemFrame")
-                local info      = itemFrame and itemFrame:FindFirstChild("Info")
-                if info then
-                    -- "DropAmonut" ist ein Typo im Spiel – beide prüfen
-                    local da = info:FindFirstChild("DropAmonut")
-                            or info:FindFirstChild("DropAmount")
-                    local dr = info:FindFirstChild("DropRate")
-                    if da then dropAmt  = tonumber(da.Text or da.Value) or 0 end
-                    if dr then dropRate = tonumber(dr.Text or dr.Value) or 0 end
-                end
-            end)
-            if iname ~= "" then
-                results[iname] = {
-                    dropAmount = dropAmt,
-                    dropRate   = dropRate,
-                    score      = (tonumber(dropRate) or 0) * (tonumber(dropAmt) or 1),
-                }
-            end
-        end
-    end)
-    return results
-end
-
--- Wählt beste Chap+Mode-Kombi anhand DropRate × DropAmount
-local function FindBestRaidOption(raidDef)
-    local bestScore = -1
-    local bestChapIdx, bestMode = 1, "Normal"
-    -- Wir müssen für jeden Chap+Mode die Drops scannen
-    -- Da wir den GUI-Scan nur im laufenden Spiel nutzen können,
-    -- geben wir hier die erste verfügbare Option zurück und
-    -- lassen den Live-Scan im Loop entscheiden
-    for ci, chap in ipairs(raidDef.chapters) do
-        for _, mode in ipairs(chap.modes) do
-            -- Fallback-Score: Chapter 1 Normal zuerst
-            local score = (ci == 1 and mode == "Normal") and 1 or 0
-            if score > bestScore then
-                bestScore = score; bestChapIdx = ci; bestMode = mode
-            end
-        end
-    end
-    return bestChapIdx, bestMode
-end
-
-local function FireStartRaid(raidDef, chapDef, mode)
-    pcall(function()
-        Fire("Create")
-        task.wait(0.4)
-        Fire("Change-World", { ["World"] = raidDef.world })
-        task.wait(0.4)
-        Fire("Change-Chapter", { Chapter = chapDef.id })
-        task.wait(0.4)
-        if mode == "Nightmare" then
-            Fire("Change-Difficulty", { Difficulty = "Nightmare" })
-            task.wait(0.35)
-        end
-        Fire("Submit")
-        task.wait(0.5)
-        Fire("Start")
-    end)
-end
-
-local function StartRaidLoop()
-    if RaidState.Active then return end
-    local raidDef = RaidState.SelRaid and RAID_DEFS[RaidState.SelRaid]
-    if not raidDef then SetStatus("⚠ Kein Raid gewählt!", D.Orange); return end
-    local chapIdx, mode = RaidState.SelChap or 1, RaidState.SelMode or "Normal"
-    local chapDef = raidDef.chapters[chapIdx]
-    if not chapDef then SetStatus("⚠ Chapter nicht gefunden!", D.Orange); return end
-
-    RaidState.Active = true; RaidState.Running = true
-    SetStatus(string.format("⚔ Raid: %s %s (%s)", raidDef.label, chapDef.label, mode), D.Cyan)
-
-    task.spawn(function()
-        while RaidState.Running do
-            if CheckIsLobby() then
-                SetStatus(string.format("🚀 Starte %s %s", raidDef.label, chapDef.label), D.Yellow)
-                FireStartRaid(raidDef, chapDef, mode)
-                -- Warten bis Spiel startet
-                local ws = os.clock()
-                while CheckIsLobby() and os.clock() - ws < 30 and RaidState.Running do
-                    task.wait(1)
-                end
-            else
-                -- In Runde: Live-Drop-Scan für Optimierung
-                local drops = ScanRaidDrops(raidDef.id)
-                local dropInfo = ""
-                for iname, d in pairs(drops) do
-                    dropInfo = dropInfo .. string.format("%s: %.1f%% ×%d  ", iname, d.dropRate, d.dropAmount)
-                end
-                SetStatus(string.format("⚔ Raid läuft | %s", #dropInfo > 0 and dropInfo or "..."), D.Cyan)
-                -- Warten bis Lobby
-                local deadline = os.time() + 600
-                while not CheckIsLobby() and os.time() < deadline and RaidState.Running do
-                    task.wait(3)
-                end
-                task.wait(2)
-            end
-        end
-        RaidState.Active = false
-        SetStatus("⏹ Raid gestoppt.", D.TextMid)
-    end)
-end
-
--- ── Raid UI ───────────────────────────────────────────────────
-local raidCard = Card(Container)
-Pad(raidCard, 10, 10, 10, 10); VList(raidCard, 8)
-SecLbl(raidCard, "⚔  RAID FARM")
-
--- Raid-Auswahl
-local raidSelRow = Instance.new("Frame", raidCard)
-raidSelRow.Size = UDim2.new(1, 0, 0, 0)
-raidSelRow.AutomaticSize = Enum.AutomaticSize.Y
-raidSelRow.BackgroundTransparency = 1
-VList(raidSelRow, 4)
-
-for ri, rdef in ipairs(RAID_DEFS) do
-    local rRow = Instance.new("Frame", raidSelRow)
-    rRow.Size = UDim2.new(1, 0, 0, 0)
-    rRow.AutomaticSize = Enum.AutomaticSize.Y
-    rRow.BackgroundTransparency = 1
-    VList(rRow, 3)
-
-    local rHdr = Instance.new("TextButton", rRow)
-    rHdr.Size = UDim2.new(1, 0, 0, 28)
-    rHdr.BackgroundColor3 = D.CardHover; rHdr.BackgroundTransparency = 0.3
-    rHdr.Text = rdef.label; rHdr.TextColor3 = rdef.accent
-    rHdr.TextSize = 12; rHdr.Font = Enum.Font.GothamBold
-    rHdr.AutoButtonColor = false; rHdr.BorderSizePixel = 0
-    Corner(rHdr, 7); Stroke(rHdr, rdef.accent, 1, 0.4)
-
-    -- Chapter + Mode Buttons
-    local chapModeRow = Instance.new("Frame", rRow)
-    chapModeRow.Size = UDim2.new(1, 0, 0, 0)
-    chapModeRow.AutomaticSize = Enum.AutomaticSize.Y
-    chapModeRow.BackgroundTransparency = 1
-    chapModeRow.Visible = false
-    VList(chapModeRow, 3)
-
-    local capRi = ri
-    rHdr.MouseButton1Click:Connect(function()
-        RaidState.SelRaid = capRi
-        chapModeRow.Visible = not chapModeRow.Visible
-        Stroke(rHdr, rdef.accent, 1.5, chapModeRow.Visible and 0 or 0.4)
-    end)
-
-    for ci, chap in ipairs(rdef.chapters) do
-        local chapRow = Instance.new("Frame", chapModeRow)
-        chapRow.Size = UDim2.new(1, 0, 0, 26)
-        chapRow.BackgroundTransparency = 1
-        HList(chapRow, 4)
-
-        local chapLbl = Instance.new("TextLabel", chapRow)
-        chapLbl.Size = UDim2.new(0.35, 0, 1, 0); chapLbl.BackgroundTransparency = 1
-        chapLbl.Text = chap.label; chapLbl.TextColor3 = D.TextMid
-        chapLbl.TextSize = 10; chapLbl.Font = Enum.Font.GothamSemibold
-        chapLbl.TextXAlignment = Enum.TextXAlignment.Left
-
-        for _, modeStr in ipairs(chap.modes) do
-            local mb = Instance.new("TextButton", chapRow)
-            mb.Size = UDim2.new(0, 70, 1, 0)
-            mb.BackgroundColor3 = D.CardHover; mb.BackgroundTransparency = 0.4
-            mb.Text = modeStr
-            mb.TextColor3 = modeStr == "Nightmare" and D.Red or D.Green
-            mb.TextSize = 10; mb.Font = Enum.Font.GothamBold
-            mb.AutoButtonColor = false; mb.BorderSizePixel = 0
-            Corner(mb, 6); Stroke(mb, modeStr == "Nightmare" and D.Red or D.Green, 1, 0.4)
-            local capCi, capMode, capR = ci, modeStr, ri
-            mb.MouseButton1Click:Connect(function()
-                RaidState.SelRaid = capR
-                RaidState.SelChap = capCi
-                RaidState.SelMode = capMode
-                -- Visuelles Feedback
-                mb.BackgroundColor3 = modeStr == "Nightmare" and D.RedDark or D.GreenDark
-                local s = mb:FindFirstChildOfClass("UIStroke"); if s then s.Transparency = 0 end
-                SetStatus(string.format("✔ Gewählt: %s %s (%s)", rdef.label, chap.label, modeStr), D.Cyan)
-            end)
-        end
-    end
-end
-
-local raidCtrlRow = Instance.new("Frame", raidCard)
-raidCtrlRow.Size = UDim2.new(1, 0, 0, 32); raidCtrlRow.BackgroundTransparency = 1
-HList(raidCtrlRow, 8)
-
-local raidStartBtn = Instance.new("TextButton", raidCtrlRow)
-raidStartBtn.Size = UDim2.new(0.58, 0, 0, 32)
-raidStartBtn.BackgroundColor3 = D.Green; raidStartBtn.Text = "▶ Start Raid"
-raidStartBtn.TextColor3 = Color3.new(1,1,1); raidStartBtn.TextSize = 11
-raidStartBtn.Font = Enum.Font.GothamBold; raidStartBtn.AutoButtonColor = false
-raidStartBtn.BorderSizePixel = 0; Corner(raidStartBtn, 8); Stroke(raidStartBtn, D.Green, 1, 0.2)
-
-local raidStopBtn = Instance.new("TextButton", raidCtrlRow)
-raidStopBtn.Size = UDim2.new(0.38, 0, 0, 32)
-raidStopBtn.BackgroundColor3 = D.RedDark; raidStopBtn.Text = "■ Stop"
-raidStopBtn.TextColor3 = D.Red; raidStopBtn.TextSize = 11
-raidStopBtn.Font = Enum.Font.GothamBold; raidStopBtn.AutoButtonColor = false
-raidStopBtn.BorderSizePixel = 0; Corner(raidStopBtn, 8); Stroke(raidStopBtn, D.Red, 1, 0.4)
-
-raidStartBtn.MouseButton1Click:Connect(function()
-    if RaidState.Active then SetStatus("⚠ Raid läuft!", D.Yellow); return end
-    if not RaidState.SelRaid then SetStatus("⚠ Bitte Raid + Chapter + Modus wählen!", D.Orange); return end
-    StartRaidLoop()
-end)
-raidStopBtn.MouseButton1Click:Connect(function()
-    RaidState.Active = false; RaidState.Running = false
-    SetStatus("⏹ Raid gestoppt.", D.TextMid)
-end)
-
--- ============================================================
 --  STARTUP
 -- ============================================================
 if isfile and isfile(DB_FILE) then
     local raw; pcall(function() raw=readfile(DB_FILE) end)
-    if raw and #raw<10 then UpdateStatus(AF.UI.Lbl.DBStatus, "⚠ DB korrupt!", D.Orange)
+    if raw and #raw<10 then AF.UI.Lbl.DBStatus.Text="⚠ DB korrupt!"; AF.UI.Lbl.DBStatus.TextColor3=D.Orange
     elseif LoadDB() or BuildDBFromModuleData() then
-        local c=DBCount(); UpdateStatus(AF.UI.Lbl.DBStatus, string.format("✅ DB: %d Chapters",c), D.Green)
+        local c=DBCount(); AF.UI.Lbl.DBStatus.Text=string.format("✅ DB: %d Chapters",c); AF.UI.Lbl.DBStatus.TextColor3=D.Green
         _G.HazeHUB_Database = AF.RewardDatabase
         task.delay(0.5, function() NotifyDBReady(c, string.format("Datenbank geladen! (%d Chapters)",c)) end)
-    else UpdateStatus(AF.UI.Lbl.DBStatus, "Keine DB.", D.TextLow) end
-else UpdateStatus(AF.UI.Lbl.DBStatus, "Keine DB.", D.TextLow)
+    end
+else AF.UI.Lbl.DBStatus.Text="Keine DB."; AF.UI.Lbl.DBStatus.TextColor3=D.TextLow end
 
 task.spawn(TryAutoResume)
 -- ============================================================
@@ -1760,7 +1064,7 @@ task.spawn(TryAutoResume)
 --  ruft am Ende NotifyDBReady() auf, damit der Start-Button
 --  im Game-Tab wieder freigeschaltet wird.
 -- ────────────────────────────────────────────────────────────
-_G.HazeHUB.TriggerResetRescan = function(onProgress)
+HS.TriggerResetRescan = function(onProgress)
     if AF.Scanning then
         pcall(function()
             if onProgress then onProgress("⚠ Scan läuft bereits – bitte warten!") end
@@ -1771,8 +1075,13 @@ _G.HazeHUB.TriggerResetRescan = function(onProgress)
     -- RAM-DB leeren (Datei wurde bereits vom Hauptskript gelöscht)
     ClearDB()
 
-    -- Status-Labels im Autofarm-UI zurücksetzen (ohne DB-Status)
+    -- Status-Labels im Autofarm-UI zurücksetzen
     pcall(function()
+        AF.UI.Lbl.DBStatus.Text       = "⏳ Reset & Rescan gestartet..."
+        AF.UI.Lbl.DBStatus.TextColor3 = D.Yellow
+        AF.UI.Fr.ScanBar.Visible      = true
+        AF.UI.Fr.ScanBarFill.Size     = UDim2.new(0, 0, 1, 0)
+        AF.UI.Fr.ScanBarFill.BackgroundColor3 = D.Purple
         AF.UI.Lbl.ScanProgress.Text   = "Reset & Rescan: startet..."
         AF.UI.Lbl.ScanProgress.TextColor3 = D.Yellow
         if AF.UI.Btn.ForceRescan then
@@ -1789,8 +1098,8 @@ _G.HazeHUB.TriggerResetRescan = function(onProgress)
     task.spawn(function()
         local combinedProgress = function(msg)
             pcall(function()
-                AF.UI.Lbl.ScanProgress.Text = msg
-                AF.UI.Lbl.ScanProgress.TextColor3 = D.Yellow
+                AF.UI.Lbl.DBStatus.Text       = msg
+                AF.UI.Lbl.DBStatus.TextColor3 = D.Yellow
             end)
             if onProgress then pcall(function() onProgress(msg) end) end
         end
@@ -1833,5 +1142,3 @@ pcall(function()
     end
 end)
 print(string.format("[HazeHub] autofarm.lua v%s geladen | Spieler: %s | DB: %d Chapters", VERSION, LP.Name, DBCount()))
-
-return AF
