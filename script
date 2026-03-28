@@ -158,6 +158,7 @@ _G.GlobalSession = GlobalSession
 -- === GLOBALE HAZEHUB TABELLE (SYNCHRONISATION) ===
 _G.HazeHUB = {}
 _G.HazeHUB_Loaded = false
+_G.HazeHUB_Ready = false
 
 -- ── GLOBALE FUNKTIONS-DEFINITIONEN (HOISTING - VERHINDERT SCOPE-FEHLER) ──
 -- ALLE wichtigen Funktionen werden hier definiert und global gemacht
@@ -2603,7 +2604,7 @@ local function LoadModule(url,name,delay,onErr)
         task.wait(delay or 1)
         
         -- Warte bis das Hauptskript vollständig geladen ist
-        repeat task.wait(0.5) until _G.HazeHUB_Loaded == true
+        repeat task.wait(0.5) until _G.HazeHUB_Ready == true
         
         -- Stelle sicher, dass alle globalen Funktionen und Variablen verfügbar sind
         if not _G.HazeHubFunctions then
@@ -2748,4 +2749,5 @@ end)
 
 -- === HAUPTSKRIPT GELADEN - MODULE KÖNNEN STARTEN ===
 _G.HazeHUB_Loaded = true
+_G.HazeHUB_Ready = true
 print("[HazeHUB] Hauptskript vollständig geladen - Module können jetzt starten")
