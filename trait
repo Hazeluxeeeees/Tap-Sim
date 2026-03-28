@@ -722,7 +722,7 @@ local function BuildUnitList(filter)
         clickBtn.ZIndex                = 2
         local capU = u
         clickBtn.MouseButton1Click:Connect(function()
-            TR.SelectedUnit         = capU.instance
+            TR.SelectedUnitName     = capU.instance.Name  -- Immer Ordner-Name, nie Tag.Value
             TR.SelectedUnitName     = capU.name
             TR.SelectedUnitTagValue = nil
             BuildUnitList(filter)
