@@ -722,8 +722,8 @@ local function BuildUnitList(filter)
         clickBtn.ZIndex                = 2
         local capU = u
         clickBtn.MouseButton1Click:Connect(function()
-            TR.SelectedUnitName     = capU.instance.Name  -- Immer Ordner-Name, nie Tag.Value
-            TR.SelectedUnitName     = capU.name
+            TR.SelectedUnit         = capU.instance   -- DIESE ZEILE FEHLT NOCH
+            TR.SelectedUnitName     = capU.instance.Name
             TR.SelectedUnitTagValue = nil
             BuildUnitList(filter)
             UpdateLiveTraitDisplay()
