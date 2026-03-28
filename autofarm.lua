@@ -268,7 +268,10 @@ local function SaveQueueFile()
     pcall(function()
         local out = {}
         for _, q in ipairs(AF.Queue) do
-            if not q.done then table.insert(out, { item = q.item, amount = q.amount }) end
+            if not q.done then
+                local amt = tonumber(q.amount) or tonumber(q.needed) or 1
+                table.insert(out, { item = q.item, amount = amt })
+            end
         end
         writefile(QUEUE_FILE, Svc.Http:JSONEncode(out))
     end)
@@ -282,8 +285,9 @@ local function LoadQueueFile()
     if not ok or type(data) ~= "table" then return false end
     AF.Queue = {}
     for _, q in ipairs(data) do
-        if q.item and tonumber(q.amount) and tonumber(q.amount) > 0 then
-            table.insert(AF.Queue, { item = q.item, amount = tonumber(q.amount), done = false })
+        local amt = tonumber(q.amount) or tonumber(q.needed)
+        if q.item and amt and amt > 0 then
+            table.insert(AF.Queue, { item = q.item, amount = amt, done = false })
         end
     end
     print("[HazeHub] Queue: " .. #AF.Queue .. " Items geladen")
@@ -305,113 +309,22 @@ local function GetNextItem()
     return nil
 end
 
--- ★ KORRIGIERT: SyncInventoryWithQueue
--- Kein vorzeitiger Lobby-Teleport – direkter Queue-Wechsel per Remote
+-- ★ Wie autofarm_FULL_CORRECTED: nur item + amount (keine Welten in der Queue-Datei)
 local function SyncInventoryWithQueue()
     local changed = false
-
     for i = #AF.Queue, 1, -1 do
         local q = AF.Queue[i]
-        if q.done then continue end
-
-        local cur = GetLiveInvAmt(q.item)
-        if cur < q.needed then continue end
-
-        print(string.format("[HazeHub] ZIEL ERREICHT: '%s' %d/%d", q.item, cur, q.needed))
-        task.spawn(function()
-            pcall(function() SendWebhook({}, q.item, cur) end)
-        end)
-
-        RemoveFromQueue(q.item)
-        pcall(UpdateQueueUI)
-        SetStatus(string.format("✅ '%s' erreicht!", q.item), D.GreenBright)
-        SaveState()
-        changed = true
-
-        -- Queue-Wechsel nur wenn wir aktiv farmen und noch im Spiel sind
-        if not CheckIsLobby() and AF.Running then
-            local nextQ = GetNextItem()
-            if nextQ then
-                SetStatus(string.format("⏳ Warte auf Rundenende → '%s'", nextQ.item), D.Yellow)
-
-                local waitDeadline = os.time() + 600
-                while AF.Running and not CheckIsLobby() and os.time() < waitDeadline do
-                    task.wait(3)
-                end
-
-                if CheckIsLobby() and AF.Running then
-                    task.wait(2)
-                    local nextChapId, nextWorldId, nextMode, _nr, nextDiff = FindBestChapter(nextQ.item)
-
-                    if nextChapId
-                        and (nextWorldId or nextMode == "Calamity" or nextMode == "JJKRaid" or nextMode == "EsperRaid")
-                    then
-                        SetStatus(string.format("🚀 Starte direkt: [%s] %s", nextMode or "?", nextChapId), D.Cyan)
-                        task.spawn(function()
-                            local ok, err = pcall(function()
-                                if nextMode == "Story" then
-                                    SafeFire("Create");                                                task.wait(0.35)
-                                    SafeFire("Change-World",   { World   = nextWorldId });             task.wait(0.35)
-                                    SafeFire("Change-Chapter", { Chapter = nextChapId });              task.wait(0.35)
-                                    SafeFire("Submit");                                                task.wait(0.50)
-                                    SafeFire("Start")
-                                elseif nextMode == "Ranger" then
-                                    SafeFire("Create");                                                task.wait(0.35)
-                                    SafeFire("Change-Mode", { KeepWorld = nextWorldId, Mode = "Ranger Stage" }); task.wait(0.50)
-                                    SafeFire("Change-World",   { World   = nextWorldId });             task.wait(0.35)
-                                    SafeFire("Change-Chapter", { Chapter = nextChapId });              task.wait(0.35)
-                                    SafeFire("Submit");                                                task.wait(0.50)
-                                    SafeFire("Start")
-                                elseif nextMode == "Calamity" then
-                                    SafeFire("Create");                                                task.wait(0.35)
-                                    SafeFire("Change-Mode",    { Mode    = "Calamity" });              task.wait(0.35)
-                                    SafeFire("Change-Chapter", { Chapter = nextChapId });              task.wait(0.35)
-                                    SafeFire("Submit");                                                task.wait(0.50)
-                                    SafeFire("Start")
-                                elseif nextMode == "JJKRaid" then
-                                    SafeFire("Create");                                                task.wait(0.40)
-                                    SafeFire("Change-World",   { ["World"] = "JJKRaid" });             task.wait(0.40)
-                                    SafeFire("Change-Chapter", { Chapter = nextChapId });              task.wait(0.35)
-                                    SafeFire("Submit");                                                task.wait(0.50)
-                                    SafeFire("Start")
-                                elseif nextMode == "EsperRaid" then
-                                    SafeFire("Create");                                                task.wait(0.40)
-                                    SafeFire("Change-World",   { ["World"] = "EsperRaid" });           task.wait(0.40)
-                                    SafeFire("Change-Chapter", { Chapter = nextChapId });              task.wait(0.35)
-                                    if nextDiff == "Nightmare" then
-                                        SafeFire("Change-Difficulty", { Difficulty = "Nightmare" }); task.wait(0.35)
-                                    end
-                                    SafeFire("Submit");                                                task.wait(0.50)
-                                    SafeFire("Start")
-                                end
-                            end)
-                            if not ok then
-                                warn("[HazeHub] Direkt-Wechsel FireServer Fehler: " .. tostring(err))
-                            end
-                        end)
-                    else
-                        warn("[HazeHub] Direkt-Wechsel: kein Chapter für '" .. nextQ.item .. "' – Lobby-Teleport.")
-                        DoTeleportToLobby(true)
-                    end
-                else
-                    if AF.Running then
-                        warn("[HazeHub] Queue-Wechsel Timeout – Teleport-Fallback.")
-                        DoTeleportToLobby(true)
-                    end
-                end
-            else
-                SetStatus("✅ Queue leer – Farm beendet.", D.Green)
-                AF.Active  = false
-                AF.Running = false
-                _G.AutoFarmRunning = false
-                if CFG then CFG.AutoFarm = false end
-                pcall(SaveConfig); pcall(SaveSettings); SaveState()
+        if not q.done then
+            local cur = GetLiveInvAmt(q.item)
+            local amt = tonumber(q.amount) or tonumber(q.needed) or 1
+            if amt < 1 then amt = 1 end
+            if cur >= amt then
+                table.remove(AF.Queue, i)
+                changed = true
             end
         end
-
-        break  -- nur ein Item pro Durchlauf
     end
-
+    if changed then SaveQueueFile() end
     return changed
 end
 
@@ -985,7 +898,8 @@ UpdateQueueUI = function()
     end
     for i, q in ipairs(AF.Queue) do
         if q.done then continue end
-        local inv=GetLiveInvAmt(q.item); local pct=math.min(1,inv/math.max(1,q.amount)); local isNext=(NextItem()==q)
+        local tgt = math.max(1, tonumber(q.amount) or tonumber(q.needed) or 1)
+        local inv=GetLiveInvAmt(q.item); local pct=math.min(1,inv/math.max(1,tgt)); local isNext=(NextItem()==q)
         local row=Instance.new("Frame",AF.UI.Fr.List); row.Size=UDim2.new(1,0,0,44); row.BorderSizePixel=0; Corner(row,8)
         if isNext then row.BackgroundColor3=D.RowSelect or D.TabActive; Stroke(row,D.Accent or D.Cyan,1.5,0)
         else            row.BackgroundColor3=D.Card;                 Stroke(row,D.Border,1,0.4) end
@@ -994,7 +908,7 @@ UpdateQueueUI = function()
         local pgBg=Instance.new("Frame",row); pgBg.Size=UDim2.new(1,-52,0,3); pgBg.Position=UDim2.new(0,8,1,-6); pgBg.BackgroundColor3=D.Input; pgBg.BackgroundTransparency=D.GlassPane or 0.18; pgBg.BorderSizePixel=0; Corner(pgBg,2)
         local pgF=Instance.new("Frame",pgBg); pgF.Size=UDim2.new(pct,0,1,0); pgF.BackgroundColor3=barC; pgF.BorderSizePixel=0; Corner(pgF,2)
         local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,12,0,5); nL.Size=UDim2.new(1,-52,0.5,-3); nL.BackgroundTransparency=1; nL.Text=(isNext and "▶ " or "")..q.item; nL.TextColor3=isNext and (D.Accent or D.Cyan) or D.TextHi; nL.TextSize=11; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
-        local pL=Instance.new("TextLabel",row); pL.Position=UDim2.new(0,12,0.5,1); pL.Size=UDim2.new(1,-52,0.5,-5); pL.BackgroundTransparency=1; pL.Text=string.format("%d / %d  (%.0f%%)",inv,q.amount,pct*100); pL.TextColor3=D.TextMid; pL.TextSize=10; pL.Font=Enum.Font.GothamSemibold; pL.TextXAlignment=Enum.TextXAlignment.Left
+        local pL=Instance.new("TextLabel",row); pL.Position=UDim2.new(0,12,0.5,1); pL.Size=UDim2.new(1,-52,0.5,-5); pL.BackgroundTransparency=1; pL.Text=string.format("%d / %d  (%.0f%%)",inv,tgt,pct*100); pL.TextColor3=D.TextMid; pL.TextSize=10; pL.Font=Enum.Font.GothamSemibold; pL.TextXAlignment=Enum.TextXAlignment.Left
         local ci=i
         local xBtn=Instance.new("TextButton",row); xBtn.Size=UDim2.new(0,34,0,34); xBtn.Position=UDim2.new(1,-38,0.5,-17); xBtn.BackgroundColor3=Color3.fromRGB(50,12,12); xBtn.Text="✕"; xBtn.TextColor3=D.Red; xBtn.TextSize=13; xBtn.Font=Enum.Font.GothamBold; xBtn.AutoButtonColor=false; xBtn.BorderSizePixel=0; Corner(xBtn,7); Stroke(xBtn,D.Red,1,0.4)
         xBtn.MouseEnter:Connect(function() Tw(xBtn,{BackgroundColor3=D.RedDark}) end)
@@ -1009,6 +923,7 @@ end
 --  ★ RUNDEN-MONITOR
 -- ============================================================
 local function RoundMonitorLoop(q)
+    local tgt = math.max(1, tonumber(q.amount) or tonumber(q.needed) or 1)
     print("[HazeHub] RUNDE: Tracker '" .. q.item .. "'")
     SetStatus(string.format("RUNDE: Warte auf '%s'", q.item), D.TextMid)
     local deadline = os.time() + 600
@@ -1017,13 +932,13 @@ local function RoundMonitorLoop(q)
         task.wait(4)
         -- ★ Dynamisch: GetLiveInvAmt nutzt LP.Name intern
         local cur = GetLiveInvAmt(q.item)
-        print(string.format("[HazeHub] '%s': %d/%d", q.item, cur, q.amount))
+        print(string.format("[HazeHub] '%s': %d/%d", q.item, cur, tgt))
         SetStatus(string.format("RUNDE: '%s'  %d/%d  (%.0f%%)",
-            q.item, cur, q.amount, math.min(100, cur/math.max(1,q.amount)*100)), D.Cyan)
+            q.item, cur, tgt, math.min(100, cur/math.max(1,tgt)*100)), D.Cyan)
         pcall(UpdateQueueUI); pcall(function() HS.UpdateGoalsUI() end)
 
-        if cur >= q.amount then
-            print(string.format("[HazeHub] ZIEL ERREICHT: '%s' %d/%d → Teleport zur Lobby!", q.item, cur, q.amount))
+        if cur >= tgt then
+            print(string.format("[HazeHub] ZIEL ERREICHT: '%s' %d/%d → Teleport zur Lobby!", q.item, cur, tgt))
             task.spawn(function() pcall(function() SendWebhook({}, q.item, cur) end) end)
             RemoveFromQueue(q.item); pcall(UpdateQueueUI)
             SetStatus(string.format("✅ '%s' erreicht! Teleportiere...", q.item), D.GreenBright)
@@ -1180,7 +1095,7 @@ local function AddOrUpdateQueueItem(itemName, amount)
 
     for _, q in ipairs(AF.Queue) do
         if q.item == iname then
-            q.amount = math.max(1, q.amount + iamt)
+            q.amount = math.max(1, (tonumber(q.amount) or tonumber(q.needed) or 0) + iamt)
             q.done = false
             SaveQueueFile()
             pcall(UpdateQueueUI)
