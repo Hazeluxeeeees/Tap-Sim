@@ -2019,3 +2019,12 @@ end)
 task.delay(6,function()
     pcall(function() for _, ch in ipairs(ScreenGui:GetDescendants()) do ApplySharpTypography(ch) end end)
 end)
+-- NACH: LoadModule(K.TRAIT_URL, "Traits", 4, ...)
+LoadModule(K.TEAMS_URL, "Teams", 5, function(err)
+    pcall(function()
+        if _G._TeamsWaitLbl then
+            _G._TeamsWaitLbl.Text = "❌ Teams-Fehler: " .. err
+            _G._TeamsWaitLbl.TextColor3 = D.Red
+        end
+    end)
+end)
