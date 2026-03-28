@@ -445,22 +445,28 @@ end
 -- ============================================================
 --  STATUS
 -- ============================================================
+-- ============================================================
+--  SICHERE STATUS-UPDATE FUNKTION (beugt nil-Errors vor)
+-- ============================================================
+local function UpdateStatus(label, message, color)
+    if label and typeof(label) == "Instance" and label:IsA("TextLabel") then
+        label.Text = message
+        if color then label.TextColor3 = color end
+    end
+end
+
 local function SetStatus(text, color)
-    pcall(function()
-        AF.UI.Lbl.Status.Text       = text
-        AF.UI.Lbl.Status.TextColor3 = color or D.TextMid
-    end)
+    UpdateStatus(AF.UI.Lbl.Status, text, color)
 end
 
 local function SetScanProgress(current, total, label)
     local pct = math.max(0, math.min(1, current / math.max(1, total)))
     local txt = string.format("%s  (%d/%d – %.0f%%)", label, current, total, pct * 100)
-    pcall(function()
-        AF.UI.Lbl.ScanProgress.Text       = txt
-        AF.UI.Lbl.ScanProgress.TextColor3 = D.Yellow
-        AF.UI.Fr.ScanBar.Visible          = true
+    UpdateStatus(AF.UI.Lbl.ScanProgress, txt, D.Yellow)
+    if AF.UI.Fr.ScanBar and AF.UI.Fr.ScanBarFill then
+        AF.UI.Fr.ScanBar.Visible = true
         Tw(AF.UI.Fr.ScanBarFill, { Size = UDim2.new(pct, 0, 1, 0) }, TF)
-    end)
+    end
 end
 
 -- ============================================================
@@ -834,9 +840,9 @@ local function ScanAllRewards(onProgress)
     print("[HazeHub] " .. msg); pcall(function() onProgress(msg) end)
     pcall(function()
         local col = ok and D.Green or D.Orange
-        AF.UI.Lbl.ScanProgress.Text=msg; AF.UI.Lbl.ScanProgress.TextColor3=col
+        UpdateStatus(AF.UI.Lbl.ScanProgress, msg, col)
         Tw(AF.UI.Fr.ScanBarFill, { Size=UDim2.new(ok and 1 or 0,0,1,0), BackgroundColor3=col }, TM)
-        pcall(function() AF.UI.Lbl.DBStatus.Text=msg; AF.UI.Lbl.DBStatus.TextColor3=col end)
+        UpdateStatus(AF.UI.Lbl.DBStatus, msg, col)
         if AF.UI.Btn.ForceRescan then AF.UI.Btn.ForceRescan.Text="DATENBANK NEU SCANNEN"; AF.UI.Btn.ForceRescan.TextColor3=Color3.new(1,1,1) end
         if AF.UI.Btn.UpdateDB   then AF.UI.Btn.UpdateDB.Text="Update Database";           AF.UI.Btn.UpdateDB.TextColor3=D.Accent or D.Cyan             end
     end)
@@ -1068,7 +1074,7 @@ HS.StartFarmFromMain = function()
         AF.Running=true; _G.AutoFarmRunning=true; SaveState()
         task.spawn(function()
             local ok=ScanAllRewards(function(msg)
-                pcall(function() AF.UI.Lbl.DBStatus.Text=msg; AF.UI.Lbl.DBStatus.TextColor3=D.Yellow end)
+                UpdateStatus(AF.UI.Lbl.DBStatus, msg, D.Yellow)
             end)
             if ok and AF.Running and not AF.Active and GetNextItem() then task.spawn(FarmLoop) end
         end)
@@ -1087,12 +1093,12 @@ local function RunScanTask(forceDelete, thenStartFarm)
     task.spawn(function()
         if forceDelete then ClearDB() end
         pcall(function()
-            AF.UI.Lbl.ScanProgress.Text="Deep-Scan startet..."; AF.UI.Lbl.ScanProgress.TextColor3=D.Yellow
+            UpdateStatus(AF.UI.Lbl.ScanProgress, "Deep-Scan startet...", D.Yellow)
             if AF.UI.Btn.ForceRescan then AF.UI.Btn.ForceRescan.Text="Scannt..."; AF.UI.Btn.ForceRescan.TextColor3=D.Yellow end
         end)
         SetStatus("Deep-Scan läuft...", D.Purple)
         local ok=ScanAllRewards(function(msg)
-            pcall(function() AF.UI.Lbl.DBStatus.Text=msg; AF.UI.Lbl.DBStatus.TextColor3=D.Yellow end)
+            UpdateStatus(AF.UI.Lbl.DBStatus, msg, D.Yellow)
         end)
         pcall(function()
             if AF.UI.Btn.ForceRescan then AF.UI.Btn.ForceRescan.Text="DATENBANK NEU SCANNEN"; AF.UI.Btn.ForceRescan.TextColor3=Color3.new(1,1,1) end
@@ -1227,7 +1233,7 @@ qAddBtn.MouseButton1Click:Connect(function()
     local inQ=false; for _,q in ipairs(AF.Queue) do if q.item==iname then inQ=true; break end end
     if not inQ then table.insert(AF.Queue,{item=iname,amount=iamt,done=false}); SaveQueueFile() end
     qItemBox.Text=""; qAmtBox.Text=""; UpdateQueueUI(); pcall(function() HS.UpdateGoalsUI() end)
-    pcall(function() AF.UI.Lbl.QueueFileInfo.Text="Queue: "..#AF.Queue.." Items"; AF.UI.Lbl.QueueFileInfo.TextColor3=D.Green end)
+    UpdateStatus(AF.UI.Lbl.QueueFileInfo, "Queue: "..#AF.Queue.." Items", D.Green)
 end)
 local ctrlRow=Instance.new("Frame",qCard); ctrlRow.Size=UDim2.new(1,0,0,32); ctrlRow.BackgroundTransparency=1; ctrlRow.LayoutOrder=3; HList(ctrlRow,8)
 local startBtn=Instance.new("TextButton",ctrlRow); startBtn.Size=UDim2.new(0.48,0,0,32); startBtn.BackgroundColor3=D.Green; startBtn.Text="Start Queue"; startBtn.TextColor3=Color3.new(1,1,1); startBtn.TextSize=12; startBtn.Font=Enum.Font.GothamBold; startBtn.AutoButtonColor=false; startBtn.BorderSizePixel=0; Corner(startBtn,8); Stroke(startBtn,D.Green,1,0.2)
@@ -1250,7 +1256,7 @@ local clearBtn=NeonBtn(qCard,"Queue leeren",D.Red,28)
 clearBtn.LayoutOrder=4
 clearBtn.MouseButton1Click:Connect(function()
     AF.Queue={}; SaveQueueFile(); UpdateQueueUI()
-    pcall(function() AF.UI.Lbl.QueueFileInfo.Text="Queue geleert."; AF.UI.Lbl.QueueFileInfo.TextColor3=D.TextLow end)
+    UpdateStatus(AF.UI.Lbl.QueueFileInfo, "Queue geleert.", D.TextLow)
 end)
 AF.UI.Fr.List=Instance.new("ScrollingFrame",qCard)
 AF.UI.Fr.List.LayoutOrder=5
@@ -1746,14 +1752,13 @@ end)
 -- ============================================================
 if isfile and isfile(DB_FILE) then
     local raw; pcall(function() raw=readfile(DB_FILE) end)
-    if raw and #raw<10 then pcall(function() AF.UI.Lbl.DBStatus.Text="⚠ DB korrupt!"; AF.UI.Lbl.DBStatus.TextColor3=D.Orange end)
+    if raw and #raw<10 then UpdateStatus(AF.UI.Lbl.DBStatus, "⚠ DB korrupt!", D.Orange)
     elseif LoadDB() or BuildDBFromModuleData() then
-        local c=DBCount(); pcall(function() AF.UI.Lbl.DBStatus.Text=string.format("✅ DB: %d Chapters",c); AF.UI.Lbl.DBStatus.TextColor3=D.Green end)
+        local c=DBCount(); UpdateStatus(AF.UI.Lbl.DBStatus, string.format("✅ DB: %d Chapters",c), D.Green)
         _G.HazeHUB_Database = AF.RewardDatabase
         task.delay(0.5, function() NotifyDBReady(c, string.format("Datenbank geladen! (%d Chapters)",c)) end)
-    else pcall(function() AF.UI.Lbl.DBStatus.Text="Keine DB."; AF.UI.Lbl.DBStatus.TextColor3=D.TextLow end)
-    end
-else pcall(function() AF.UI.Lbl.DBStatus.Text="Keine DB."; AF.UI.Lbl.DBStatus.TextColor3=D.TextLow end)
+    else UpdateStatus(AF.UI.Lbl.DBStatus, "Keine DB.", D.TextLow) end
+else UpdateStatus(AF.UI.Lbl.DBStatus, "Keine DB.", D.TextLow)
 
 task.spawn(TryAutoResume)
 -- ============================================================
