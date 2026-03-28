@@ -471,7 +471,7 @@ local function UpdateLiveTraitDisplay()
     end
     local main, sub = GetUnitTraits(TR.SelectedUnit)
     main = main or "–"; sub = sub or "–"
-    TR.UI.Lbl.UnitName.Text       = "✔ " .. TR.SelectedUnit.Name
+    TR.UI.Lbl.UnitName.Text = "✔ " .. (TR.SelectedUnitName or TR.SelectedUnit.Name)
     TR.UI.Lbl.UnitName.TextColor3 = D.Cyan
     TR.UI.Lbl.MainTrait.Text      = main
     TR.UI.Lbl.SubTrait.Text       = sub
@@ -722,8 +722,8 @@ local function BuildUnitList(filter)
         clickBtn.ZIndex                = 2
         local capU = u
         clickBtn.MouseButton1Click:Connect(function()
-            TR.SelectedUnit         = capU.instance   -- DIESE ZEILE FEHLT NOCH
             TR.SelectedUnitName     = capU.instance.Name
+            TR.SelectedUnit         = capU.instance   -- DIESE ZEILE FEHLT NOCH
             TR.SelectedUnitTagValue = nil
             BuildUnitList(filter)
             UpdateLiveTraitDisplay()
