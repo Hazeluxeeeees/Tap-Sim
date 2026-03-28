@@ -1,5 +1,9 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB V20 – Hauptskript  v20.6
+--  HazeHUB V20 – Hauptskript  v20.7
+--  FIXES v20.7:
+--    ✓ Mobile: Sidebar ~+25% (0.28→0.35), Touch-Tab-Text 12px, Tab-/Content-Scroll: Elastic Never
+--    ✓ TabScroll + Content-Frames: CanvasSize via UIListLayout, ScrollBarThickness 0|3 (Touch)
+--    ✓ TraitRoot: manuelles Canvas + TraitContentLayout für kompakteres Mobile-Padding
 --  FIXES v20.6:
 --    ✓ Tab-Leiste: ScrollingFrame, CanvasSize via UIListLayout.AbsoluteContentSize, ScrollBar 0
 --    ✓ MainFrame / Content / Sidebar: UDim2.fromScale + UIAspectRatioConstraint (Fenster)
@@ -848,6 +852,7 @@ H.UI.Fr.TabScroll.ClipsDescendants = true
 H.UI.Fr.TabScroll.ScrollingDirection = Enum.ScrollingDirection.Y
 H.UI.Fr.TabScroll.ScrollBarThickness = 0
 H.UI.Fr.TabScroll.ScrollingEnabled = true
+H.UI.Fr.TabScroll.ElasticBehavior = Enum.ElasticBehavior.Never
 H.UI.Fr.TabScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
 H.UI.Fr.TabScroll.AutomaticCanvasSize = Enum.AutomaticSize.None
 H.UI.Fr.TabHolder = Instance.new("Frame", H.UI.Fr.TabScroll)
@@ -885,7 +890,7 @@ end
 local function MakeTab(name,icon)
     local B=Instance.new("TextButton",H.UI.Fr.TabHolder)
     B.Size=UDim2.new(1,0,0,30); B.BackgroundColor3=D.TabInactive; B.BackgroundTransparency=D.GlassPane
-    B.Text=icon.."  "..name; B.TextColor3=D.TextMid; B.TextSize=14
+    B.Text=icon.."  "..name; B.TextColor3=D.TextMid; B.TextSize=Svc.Input.TouchEnabled and 12 or 14
     B.Font=Enum.Font.GothamMedium; B.TextScaled=false; B.RichText=true; B.TextStrokeTransparency=1
     B.AutoButtonColor=false; B.BorderSizePixel=0
     Corner(B,8); Stroke(B,D.Accent,1,1)
@@ -894,9 +899,20 @@ local function MakeTab(name,icon)
     local P=Instance.new("ScrollingFrame",H.UI.Fr.Content)
     P.Name=name; P.Size=UDim2.new(1,0,1,0); P.Visible=false
     P.BackgroundTransparency=1; P.ScrollBarThickness=0
-    P.ScrollingEnabled=true
-    P.ScrollBarImageColor3=D.CyanDim; P.AutomaticCanvasSize=Enum.AutomaticSize.Y
-    P.BorderSizePixel=0; VList(P,8); Pad(P,10,10,10,10)
+    P.ScrollingEnabled=true; P.ScrollingDirection=Enum.ScrollingDirection.Y
+    P.ElasticBehavior=Enum.ElasticBehavior.Never
+    P.ScrollBarImageColor3=D.CyanDim; P.AutomaticCanvasSize=Enum.AutomaticSize.None
+    P.CanvasSize=UDim2.new(0,0,0,0); P.BorderSizePixel=0
+    local tabContentList=VList(P,8); Pad(P,10,10,10,10)
+    local function syncPCanvas()
+        pcall(function()
+            local pad=P:FindFirstChildOfClass("UIPadding")
+            local extra=0; if pad then extra=pad.PaddingTop.Offset+pad.PaddingBottom.Offset end
+            P.CanvasSize=UDim2.new(0,0,0,tabContentList.AbsoluteContentSize.Y+extra)
+        end)
+    end
+    tabContentList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(syncPCanvas)
+    task.defer(syncPCanvas)
     H.Tabs[name]=P; H.TBtns[name]=B; B.MouseButton1Click:Connect(function() SelectTab(name) end)
     return P
 end
@@ -908,7 +924,7 @@ local function MakeTraitsTab(name, icon)
     B.BackgroundTransparency = D.GlassPane
     B.Text = icon .. "  " .. name
     B.TextColor3 = D.TextMid
-    B.TextSize = 14
+    B.TextSize = Svc.Input.TouchEnabled and 12 or 14
     B.Font = Enum.Font.GothamMedium
     B.TextScaled = false; B.RichText = true; B.TextStrokeTransparency = 1
     B.AutoButtonColor = false
@@ -929,9 +945,9 @@ local function MakeTraitsTab(name, icon)
     TraitRoot.ScrollBarThickness = 0
     TraitRoot.ScrollBarImageColor3 = D.CyanDim
     TraitRoot.ScrollingEnabled = true
-    TraitRoot.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    TraitRoot.AutomaticCanvasSize = Enum.AutomaticSize.None
     TraitRoot.CanvasSize = UDim2.new(0, 0, 0, 0)
-    TraitRoot.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
+    TraitRoot.ElasticBehavior = Enum.ElasticBehavior.Never
 
     local TraitContent = Instance.new("Frame", TraitRoot)
     TraitContent.Name = "TraitContent"
@@ -945,6 +961,17 @@ local function MakeTraitsTab(name, icon)
     rootList.SortOrder = Enum.SortOrder.LayoutOrder
     rootList.Padding = UDim.new(0, 6)
     rootList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+    local function syncTraitRootCanvas()
+        pcall(function()
+            local y = rootList.AbsoluteContentSize.Y
+            TraitRoot.CanvasSize = UDim2.new(0, 0, 0, y + 10)
+        end)
+    end
+    rootList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(syncTraitRootCanvas)
+    TraitContent:GetPropertyChangedSignal("AbsoluteSize"):Connect(syncTraitRootCanvas)
+    task.defer(syncTraitRootCanvas)
+    _G.HazeShared.TraitContentLayout = rootList
 
     local TraitSticky = Instance.new("Frame", TraitContent)
     TraitSticky.Name = "TraitSticky"
@@ -995,13 +1022,29 @@ local function UpdateLayoutForMobile()
     local touch = Svc.Input.TouchEnabled
     H._isTouchClient = touch
     _G.HazeShared._isTouchClient = touch
+    local barThick = touch and 3 or 0
+    pcall(function()
+        H.UI.Fr.TabScroll.ScrollBarThickness = barThick
+        H.UI.Fr.TabScroll.ElasticBehavior = Enum.ElasticBehavior.Never
+    end)
     pcall(SyncTabScrollCanvas)
     pcall(function()
-        local traitsTab = H.UI.Fr.Content:FindFirstChild("Traits")
-        if traitsTab and traitsTab:IsA("ScrollingFrame") then
-            traitsTab.ScrollBarThickness = touch and 6 or 0
-            traitsTab.ScrollingEnabled = true
-            traitsTab.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        for _, b in pairs(H.TBtns) do
+            if b and b:IsA("GuiButton") then b.TextSize = touch and 12 or 14 end
+        end
+    end)
+    pcall(function()
+        for _, tab in pairs(H.Tabs) do
+            if tab and tab:IsA("ScrollingFrame") then
+                tab.ScrollBarThickness = barThick
+                tab.ElasticBehavior = Enum.ElasticBehavior.Never
+            end
+        end
+    end)
+    pcall(function()
+        local tcl = _G.HazeShared.TraitContentLayout
+        if tcl and tcl:IsA("UIListLayout") then
+            tcl.Padding = UDim.new(0, touch and 3 or 6)
         end
     end)
     if _G.HazeShared._ApplyTraitResponsiveLayout then
@@ -1014,6 +1057,9 @@ end
 local PC_FRAME_SCALE_X, PC_FRAME_SCALE_Y = 0.40, 0.48
 local MOBILE_FRAME = UDim2.new(PC_FRAME_SCALE_X * 0.7, 0, PC_FRAME_SCALE_Y * 0.8, 0)
 local TOUCH_MAIN_UI_SCALE = 0.85
+-- Sidebar: Desktop ~0.22; Touch/Mobile +25% gegenüber früher 0.28 → 0.35
+local PC_SIDEBAR_SCALE = 0.22
+local MOBILE_SIDEBAR_SCALE = 0.28 * 1.25
 
 local function SetGUISize(mode)
     H.Config.UISize=mode; SaveConfig()
@@ -1029,15 +1075,15 @@ local function SetGUISize(mode)
     if useCompact then
         MainFrame.Size = MOBILE_FRAME
         if ma then ma.AspectRatio = (PC_FRAME_SCALE_X * 0.7) / (PC_FRAME_SCALE_Y * 0.8) end
-        H.UI.Fr.Sidebar.Size=UDim2.new(0.28, 0, 1, 0)
-        H.UI.Fr.Content.Position=UDim2.new(0.28, 4, 0, 25)
-        H.UI.Fr.Content.Size=UDim2.new(0.72, -6, 1, -33)
+        H.UI.Fr.Sidebar.Size=UDim2.new(MOBILE_SIDEBAR_SCALE, 0, 1, 0)
+        H.UI.Fr.Content.Position=UDim2.new(MOBILE_SIDEBAR_SCALE, 4, 0, 25)
+        H.UI.Fr.Content.Size=UDim2.new(1 - MOBILE_SIDEBAR_SCALE, -6, 1, -33)
     else
         MainFrame.Size=UDim2.fromScale(PC_FRAME_SCALE_X, PC_FRAME_SCALE_Y)
         if ma then ma.AspectRatio = 580 / 450 end
-        H.UI.Fr.Sidebar.Size=UDim2.new(0.22, 0, 1, 0)
-        H.UI.Fr.Content.Position=UDim2.new(0.22, 6, 0, 25)
-        H.UI.Fr.Content.Size=UDim2.new(0.78, -8, 1, -33)
+        H.UI.Fr.Sidebar.Size=UDim2.new(PC_SIDEBAR_SCALE, 0, 1, 0)
+        H.UI.Fr.Content.Position=UDim2.new(PC_SIDEBAR_SCALE, 6, 0, 25)
+        H.UI.Fr.Content.Size=UDim2.new(1 - PC_SIDEBAR_SCALE, -8, 1, -33)
     end
     us.Scale = touch and TOUCH_MAIN_UI_SCALE or 1
     UpdateLayoutForMobile()
