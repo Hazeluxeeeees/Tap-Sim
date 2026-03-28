@@ -130,18 +130,25 @@ end)
 -- FÜGE DIESEN TEIL EIN:
 
 -- ★ Nil-sicherer Remote-Getter
+-- Ersetze die fehlerhaften Pfade durch diesen dynamischen Finder:
 local function GetPlayRoomRemote()
-    local ok, remote = pcall(function()
-        return RS:WaitForChild("Remote", 5)
-                 :WaitForChild("Server", 5)
-                 :WaitForChild("PlayRoom", 5)
-                 :WaitForChild("Event", 5)
+    -- Wir suchen jetzt flexibel im ReplicatedStorage
+    local remoteFolder = RS:FindFirstChild("Remote") or RS:FindFirstChild("Remotes")
+    if not remoteFolder then return nil end
+    
+    -- Suche tief nach dem Event (pfadunabhängig)
+    local event = remoteFolder:FindFirstChild("Event", true) or remoteFolder:FindFirstChild("PlayRoomEvent", true)
+    return event
+end
+
+-- Beispiel für den Aufruf (behebt den Absturz):
+local playEvent = GetPlayRoomRemote()
+if playEvent then
+    pcall(function()
+        playEvent:FireServer("Create", {["CreateChallengeRoom"] = true})
     end)
-    if not ok or not remote then
-        warn("[HazeHub] PlayRoom Remote nicht gefunden!")
-        return nil
-    end
-    return remote
+else
+    warn("[HazeHUB] KRITISCH: PlayRoom Remote im Spiel nicht gefunden!")
 end
 
 -- ★ Nil-sicherer SafeFire (ERSETZT die bisherige SafeFire-Funktion)
