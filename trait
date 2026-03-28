@@ -1595,9 +1595,12 @@ local function ApplyTraitResponsiveLayout()
         unitGrid.FillDirectionMaxCells = 1
         unitGrid.CellSize = UDim2.new(1, -12, 0, 76)
         unitGrid.CellPadding = UDim2.new(0, 6, 0, 8)
-        unitCard.Size = UDim2.new(1, -8, 0, 0)
+        -- Einheiten-Liste: volle Breite, etwas höher; Scrollbar sichtbar für Touch
+        unitScroll.Size = UDim2.new(1, 0, 0, 268)
+        unitScroll.ScrollBarThickness = 6
+        unitCard.Size = UDim2.new(1, 0, 0, 0)
         unitCard.AutomaticSize = Enum.AutomaticSize.Y
-        overviewCard.Size = UDim2.new(1, -8, 0, 0)
+        overviewCard.Size = UDim2.new(1, 0, 0, 0)
         overviewCard.AutomaticSize = Enum.AutomaticSize.Y
         ratingGridLayout.FillDirection = Enum.FillDirection.Horizontal
         ratingGridLayout.FillDirectionMaxCells = 2
@@ -1611,6 +1614,8 @@ local function ApplyTraitResponsiveLayout()
         unitGrid.FillDirectionMaxCells = 0
         unitGrid.CellSize = UDim2.new(0, 150, 0, 180)
         unitGrid.CellPadding = UDim2.new(0, 6, 0, 8)
+        unitScroll.Size = UDim2.new(1, 0, 0, 240)
+        unitScroll.ScrollBarThickness = 0
         unitCard.Size = UDim2.new(1, 0, 0, 0)
         unitCard.AutomaticSize = Enum.AutomaticSize.Y
         overviewCard.Size = UDim2.new(1, 0, 0, 0)
