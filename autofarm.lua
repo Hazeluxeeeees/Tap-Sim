@@ -1012,6 +1012,199 @@ AF.UI.Lbl.QueueEmpty=MkLbl(AF.UI.Fr.List,"Queue leer.",11,D.TextLow)
 AF.UI.Lbl.QueueEmpty.Size=UDim2.new(1,0,0,24)
 
 -- ============================================================
+--  ★ AUTO-CHALLENGE
+-- ============================================================
+local AF_Challenge = {
+    Items    = {},  -- { name, dropRate, minDrop, maxDrop, chapName, world, chapter }
+    Active   = false,
+    Running  = false,
+    SelIdx   = nil,
+}
+
+local function ScanChallengeItems()
+    AF_Challenge.Items = {}
+    pcall(function()
+        local challengeFolder = RS:WaitForChild("Gameplay", 10)
+                                   :WaitForChild("Game", 10)
+                                   :WaitForChild("Challenge", 10)
+                                   :WaitForChild("Items", 10)
+        for _, item in ipairs(challengeFolder:GetChildren()) do
+            if item:IsA("UIGridLayout") or item:IsA("UIListLayout") then continue end
+            local entry = {
+                name      = item.Name,
+                dropRate  = item:GetAttribute("DropRate")  or 0,
+                maxDrop   = item:GetAttribute("MaxDrop")   or 1,
+                minDrop   = item:GetAttribute("MinDrop")   or 1,
+                chapName  = (item:FindFirstChild("ChallengeName") and tostring(item.ChallengeName.Value)) or item.Name,
+                world     = (item:FindFirstChild("World")         and tostring(item.World.Value))         or "Unknown",
+                chapter   = (item:FindFirstChild("Chapter")       and tostring(item.Chapter.Value))       or "Unknown",
+            }
+            table.insert(AF_Challenge.Items, entry)
+        end
+    end)
+    return #AF_Challenge.Items
+end
+
+local function FireCreateChallenge()
+    if PlayRoomEvent then
+        pcall(function()
+            PlayRoomEvent:FireServer("Create", { ["CreateChallengeRoom"] = true })
+        end)
+    end
+end
+
+local function StartChallengeLoop()
+    if AF_Challenge.Active then return end
+    if not AF_Challenge.SelIdx or not AF_Challenge.Items[AF_Challenge.SelIdx] then
+        SetStatus("⚠ Kein Challenge-Item gewählt!", D.Orange); return
+    end
+    AF_Challenge.Active  = true
+    AF_Challenge.Running = true
+    local item = AF_Challenge.Items[AF_Challenge.SelIdx]
+    SetStatus(string.format("⚡ Challenge: %s (%s)", item.chapName, item.world), D.Cyan)
+    task.spawn(function()
+        while AF_Challenge.Running do
+            if CheckIsLobby() then
+                SetStatus("⚡ Starte Challenge: " .. item.chapName, D.Yellow)
+                pcall(function()
+                    FireCreateChallenge()
+                    task.wait(0.5)
+                    -- Welt und Chapter setzen
+                    Fire("Change-World",   { World   = item.world })
+                    task.wait(0.4)
+                    Fire("Change-Chapter", { Chapter = item.chapter })
+                    task.wait(0.4)
+                    Fire("Submit")
+                    task.wait(0.5)
+                    Fire("Start")
+                end)
+                -- Warten bis nicht mehr in Lobby
+                local ws = os.clock()
+                while CheckIsLobby() and os.clock() - ws < 30 and AF_Challenge.Running do
+                    task.wait(1)
+                end
+            else
+                -- In Runde: warten bis zurück in Lobby
+                SetStatus("⚡ Challenge läuft: " .. item.chapName, D.Cyan)
+                local deadline = os.time() + 600
+                while not CheckIsLobby() and os.time() < deadline and AF_Challenge.Running do
+                    task.wait(3)
+                end
+                task.wait(2)
+            end
+        end
+        AF_Challenge.Active = false
+        SetStatus("⏹ Challenge gestoppt.", D.TextMid)
+    end)
+end
+
+-- ── Challenge UI ──────────────────────────────────────────────
+local chalCard = Card(Container)
+Pad(chalCard, 10, 10, 10, 10); VList(chalCard, 8)
+SecLbl(chalCard, "⚡  AUTO-CHALLENGE")
+
+local chalStatusLbl = MkLbl(chalCard, "Challenge Items nicht gescannt.", 10, D.TextLow)
+chalStatusLbl.Size = UDim2.new(1, 0, 0, 16)
+
+local chalListFrame = Instance.new("ScrollingFrame", chalCard)
+chalListFrame.Size                = UDim2.new(1, 0, 0, 160)
+chalListFrame.CanvasSize          = UDim2.new(0, 0, 0, 0)
+chalListFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+chalListFrame.BackgroundTransparency = 1
+chalListFrame.BorderSizePixel     = 0
+chalListFrame.ScrollBarThickness  = 4
+chalListFrame.ScrollBarImageColor3 = D.CyanDim
+chalListFrame.ScrollingEnabled    = true
+chalListFrame.ScrollingDirection  = Enum.ScrollingDirection.Y
+VList(chalListFrame, 4)
+
+local chalEmptyLbl = MkLbl(chalListFrame, "Keine Items gescannt.", 10, D.TextLow)
+chalEmptyLbl.Size = UDim2.new(1, 0, 0, 22)
+
+local function RebuildChallengeList()
+    for _, v in pairs(chalListFrame:GetChildren()) do
+        if v:IsA("Frame") then v:Destroy() end
+    end
+    chalEmptyLbl.Visible = (#AF_Challenge.Items == 0)
+    for i, item in ipairs(AF_Challenge.Items) do
+        local isSel = (AF_Challenge.SelIdx == i)
+        local row = Instance.new("Frame", chalListFrame)
+        row.Size                   = UDim2.new(1, 0, 0, 44)
+        row.BackgroundColor3       = isSel and D.TabActive or D.CardHover
+        row.BackgroundTransparency = 0.3
+        row.BorderSizePixel        = 0
+        Corner(row, 7)
+        Stroke(row, isSel and D.Cyan or D.Border, 1.5, isSel and 0 or 0.5)
+
+        local nL = Instance.new("TextLabel", row)
+        nL.Position = UDim2.new(0, 8, 0, 3); nL.Size = UDim2.new(1, -16, 0, 18)
+        nL.BackgroundTransparency = 1
+        nL.Text = item.chapName
+        nL.TextColor3 = isSel and D.Cyan or D.TextHi
+        nL.TextSize = 11; nL.Font = Enum.Font.GothamBold
+        nL.TextXAlignment = Enum.TextXAlignment.Left; nL.TextTruncate = Enum.TextTruncate.AtEnd
+
+        local sL = Instance.new("TextLabel", row)
+        sL.Position = UDim2.new(0, 8, 0, 23); sL.Size = UDim2.new(1, -16, 0, 14)
+        sL.BackgroundTransparency = 1
+        sL.Text = string.format("Drop: %.1f%%  Min:%d  Max:%d  |  %s › %s",
+            item.dropRate, item.minDrop, item.maxDrop, item.world, item.chapter)
+        sL.TextColor3 = D.TextMid; sL.TextSize = 9; sL.Font = Enum.Font.Gotham
+        sL.TextXAlignment = Enum.TextXAlignment.Left
+
+        local btn = Instance.new("TextButton", row)
+        btn.Size = UDim2.new(1, 0, 1, 0); btn.BackgroundTransparency = 1
+        btn.Text = ""; btn.BorderSizePixel = 0
+        local capI = i
+        btn.MouseButton1Click:Connect(function()
+            AF_Challenge.SelIdx = capI; RebuildChallengeList()
+        end)
+    end
+end
+
+local chalScanBtn = NeonBtn(chalCard, "🔍 Challenge Items scannen", D.CyanDim, 28)
+chalScanBtn.MouseButton1Click:Connect(function()
+    chalScanBtn.Text = "⏳ Scanne..."; chalScanBtn.TextColor3 = D.Yellow
+    task.spawn(function()
+        local n = ScanChallengeItems()
+        RebuildChallengeList()
+        chalStatusLbl.Text = n > 0
+            and string.format("✅ %d Challenge-Items gefunden.", n)
+            or  "⚠ Keine Items gefunden (Pfad prüfen)."
+        chalStatusLbl.TextColor3 = n > 0 and D.Green or D.Orange
+        chalScanBtn.Text = "🔍 Challenge Items scannen"
+        chalScanBtn.TextColor3 = D.CyanDim
+    end)
+end)
+
+local chalCtrlRow = Instance.new("Frame", chalCard)
+chalCtrlRow.Size = UDim2.new(1, 0, 0, 32); chalCtrlRow.BackgroundTransparency = 1
+HList(chalCtrlRow, 8)
+
+local chalStartBtn = Instance.new("TextButton", chalCtrlRow)
+chalStartBtn.Size = UDim2.new(0.58, 0, 0, 32)
+chalStartBtn.BackgroundColor3 = D.Green; chalStartBtn.Text = "▶ Start Challenge"
+chalStartBtn.TextColor3 = Color3.new(1,1,1); chalStartBtn.TextSize = 11
+chalStartBtn.Font = Enum.Font.GothamBold; chalStartBtn.AutoButtonColor = false
+chalStartBtn.BorderSizePixel = 0; Corner(chalStartBtn, 8); Stroke(chalStartBtn, D.Green, 1, 0.2)
+
+local chalStopBtn = Instance.new("TextButton", chalCtrlRow)
+chalStopBtn.Size = UDim2.new(0.38, 0, 0, 32)
+chalStopBtn.BackgroundColor3 = D.RedDark; chalStopBtn.Text = "■ Stop"
+chalStopBtn.TextColor3 = D.Red; chalStopBtn.TextSize = 11
+chalStopBtn.Font = Enum.Font.GothamBold; chalStopBtn.AutoButtonColor = false
+chalStopBtn.BorderSizePixel = 0; Corner(chalStopBtn, 8); Stroke(chalStopBtn, D.Red, 1, 0.4)
+
+chalStartBtn.MouseButton1Click:Connect(function()
+    if AF_Challenge.Active then SetStatus("⚠ Challenge läuft!", D.Yellow); return end
+    StartChallengeLoop()
+end)
+chalStopBtn.MouseButton1Click:Connect(function()
+    AF_Challenge.Active = false; AF_Challenge.Running = false
+    SetStatus("⏹ Challenge gestoppt.", D.TextMid)
+end)
+
+-- ============================================================
 --  STARTUP
 -- ============================================================
 if isfile and isfile(DB_FILE) then
