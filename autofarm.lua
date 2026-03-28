@@ -1784,3 +1784,9 @@ pcall(function()
     end
 end)
 print(string.format("[HazeHub] autofarm.lua v%s geladen | Spieler: %s | DB: %d Chapters", VERSION, LP.Name, DBCount()))
+
+-- Am Ende der Datei (NACH allen Funktionen):
+if _G.HazeShared and _G.HazeShared.SetModuleLoaded then
+    _G.HazeShared.SetModuleLoaded(VERSION)
+end
+return AF -- (Oder TM für Teams)
