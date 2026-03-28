@@ -1,5 +1,15 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB V20 – Hauptskript  v20.6
+--  HazeHUB V21 – Hauptskript  v21.0
+--  CHANGES v21.0:
+--    ✓ Tab-Reihenfolge: Game Session Quests Shops Crafting Traits Teams Inventory Misc Settings
+--    ✓ Auto-Retry aus Game-Tab → Misc-Tab
+--    ✓ Raid-Farm in Welt & Kapitel integriert (neben Calamity)
+--    ✓ DB-Status Cards nebeneinander (Game-Tab)
+--    ✓ DB-Werkzeuge nebeneinander (Reset + Clear Cache)
+--    ✓ Quests 2-spaltig nebeneinander
+--    ✓ Inventory: Spieler Stats + Shop Currency nebeneinander
+--    ✓ Inventory Items 2-Spalten UIGridLayout
+--    ✓ Neuer Anti-AFK (Kamera-basiert, kein VirtualUser-Spacebar-Spam)
 --  FIXES v20.6:
 --    ✓ Tab-Leiste: ScrollingFrame, CanvasSize via UIListLayout.AbsoluteContentSize, ScrollBar 0
 --    ✓ MainFrame / Content / Sidebar: UDim2.fromScale + UIAspectRatioConstraint (Fenster)
@@ -354,16 +364,8 @@ local function ApplyFallback()
     S.WorldIds=ids; S.ScanDone=true
 end
 
--- Anti-AFK
-task.spawn(function()
-    while true do task.wait(60)
-        pcall(function()
-            Svc.Vuser:CaptureController()
-            Svc.Vuser:SetKeyDown(" "); task.wait(0.1); Svc.Vuser:SetKeyUp(" ")
-            task.wait(0.4); Svc.Vuser:SetKeyDown(" "); task.wait(0.1); Svc.Vuser:SetKeyUp(" ")
-        end)
-    end
-end)
+-- Anti-AFK wird im Misc-Tab gestartet (neuer Kamera-basierter Anti-AFK)
+
 
 -- ╔══════════════════════════════════════════════════════════╗
 --  DESIGN – Glas-Schwarz + leichter Lighting-Blur (HazeHUB_Blur)
@@ -1778,6 +1780,7 @@ local function GQP(qf)
     pcall(function() local pv=qf:FindFirstChild("progress"); local nv=qf:FindFirstChild("questneed"); if pv then p=tonumber(pv.Value) or 0 end; if nv then n=tonumber(nv.Value) or 1 end end)
     return p,n
 end
+-- BQR gibt jetzt eine Frame zurück (ohne direkt Parent zu setzen) damit wir 2 nebeneinander legen können
 local function BQR(parent,title,des,progress,questneed,isClaimed,acc)
     local pct=math.min(1,progress/math.max(1,questneed)); local rH=(des and des~="") and 60 or 44
     local row=Instance.new("Frame",parent); row.Size=UDim2.new(1,0,0,rH); row.BorderSizePixel=0; Corner(row,8)
@@ -1789,6 +1792,30 @@ local function BQR(parent,title,des,progress,questneed,isClaimed,acc)
     local pgBg=Instance.new("Frame",row); pgBg.Size=UDim2.new(1,-14,0,4); pgBg.Position=UDim2.new(0,10,1,(des and des~="") and -6 or -5); pgBg.BackgroundColor3=Color3.fromRGB(20,28,50); pgBg.BorderSizePixel=0; Corner(pgBg,2)
     local pgF=Instance.new("Frame",pgBg); pgF.Size=UDim2.new(pct,0,1,0); pgF.BackgroundColor3=isClaimed and D.GreenBright or (acc or D.Cyan); pgF.BorderSizePixel=0; Corner(pgF,2)
     local pctLbl=Instance.new("TextLabel",row); pctLbl.Position=UDim2.new(1,-52,0,4); pctLbl.Size=UDim2.new(0,46,0,16); pctLbl.BackgroundTransparency=1; pctLbl.Text=string.format("%d/%d",progress,questneed); pctLbl.TextColor3=isClaimed and D.GreenBright or D.TextLow; pctLbl.TextSize=9; pctLbl.Font=Enum.Font.GothamSemibold; pctLbl.TextXAlignment=Enum.TextXAlignment.Right
+    return row
+end
+-- Hilfsfunktion: fügt Quests in 2er-Paaren als Zeilen ein
+local function AddQuestsPaired(container, quests, acc, isClaims)
+    local i = 1
+    while i <= #quests do
+        local rowFrame=Instance.new("Frame",container); rowFrame.Size=UDim2.new(1,0,0,0); rowFrame.AutomaticSize=Enum.AutomaticSize.Y; rowFrame.BackgroundTransparency=1; HList(rowFrame,6)
+        -- Quest 1
+        local qf1=quests[i]
+        local iC1=false; pcall(function() local cl=qf1:FindFirstChild("claimed"); if cl and cl.Value==true then iC1=true end end)
+        if isClaims then iC1=isClaims[i] end
+        local p1,n1=GQP(qf1); local q1=BQR(rowFrame,qf1.Name,GQD(qf1),p1,n1,iC1,acc)
+        q1.Size=UDim2.new(0.5,-3,0,q1.Size.Y.Offset)
+        -- Quest 2 (falls vorhanden)
+        if quests[i+1] then
+            local qf2=quests[i+1]
+            local iC2=false; pcall(function() local cl=qf2:FindFirstChild("claimed"); if cl and cl.Value==true then iC2=true end end)
+            if isClaims then iC2=isClaims[i+1] end
+            local p2,n2=GQP(qf2); local q2=BQR(rowFrame,qf2.Name,GQD(qf2),p2,n2,iC2,acc)
+            q2.Size=UDim2.new(0.5,-3,0,math.max(q1.Size.Y.Offset,q2.Size.Y.Offset))
+            q1.Size=UDim2.new(0.5,-3,0,math.max(q1.Size.Y.Offset,q2.Size.Y.Offset))
+        end
+        i = i + 2
+    end
 end
 local questContainer=Instance.new("Frame",QuestPage); questContainer.Size=UDim2.new(1,0,0,0); questContainer.AutomaticSize=Enum.AutomaticSize.Y; questContainer.BackgroundTransparency=1; VList(questContainer,8)
 local function RebuildQuestsUI()
@@ -1825,10 +1852,7 @@ local function RebuildQuestsUI()
         if #sq==0 then MkLbl(catCard,"Keine Sub-Quests.",10,D.TextLow).Size=UDim2.new(1,0,0,18)
         else
             table.sort(sq,function(a,b) return a.Name<b.Name end)
-            for _,sqf in ipairs(sq) do
-                local sqC=false; pcall(function() local cl=sqf:FindFirstChild("claimed"); if cl and cl.Value==true then sqC=true end end)
-                local p,n=GQP(sqf); BQR(catCard,sqf.Name,GQD(sqf),p,n,sqC,cd.color)
-            end
+            AddQuestsPaired(catCard, sq, cd.color)
         end
     end
     for _,spec in ipairs({
@@ -1842,12 +1866,14 @@ local function RebuildQuestsUI()
             MkLbl(sc,spec.key.." nicht gefunden.",10,D.TextLow).Size=UDim2.new(1,0,0,18)
         else
             local found=false; local SK={claimed=true,progress=true,questneed=true}
+            local sqList={}
             for _,qf in ipairs(root:GetChildren()) do
                 if SK[qf.Name] then continue end
-                local iC=false; pcall(function() local cl=qf:FindFirstChild("claimed"); if cl and cl.Value==true then iC=true end end)
-                local p,n=GQP(qf); BQR(sc,qf.Name,GQD(qf),p,n,iC,spec.color); found=true
+                table.insert(sqList,qf); found=true
             end
-            if not found then
+            if found then
+                AddQuestsPaired(sc, sqList, spec.color)
+            else
                 local adf=Instance.new("Frame",sc); adf.Size=UDim2.new(1,0,0,28); adf.BackgroundColor3=D.GreenDark; adf.BorderSizePixel=0; Corner(adf,7); Stroke(adf,D.GreenBright,1.5,0.2)
                 local dL=Instance.new("TextLabel",adf); dL.Size=UDim2.new(1,0,1,0); dL.BackgroundTransparency=1; dL.Text="✅ Alle "..spec.key:gsub("Quest","").." Quests erledigt!"; dL.TextColor3=D.GreenBright; dL.TextSize=11; dL.Font=Enum.Font.GothamBold; dL.TextXAlignment=Enum.TextXAlignment.Center
             end
