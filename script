@@ -249,6 +249,112 @@ _G.HazeHUB.UpdateStatus = function(status, color)
     warn("[HazeHUB] UpdateStatus nicht implementiert: " .. tostring(status))
 end
 
+-- ============================================================
+--  WELT-SPEICHER FUNKTIONEN
+-- ============================================================
+_G.HazeHUB.SaveWorlds = function()
+    if not writefile then return false end
+    
+    local worldData = {
+        worlds = {},
+        timestamp = os.time(),
+        version = "1.0"
+    }
+    
+    -- Welten-Daten sammeln
+    if S.WorldData and S.WorldIds then
+        for _, worldId in ipairs(S.WorldIds) do
+            local worldInfo = S.WorldData[worldId]
+            if worldInfo then
+                table.insert(worldData.worlds, {
+                    id = worldId,
+                    story = worldInfo.story or {},
+                    ranger = worldInfo.ranger or {},
+                    calamity = worldInfo.calamity or {},
+                    label = worldInfo.label or worldId
+                })
+            end
+        end
+    end
+    
+    local success = pcall(function()
+        writefile("HazeHUB/HazeHUB_Worlds.json", Svc.Http:JSONEncode(worldData))
+    end)
+    
+    if success then
+        print("[HazeHUB] Welten-Daten gespeichert: " .. #worldData.worlds .. " Welten")
+        return true
+    else
+        warn("[HazeHUB] Fehler beim Speichern der Welten-Daten")
+        return false
+    end
+end
+
+_G.HazeHUB.LoadWorlds = function()
+    if not (isfile and isfile("HazeHUB/HazeHUB_Worlds.json")) then return false end
+    
+    local success, rawData = pcall(function()
+        return readfile("HazeHUB/HazeHUB_Worlds.json")
+    end)
+    
+    if not success or not rawData or #rawData < 10 then
+        warn("[HazeHUB] Welten-Datei nicht lesbar oder leer")
+        return false
+    end
+    
+    local success, worldData = pcall(function()
+        return Svc.Http:JSONDecode(rawData)
+    end)
+    
+    if not success or type(worldData) ~= "table" or not worldData.worlds then
+        warn("[HazeHUB] Welten-Datei ungültig")
+        return false
+    end
+    
+    -- Welten-Daten wiederherstellen
+    S.WorldData = {}
+    S.WorldIds = {}
+    
+    for _, world in ipairs(worldData.worlds) do
+        S.WorldData[world.id] = {
+            story = world.story or {},
+            ranger = world.ranger or {},
+            calamity = world.calamity or {},
+            label = world.label or world.id
+        }
+        table.insert(S.WorldIds, world.id)
+    end
+    
+    print("[HazeHUB] Welten-Daten geladen: " .. #worldData.worlds .. " Welten")
+    return true
+end
+
+_G.HazeHUB.RefreshWorlds = function()
+    -- Aktuelle Welten leeren
+    S.WorldData = {}
+    S.WorldIds = {}
+    
+    -- Welten neu scannen
+    LoadWorldCache()
+    
+    -- Sofort speichern
+    _G.HazeHUB.SaveWorlds()
+    
+    -- UI live aktualisieren
+    if RebuildWorldList then
+        pcall(RebuildWorldList)
+    end
+    
+    -- Status aktualisieren
+    if H.UI.Lbl.WorldStatus then
+        H.UI.Lbl.WorldStatus.Text = "🔄 Welten aktualisiert"
+        H.UI.Lbl.WorldStatus.TextColor3 = D.Green
+    end
+    
+    print("[HazeHUB] Welten aktualisiert und neu geladen")
+    return true
+end
+
 _G.HazeHUB.SaveSettings = function()
     if not writefile then return end
     pcall(function() writefile(GetSettingsFilePath(), Svc.Http:JSONEncode({ AutoFarm = H.Config.AutoFarm, ts = os.time() })) end)
@@ -1459,6 +1565,18 @@ H.UI.Lbl.WorldStatus.Size=UDim2.new(1,0,0,16); H.UI.Lbl.WorldStatus.BackgroundTr
 H.UI.Lbl.WorldStatus.Text="Modus → Welt → Kapitel"; H.UI.Lbl.WorldStatus.TextColor3=D.TextLow
 H.UI.Lbl.WorldStatus.TextSize=11; H.UI.Lbl.WorldStatus.Font=Enum.Font.GothamSemibold
 H.UI.Lbl.WorldStatus.TextXAlignment=Enum.TextXAlignment.Left
+
+-- Welten-Refresh Button
+local refreshRow=Instance.new("Frame",wCard); refreshRow.Size=UDim2.new(1,0,0,32); refreshRow.BackgroundTransparency=1; HList(refreshRow,6)
+local refreshBtn=NeonBtn(refreshRow,"🔄 Welten neu scannen",D.Cyan,28)
+refreshBtn.Size=UDim2.new(1,0,0,32)
+refreshBtn.MouseButton1Click:Connect(function()
+    if _G.HazeHUB.RefreshWorlds and type(_G.HazeHUB.RefreshWorlds) == "function" then
+        pcall(_G.HazeHUB.RefreshWorlds)
+    else
+        warn("[HazeHUB] RefreshWorlds Funktion nicht gefunden!")
+    end
+end)
 SecLbl(wCard,"SPIELMODUS")
 local modeRow=Instance.new("Frame",wCard); modeRow.Size=UDim2.new(1,0,0,28); modeRow.BackgroundTransparency=1; HList(modeRow,6)
 local MODI={{id="Story",label="📖 Story",color=D.Cyan},{id="Ranger",label="🏹 Ranger",color=D.Green},{id="Calamity",label="⚡ Calamity",color=D.Orange}}
@@ -2739,6 +2857,28 @@ LoadModule(K.TEAMS_URL, "Teams", 5, function(err)
             _G._TeamsWaitLbl.TextColor3 = D.Red
         end
     end)
+end)
+
+-- === WELT-DATEN BEIM START LADEN ===
+task.spawn(function()
+    -- Versuche gespeicherte Welten-Daten zu laden
+    if _G.HazeHUB.LoadWorlds and type(_G.HazeHUB.LoadWorlds) == "function" then
+        local loaded = pcall(_G.HazeHUB.LoadWorlds)
+        if loaded then
+            print("[HazeHUB] Gespeicherte Welten-Daten erfolgreich geladen")
+        else
+            print("[HazeHUB] Keine gespeicherten Welten-Daten gefunden - starte Scan")
+            -- Wenn keine gespeicherten Daten existieren, starte normalen Scan
+            task.spawn(function()
+                task.wait(2) -- Kurze Verzögerung für UI-Initialisierung
+                if LoadWorldCache then
+                    pcall(LoadWorldCache)
+                    -- Speichere die gescannten Daten für zukünftige Starts
+                    pcall(_G.HazeHUB.SaveWorlds)
+                end
+            end)
+        end
+    end
 end)
 
 -- === HAUPTSKRIPT GELADEN - MODULE KÖNNEN STARTEN ===
