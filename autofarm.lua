@@ -142,8 +142,8 @@ task.spawn(function()
     else warn("[HazeHub] PlayRoomEvent nicht gefunden!") end
 end)
 
--- ★ Kanonischer PlayRoom-Remote: Remote.Server.PlayRoom.Event
---    z. B. :FireServer("Change-World", { ["World"] = "JJKRaid" })
+-- ★ Wie autofarm_FULL_CORRECTED: zuerst PlayRoom Event, sonst HS.PR (mit nil-Check!)
+--    Remote.Server.PlayRoom.Event z. B. :FireServer("Change-World", { ["World"] = "JJKRaid" })
 local function GetPlayRoomEvent()
     if PlayRoomEvent and PlayRoomEvent.Parent then return PlayRoomEvent end
     local ok, ev = pcall(function()
@@ -159,22 +159,18 @@ local function GetPlayRoomEvent()
     return nil
 end
 
--- ★ Fire – von Deep-Scan, Raid, Challenge genutzt (war undefiniert → Absturz Zeile 628)
 local function Fire(action, data)
     local ev = GetPlayRoomEvent()
-    if not ev then
-        warn("[HazeHub] Fire: PlayRoom Event nil – " .. tostring(action))
-        return
-    end
-    local ok, err = pcall(function()
-        if data ~= nil then
-            ev:FireServer(action, data)
-        else
-            ev:FireServer(action)
-        end
-    end)
-    if not ok then
-        warn("[HazeHub] Fire Fehler (" .. tostring(action) .. "): " .. tostring(err))
+    if ev then
+        local ok, err = pcall(function()
+            if data ~= nil then ev:FireServer(action, data)
+            else ev:FireServer(action) end
+        end)
+        if not ok then warn("[HazeHub] Fire Fehler (" .. tostring(action) .. "): " .. tostring(err)) end
+    elseif PR and type(PR) == "function" then
+        pcall(function() PR(action, data) end)
+    else
+        warn("[HazeHub] Fire: PlayRoom Event + PR fehlen – " .. tostring(action))
     end
 end
 
@@ -187,26 +183,19 @@ local function GetPlayRoomRemote()
     return remoteFolder:FindFirstChild("Event", true) or remoteFolder:FindFirstChild("PlayRoomEvent", true)
 end
 
-if not GetPlayRoomEvent() then
-    warn("[HazeHUB] KRITISCH: Remote.Server.PlayRoom.Event nicht gefunden!")
-end
-
--- ★ Nil-sicherer SafeFire
+-- ★ Nil-sicherer SafeFire (wie Fire: PR-Fallback)
 local function SafeFire(action, data)
     local remote = GetPlayRoomRemote()
-    if not remote then
-        warn("[HazeHub] SafeFire abgebrochen – Remote nil. Action: " .. tostring(action))
-        return
-    end
-    local ok, err = pcall(function()
-        if data then
-            remote:FireServer(action, data)
-        else
-            remote:FireServer(action)
-        end
-    end)
-    if not ok then
-        warn("[HazeHub] SafeFire Fehler (" .. tostring(action) .. "): " .. tostring(err))
+    if remote then
+        local ok, err = pcall(function()
+            if data then remote:FireServer(action, data)
+            else remote:FireServer(action) end
+        end)
+        if not ok then warn("[HazeHub] SafeFire Fehler (" .. tostring(action) .. "): " .. tostring(err)) end
+    elseif PR and type(PR) == "function" then
+        pcall(function() PR(action, data) end)
+    else
+        warn("[HazeHub] SafeFire abgebrochen – Remote + PR nil. Action: " .. tostring(action))
     end
 end
 -- ============================================================
