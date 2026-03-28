@@ -250,6 +250,239 @@ _G.HazeHUB.UpdateStatus = function(status, color)
 end
 
 -- ============================================================
+--  CHAPTERLEVELS SCANNER FÜR SPEZIFISCHEN PFAD
+-- ============================================================
+local function ScanChapterLevels()
+    local LP = game.Players.LocalPlayer
+    if not LP then 
+        warn("[HazeHUB] LocalPlayer nicht gefunden")
+        return false 
+    end
+    
+    local playerDataPath = "Player_Data." .. LP.Name .. ".ChapterLevels"
+    local chapterLevels = nil
+    
+    -- Pfad dynamisch auflösen
+    local success, result = pcall(function()
+        local parts = {}
+        for part in string.gmatch(playerDataPath, "[^.]+") do
+            table.insert(parts, part)
+        end
+        
+        local current = game:GetService("ReplicatedStorage")
+        for _, part in ipairs(parts) do
+            current = current:WaitForChild(part, 2)
+            if not current then
+                warn("[HazeHUB] Pfad nicht gefunden: " .. part .. " in " .. current:GetFullName())
+                return nil
+            end
+        end
+        return current
+    end)
+    
+    if not success or not result then
+        warn("[HazeHUB] ChapterLevels Pfad nicht gefunden: " .. playerDataPath)
+        return false
+    end
+    
+    chapterLevels = result
+    
+    -- Datenstruktur initialisieren
+    local worldData = {
+        Story = {},
+        Ranger = {},
+        Calamity = {},
+        Raids = {},
+        timestamp = os.time(),
+        version = "1.0"
+    }
+    
+    -- Alle Kinder scannen und kategorisieren
+    for _, child in pairs(chapterLevels:GetChildren()) do
+        if child:IsA("Folder") or child:IsA("Model") or child:IsA("StringValue") then
+            local worldName = child.Name
+            local worldInfo = {
+                id = worldName,
+                label = worldName,
+                chapters = {},
+                stages = {}
+            }
+            
+            -- Welten-Inhalt scannen
+            for _, subChild in pairs(child:GetChildren()) do
+                if subChild:IsA("Folder") or subChild:IsA("Model") then
+                    local itemName = subChild.Name
+                    
+                    -- Kategorisierung basierend auf Namen
+                    if string.find(itemName:lower(), "raid") or string.find(itemName:lower(), "boss") then
+                        -- Raids
+                        table.insert(worldData.Raids, {
+                            id = itemName,
+                            worldId = worldName,
+                            label = itemName,
+                            type = "Raid",
+                            path = child:GetFullName() .. "." .. itemName
+                        })
+                        
+                    elseif string.find(itemName:lower(), "calamity") or string.find(itemName:lower(), "nightmare") then
+                        -- Calamity
+                        table.insert(worldData.Calamity, {
+                            id = itemName,
+                            worldId = worldName,
+                            label = itemName,
+                            type = "Calamity",
+                            path = child:GetFullName() .. "." .. itemName
+                        })
+                        
+                    elseif string.find(itemName:lower(), "ranger") or string.find(itemName:lower(), "hunt") then
+                        -- Ranger
+                        table.insert(worldData.Ranger, {
+                            id = itemName,
+                            worldId = worldName,
+                            label = itemName,
+                            type = "Ranger",
+                            path = child:GetFullName() .. "." .. itemName
+                        })
+                        
+                    else
+                        -- Story (Standard)
+                        table.insert(worldData.Story, {
+                            id = itemName,
+                            worldId = worldName,
+                            label = itemName,
+                            type = "Story",
+                            path = child:GetFullName() .. "." .. itemName
+                        })
+                    end
+                end
+            end
+        end
+    end
+    
+    print("[HazeHUB] ChapterLevels Scan abgeschlossen:")
+    print("  Story: " .. #worldData.Story .. " Einträge")
+    print("  Ranger: " .. #worldData.Ranger .. " Einträge") 
+    print("  Calamity: " .. #worldData.Calamity .. " Einträge")
+    print("  Raids: " .. #worldData.Raids .. " Einträge")
+    
+    return worldData
+end
+
+-- ============================================================
+--  UNIFIED PERSISTENCE FUNKTIONEN
+-- ============================================================
+_G.HazeHUB.WorldData = {
+    Story = {},
+    Ranger = {},
+    Calamity = {},
+    Raids = {},
+    timestamp = nil,
+    version = "1.0"
+}
+
+_G.HazeHUB.SaveWorldCache = function()
+    if not writefile then return false end
+    
+    -- Zeitstempel aktualisieren
+    _G.HazeHUB.WorldData.timestamp = os.time()
+    
+    local success = pcall(function()
+        writefile("HazeHUB/HazeHUB_WorldCache.json", Svc.Http:JSONEncode(_G.HazeHUB.WorldData))
+    end)
+    
+    if success then
+        print("[HazeHUB] WorldCache gespeichert: " .. 
+              #_G.HazeHUB.WorldData.Story .. " Story, " ..
+              #_G.HazeHUB.WorldData.Ranger .. " Ranger, " ..
+              #_G.HazeHUB.WorldData.Calamity .. " Calamity, " ..
+              #_G.HazeHUB.WorldData.Raids .. " Raids")
+        return true
+    else
+        warn("[HazeHUB] Fehler beim Speichern des WorldCache")
+        return false
+    end
+end
+
+_G.HazeHUB.LoadWorldCache = function()
+    if not (isfile and isfile("HazeHUB/HazeHUB_WorldCache.json")) then return false end
+    
+    local success, rawData = pcall(function()
+        return readfile("HazeHUB/HazeHUB_WorldCache.json")
+    end)
+    
+    if not success or not rawData or #rawData < 10 then
+        warn("[HazeHUB] WorldCache nicht lesbar oder leer")
+        return false
+    end
+    
+    local success, worldData = pcall(function()
+        return Svc.Http:JSONDecode(rawData)
+    end)
+    
+    if not success or type(worldData) ~= "table" then
+        warn("[HazeHUB] WorldCache ungültig")
+        return false
+    end
+    
+    -- Daten wiederherstellen
+    _G.HazeHUB.WorldData = worldData
+    
+    print("[HazeHUB] WorldCache geladen: " .. 
+          #_G.HazeHUB.WorldData.Story .. " Story, " ..
+          #_G.HazeHUB.WorldData.Ranger .. " Ranger, " ..
+          #_G.HazeHUB.WorldData.Calamity .. " Calamity, " ..
+          #_G.HazeHUB.WorldData.Raids .. " Raids")
+    
+    return true
+end
+
+_G.HazeHUB.RefreshWorldCache = function()
+    -- Cache-Datei löschen
+    if isfile and isfile("HazeHUB/HazeHUB_WorldCache.json") then
+        pcall(function() delfile("HazeHUB/HazeHUB_WorldCache.json") end)
+        print("[HazeHUB] WorldCache gelöscht")
+    end
+    
+    -- Status aktualisieren
+    if H.UI.Lbl.WorldStatus then
+        H.UI.Lbl.WorldStatus.Text = "🔄 Scanne ChapterLevels..."
+        H.UI.Lbl.WorldStatus.TextColor3 = D.Yellow
+    end
+    
+    -- ChapterLevels neu scannen
+    task.spawn(function()
+        local scannedData = ScanChapterLevels()
+        
+        if scannedData then
+            -- Daten übernehmen
+            _G.HazeHUB.WorldData = scannedData
+            
+            -- Speichern
+            pcall(_G.HazeHUB.SaveWorldCache)
+            
+            -- UI aktualisieren
+            if RebuildWorldList then
+                pcall(RebuildWorldList)
+            end
+            
+            -- Status aktualisieren
+            if H.UI.Lbl.WorldStatus then
+                H.UI.Lbl.WorldStatus.Text = "✅ ChapterLevels aktualisiert"
+                H.UI.Lbl.WorldStatus.TextColor3 = D.Green
+            end
+            
+            print("[HazeHUB] ChapterLevels Scan und Cache aktualisiert")
+        else
+            -- Fehlerstatus
+            if H.UI.Lbl.WorldStatus then
+                H.UI.Lbl.WorldStatus.Text = "❌ Scan fehlgeschlagen"
+                H.UI.Lbl.WorldStatus.TextColor3 = D.Red
+            end
+        end
+    end)
+end
+
+-- ============================================================
 --  ZENTRALISIERTE DATENSTRUKTUR UND SPEICHERUNG
 -- ============================================================
 _G.HazeHUB.GameData = {
@@ -1772,10 +2005,10 @@ local refreshRow=Instance.new("Frame",wCard); refreshRow.Size=UDim2.new(1,0,0,32
 local refreshBtn=NeonBtn(refreshRow,"🔄 Welten neu scannen",D.Cyan,28)
 refreshBtn.Size=UDim2.new(1,0,0,32)
 refreshBtn.MouseButton1Click:Connect(function()
-    if _G.HazeHUB.RefreshAllData and type(_G.HazeHUB.RefreshAllData) == "function" then
-        pcall(_G.HazeHUB.RefreshAllData)
+    if _G.HazeHUB.RefreshWorldCache and type(_G.HazeHUB.RefreshWorldCache) == "function" then
+        pcall(_G.HazeHUB.RefreshWorldCache)
     else
-        warn("[HazeHUB] RefreshAllData Funktion nicht gefunden!")
+        warn("[HazeHUB] RefreshWorldCache Funktion nicht gefunden!")
     end
 end)
 SecLbl(wCard,"SPIELMODUS")
@@ -3060,13 +3293,13 @@ LoadModule(K.TEAMS_URL, "Teams", 5, function(err)
     end)
 end)
 
--- === GESAMT-DATEN BEIM START LADEN ===
+-- === WORLDCACHE BEIM START LADEN ===
 task.spawn(function()
-    -- Versuche gespeicherte Spieldaten zu laden
-    if _G.HazeHUB.LoadAllData and type(_G.HazeHUB.LoadAllData) == "function" then
-        local loaded = pcall(_G.HazeHUB.LoadAllData)
+    -- Versuche gespeicherten WorldCache zu laden
+    if _G.HazeHUB.LoadWorldCache and type(_G.HazeHUB.LoadWorldCache) == "function" then
+        local loaded = pcall(_G.HazeHUB.LoadWorldCache)
         if loaded then
-            print("[HazeHUB] Gespeicherte Spieldaten erfolgreich geladen")
+            print("[HazeHUB] WorldCache erfolgreich geladen")
             
             -- UI aktualisieren
             if RebuildWorldList then
@@ -3075,7 +3308,7 @@ task.spawn(function()
             
             -- Status aktualisieren
             if H.UI.Lbl.WorldStatus then
-                H.UI.Lbl.WorldStatus.Text = "✅ Daten aus Cache geladen"
+                H.UI.Lbl.WorldStatus.Text = "✅ WorldCache geladen"
                 H.UI.Lbl.WorldStatus.TextColor3 = D.Green
             end
             
@@ -3083,22 +3316,25 @@ task.spawn(function()
             _G.HazeHUB.DataReady = true
             
         else
-            print("[HazeHUB] Keine gespeicherten Spieldaten gefunden - starte Scan")
+            print("[HazeHUB] Kein WorldCache gefunden - starte ChapterLevels Scan")
             
             -- Status aktualisieren
             if H.UI.Lbl.WorldStatus then
-                H.UI.Lbl.WorldStatus.Text = "🔄 Scanne Spieldaten..."
+                H.UI.Lbl.WorldStatus.Text = "🔄 Scanne ChapterLevels..."
                 H.UI.Lbl.WorldStatus.TextColor3 = D.Yellow
             end
             
-            -- Wenn keine gespeicherten Daten existieren, starte normalen Scan
+            -- Wenn kein Cache existiert, starte ChapterLevels Scan
             task.spawn(function()
                 task.wait(2) -- Kurze Verzögerung für UI-Initialisierung
-                if LoadWorldCache then
-                    pcall(LoadWorldCache)
+                local scannedData = ScanChapterLevels()
+                
+                if scannedData then
+                    -- Daten übernehmen
+                    _G.HazeHUB.WorldData = scannedData
                     
-                    -- Daten speichern
-                    pcall(_G.HazeHUB.SaveAllData)
+                    -- Speichern
+                    pcall(_G.HazeHUB.SaveWorldCache)
                     
                     -- UI aktualisieren
                     if RebuildWorldList then
@@ -3107,11 +3343,22 @@ task.spawn(function()
                     
                     -- Status aktualisieren
                     if H.UI.Lbl.WorldStatus then
-                        H.UI.Lbl.WorldStatus.Text = "✅ Spieldaten gescannt & gespeichert"
+                        H.UI.Lbl.WorldStatus.Text = "✅ ChapterLevels gescannt & gespeichert"
                         H.UI.Lbl.WorldStatus.TextColor3 = D.Green
                     end
                     
                     -- DataReady Flag setzen
+                    _G.HazeHUB.DataReady = true
+                    
+                    print("[HazeHUB] ChapterLevels Scan abgeschlossen und gespeichert")
+                else
+                    -- Fehlerstatus
+                    if H.UI.Lbl.WorldStatus then
+                        H.UI.Lbl.WorldStatus.Text = "❌ ChapterLevels Scan fehlgeschlagen"
+                        H.UI.Lbl.WorldStatus.TextColor3 = D.Red
+                    end
+                    
+                    -- DataReady Flag trotzdem setzen, damit Module starten können
                     _G.HazeHUB.DataReady = true
                 end
             end)
