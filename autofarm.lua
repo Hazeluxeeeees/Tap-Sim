@@ -250,60 +250,126 @@ local function RemoveFromQueue(itemName)
     SaveQueueFile()
 end
 
+-- ★ GetNextItem muss VOR SyncInventoryWithQueue definiert sein
+local function GetNextItem()
+    for _, q in ipairs(AF.Queue) do
+        if not q.done then return q end
+    end
+    return nil
+end
+
+-- ★ KORRIGIERT: SyncInventoryWithQueue
+-- Kein vorzeitiger Lobby-Teleport – direkter Queue-Wechsel per Remote
 local function SyncInventoryWithQueue()
     local changed = false
+
     for i = #AF.Queue, 1, -1 do
         local q = AF.Queue[i]
-        if not q.done then
-            local cur = GetLiveInvAmt(q.item)
-            if cur >= q.amount then
-    print(string.format("[HazeHub] ZIEL ERREICHT: '%s' %d/%d", q.item, cur, q.amount))
-    task.spawn(function() pcall(function() SendWebhook({}, q.item, cur) end) end)
-    RemoveFromQueue(q.item); pcall(UpdateQueueUI)
-    SetStatus(string.format("✅ '%s' erreicht!", q.item), D.GreenBright)
-    SaveState()
+        if q.done then continue end
 
-    -- ★ Direkter Queue-Wechsel: nächstes Item ohne Lobby-Teleport
-local nextQ = GetNextItem()
-    if nextQ and AF.Running then
-        SetStatus(string.format("⏳ Wechsel → '%s'", nextQ.item), D.Yellow)
-        -- Warte auf Lobby ohne Teleport (max. 10 Minuten)
-        local waitDeadline = os.time() + 600
-        while AF.Running and not CheckIsLobby() and os.time() < waitDeadline do
-            task.wait(3)
-        end
-        if CheckIsLobby() and AF.Running then
-            task.wait(2)  -- Sicherheits-Wait
-            local nextChapId, nextWorldId, nextMode = FindBestChapter(nextQ.item)
-            if nextChapId then
-                SetStatus(string.format("🚀 Starte: [%s] %s", nextMode or "?", nextChapId), D.Cyan)
-                task.spawn(function()
-                    if nextMode == "Story" then
-                        SafeFire("Create");                                                    task.wait(0.35)
-                        SafeFire("Change-World",   { World   = nextWorldId });                 task.wait(0.35)
-                        SafeFire("Change-Chapter", { Chapter = nextChapId });                  task.wait(0.35)
-                        SafeFire("Submit");                                                    task.wait(0.50)
-                        SafeFire("Start")
-                    elseif nextMode == "Ranger" then
-                        SafeFire("Create");                                                    task.wait(0.35)
-                        SafeFire("Change-Mode",    { KeepWorld=nextWorldId, Mode="Ranger Stage" }); task.wait(0.50)
-                        SafeFire("Change-World",   { World   = nextWorldId });                 task.wait(0.35)
-                        SafeFire("Change-Chapter", { Chapter = nextChapId });                  task.wait(0.35)
-                        SafeFire("Submit");                                                    task.wait(0.50)
-                        SafeFire("Start")
-                    elseif nextMode == "Calamity" then
-                        SafeFire("Create");                                                    task.wait(0.35)
-                        SafeFire("Change-Mode",    { Mode    = "Calamity" });                  task.wait(0.35)
-                        SafeFire("Change-Chapter", { Chapter = nextChapId });                  task.wait(0.35)
-                        SafeFire("Submit");                                                    task.wait(0.50)
-                        SafeFire("Start")
+        local cur = GetLiveInvAmt(q.item)
+        if cur < q.needed then continue end  -- noch nicht fertig
+
+        -- ★ Ziel erreicht
+        print(string.format("[HazeHub] ZIEL ERREICHT: '%s' %d/%d", q.item, cur, q.needed))
+        task.spawn(function()
+            pcall(function() SendWebhook({}, q.item, cur) end)
+        end)
+
+        RemoveFromQueue(q.item)
+        pcall(UpdateQueueUI)
+        SetStatus(string.format("✅ '%s' erreicht!", q.item), D.GreenBright)
+        SaveState()
+        changed = true
+
+        -- ★ INGAME QUEUE-WECHSEL: kein TeleportToLobby
+        -- Prüfe ob wir noch im Spiel sind UND ein nächstes Item existiert
+        if not CheckIsLobby() and AF.Running then
+            local nextQ = GetNextItem()
+            if nextQ then
+                SetStatus(string.format("⏳ Direkt-Wechsel → '%s'", nextQ.item), D.Yellow)
+
+                -- Warte auf Lobby (Rundenende), max. 10 Minuten, KEIN Teleport
+                local waitDeadline = os.time() + 600
+                while AF.Running and not CheckIsLobby() and os.time() < waitDeadline do
+                    task.wait(3)
+                end
+
+                if CheckIsLobby() and AF.Running then
+                    task.wait(2)  -- kurzer Sicherheits-Buffer nach Rundenende
+
+                    local nextChapId, nextWorldId, nextMode = FindBestChapter(nextQ.item)
+
+                    if nextChapId then
+                        SetStatus(string.format("🚀 Starte direkt: [%s] %s", nextMode or "?", nextChapId), D.Cyan)
+                        task.spawn(function()
+                            -- ★ World-Switch via PlayRoom.Event Remote
+                            if nextMode == "Story" then
+                                SafeFire("Create");                                                         task.wait(0.35)
+                                SafeFire("Change-World",   { World   = nextWorldId });                      task.wait(0.35)
+                                SafeFire("Change-Chapter", { Chapter = nextChapId });                       task.wait(0.35)
+                                SafeFire("Submit");                                                         task.wait(0.50)
+                                SafeFire("Start")
+
+                            elseif nextMode == "Ranger" then
+                                SafeFire("Create");                                                         task.wait(0.35)
+                                SafeFire("Change-Mode", { KeepWorld = nextWorldId, Mode = "Ranger Stage" }); task.wait(0.50)
+                                SafeFire("Change-World",   { World   = nextWorldId });                      task.wait(0.35)
+                                SafeFire("Change-Chapter", { Chapter = nextChapId });                       task.wait(0.35)
+                                SafeFire("Submit");                                                         task.wait(0.50)
+                                SafeFire("Start")
+
+                            elseif nextMode == "Calamity" then
+                                SafeFire("Create");                                                         task.wait(0.35)
+                                SafeFire("Change-Mode",    { Mode    = "Calamity" });                       task.wait(0.35)
+                                SafeFire("Change-Chapter", { Chapter = nextChapId });                       task.wait(0.35)
+                                SafeFire("Submit");                                                         task.wait(0.50)
+                                SafeFire("Start")
+
+                            elseif nextMode == "JJKRaid" then
+                                -- ★ Raid World-Switch
+                                SafeFire("Create");                                                         task.wait(0.40)
+                                SafeFire("Change-World",   { World   = "JJKRaid" });                        task.wait(0.40)
+                                SafeFire("Change-Chapter", { Chapter = nextChapId });                       task.wait(0.35)
+                                SafeFire("Submit");                                                         task.wait(0.50)
+                                SafeFire("Start")
+
+                            elseif nextMode == "EsperRaid" then
+                                SafeFire("Create");                                                         task.wait(0.40)
+                                SafeFire("Change-World",   { World   = "EsperRaid" });                      task.wait(0.40)
+                                SafeFire("Change-Chapter", { Chapter = nextChapId });                       task.wait(0.35)
+                                SafeFire("Submit");                                                         task.wait(0.50)
+                                SafeFire("Start")
+                            end
+                        end)
+                    else
+                        -- Kein Chapter in DB → Fallback auf Lobby-Teleport
+                        warn("[HazeHub] Direkt-Wechsel: kein Chapter für '" .. nextQ.item .. "' – Lobby-Teleport.")
+                        DoTeleportToLobby(true)
                     end
-                end)
-                return true
+                else
+                    -- Timeout oder Farm gestoppt → Teleport-Fallback
+                    if AF.Running then
+                        warn("[HazeHub] Queue-Wechsel Timeout (600s) – Teleport-Fallback.")
+                        DoTeleportToLobby(true)
+                    end
+                end
+
+            else
+                -- Queue leer nach diesem Item
+                SetStatus("✅ Queue leer – Farm beendet.", D.Green)
+                AF.Active  = false
+                AF.Running = false
+                _G.AutoFarmRunning = false
+                if CFG then CFG.AutoFarm = false end
+                pcall(SaveConfig); pcall(SaveSettings); SaveState()
             end
-        end -- end: if cur >= q.amount
-        end -- end: if not q.done
-    end -- end: for i
+        end
+
+        -- Nur das erste fertige Item pro Durchlauf verarbeiten
+        break
+    end
+
     return changed
 end
         -- Fallback Timeout
@@ -785,9 +851,6 @@ local function LobbyActionLoop(delaySeconds)
 -- ============================================================
 --  FARM LOOP
 -- ============================================================
-local function GetNextItem()
-    for _, q in ipairs(AF.Queue) do if not q.done then return q end end; return nil
-end
 
 local function AddOrUpdateQueueItem(itemName, amount)
     local iname = tostring(itemName or ""):match("^%s*(.-)%s*$")
@@ -1109,55 +1172,83 @@ local AF_Challenge = {
 
 local function ScanChallengeItems()
     AF_Challenge.Items = {}
-    pcall(function()
-        local challengeItems = game:GetService("ReplicatedStorage")
-            :WaitForChild("Gameplay", 10)
-            :WaitForChild("Game",     10)
-            :WaitForChild("Challenge",10)
-            :WaitForChild("Items",    10)
-
-        for _, item in ipairs(challengeItems:GetChildren()) do
-            if item:IsA("UIGridLayout") or item:IsA("UIListLayout")
-            or item:IsA("UIPadding")    or item:IsA("UICorner") then continue end
-
-            local dropRate = item:GetAttribute("DropRate") or 0
-            local maxDrop  = item:GetAttribute("MaxDrop")  or 1
-            local minDrop  = item:GetAttribute("MinDrop")  or 1
-
-            if dropRate == 0 then
-                local dr = item:FindFirstChild("DropRate")
-                if dr then dropRate = tonumber(dr.Value) or 0 end
-            end
-            if maxDrop == 1 then
-                local md = item:FindFirstChild("MaxDrop")
-                if md then maxDrop = tonumber(md.Value) or 1 end
-            end
-            if minDrop == 1 then
-                local mi = item:FindFirstChild("MinDrop")
-                if mi then minDrop = tonumber(mi.Value) or 1 end
-            end
-
-            local chapName = item:GetAttribute("ChallengeName")
-                          or (item:FindFirstChild("ChallengeName") and tostring(item.ChallengeName.Value))
-                          or item.Name
-            local world    = item:GetAttribute("World")
-                          or (item:FindFirstChild("World") and tostring(item.World.Value))
-                          or "Unknown"
-            local chapter  = item:GetAttribute("Chapter")
-                          or (item:FindFirstChild("Chapter") and tostring(item.Chapter.Value))
-                          or "Unknown"
-
-            table.insert(AF_Challenge.Items, {
-                name     = item.Name,
-                dropRate = tonumber(dropRate) or 0,
-                maxDrop  = tonumber(maxDrop)  or 1,
-                minDrop  = tonumber(minDrop)  or 1,
-                chapName = chapName,
-                world    = world,
-                chapter  = chapter,
-            })
-        end
+    local ok, challengeFolder = pcall(function()
+        -- ★ Pfad: RS.Gameplay.Game.Challenge
+        return RS:WaitForChild("Gameplay", 10)
+                 :WaitForChild("Game",      10)
+                 :WaitForChild("Challenge", 10)
     end)
+    if not ok or not challengeFolder then
+        warn("[HazeHub] ScanChallengeItems: Pfad RS.Gameplay.Game.Challenge nicht gefunden.")
+        return 0
+    end
+
+    for _, item in ipairs(challengeFolder:GetChildren()) do
+        -- Layout-Objekte überspringen
+        if item:IsA("UIGridLayout") or item:IsA("UIListLayout")
+        or item:IsA("UIPadding")    or item:IsA("UICorner")
+        or item:IsA("UIScale") then continue end
+
+        -- ★ Attribute zuerst lesen, dann Children-Fallback
+        local dropRate = tonumber(item:GetAttribute("DropRate")) or 0
+        local maxDrop  = tonumber(item:GetAttribute("MaxDrop"))  or 1
+        local minDrop  = tonumber(item:GetAttribute("MinDrop"))  or 1
+
+        -- Children-Fallback falls Attribute fehlen
+        if dropRate == 0 then
+            local dr = item:FindFirstChild("DropRate")
+            if dr then dropRate = tonumber(dr.Value) or 0 end
+        end
+        if maxDrop == 1 then
+            local md = item:FindFirstChild("MaxDrop")
+            if md then maxDrop = tonumber(md.Value) or 1 end
+        end
+        if minDrop == 1 then
+            local mi = item:FindFirstChild("MinDrop")
+            if mi then minDrop = tonumber(mi.Value) or 1 end
+        end
+
+        -- ChallengeName / World / Chapter aus Attributen
+        local chapName = item:GetAttribute("ChallengeName")
+        if not chapName then
+            local cv = item:FindFirstChild("ChallengeName")
+            chapName = cv and tostring(cv.Value) or item.Name
+        end
+
+        local world = item:GetAttribute("World")
+        if not world then
+            local wv = item:FindFirstChild("World")
+            world = wv and tostring(wv.Value) or "Unknown"
+        end
+
+        local chapter = item:GetAttribute("Chapter")
+        if not chapter then
+            local cv2 = item:FindFirstChild("Chapter")
+            chapter = cv2 and tostring(cv2.Value) or "Unknown"
+        end
+
+        -- ★ Score: DropRate × Durchschnitt(Min+Max) / 2
+        local avgDrop = (minDrop + maxDrop) / 2
+        local score   = dropRate * avgDrop
+
+        table.insert(AF_Challenge.Items, {
+            name      = item.Name,      -- Ordner-Name (intern)
+            chapName  = chapName,        -- Anzeige-Name im GUI
+            world     = world,
+            chapter   = chapter,
+            dropRate  = dropRate,
+            minDrop   = minDrop,
+            maxDrop   = maxDrop,
+            score     = score,           -- für Sortierung nach Effizienz
+        })
+    end
+
+    -- Nach Score absteigend sortieren (bester Chapter zuerst)
+    table.sort(AF_Challenge.Items, function(a, b)
+        return a.score > b.score
+    end)
+
+    print(string.format("[HazeHub] ScanChallengeItems: %d Items gefunden.", #AF_Challenge.Items))
     return #AF_Challenge.Items
 end
 
