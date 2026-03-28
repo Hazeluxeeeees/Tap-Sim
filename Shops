@@ -323,7 +323,8 @@ local function BuildItemList(parent, folderGetter, shopDef, acc)
             end)
 
             local row = Instance.new("Frame", container)
-            row.Size = UDim2.new(1,0,0,72); row.BackgroundColor3 = D.Card
+            row.Size = UDim2.new(1,0,0,48)  -- Kompaktere Höhe für mehr Items
+            row.BackgroundColor3 = D.Card
             row.BackgroundTransparency = D.GlassPane or 0.18
             row.BorderSizePixel=0; Corner(row,8); Stroke(row,acc,1,0.6)
 
