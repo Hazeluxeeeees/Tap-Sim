@@ -123,15 +123,23 @@ task.spawn(function()
     else warn("[HazeHub] PlayRoomEvent nicht gefunden!") end
 end)
 
-local function Fire(action, data)
-    if PlayRoomEvent then
-        pcall(function()
-            if data then PlayRoomEvent:FireServer(action, data)
-            else         PlayRoomEvent:FireServer(action) end
-        end)
-    else PR(action, data) end
+local function SafeFire(action, data)
+    if not action or action == "" then
+        warn("[HazeHub] SafeFire: action nil – überspringe."); return
+    end
+    if data then
+        for k, v in pairs(data) do
+            if v == nil then
+                warn(string.format("[HazeHub] SafeFire '%s': '%s' ist nil.", action, tostring(k)))
+                return
+            end
+        end
+    end
+    pcall(function()
+        if data then PlayRoomEvent:FireServer(action, data)
+        else         PlayRoomEvent:FireServer(action) end
+    end)
 end
-
 -- ============================================================
 --  INVENTAR  (★ LP.Name dynamisch)
 -- ============================================================
@@ -245,38 +253,56 @@ local function SyncInventoryWithQueue()
     SaveState()
 
     -- ★ Direkter Queue-Wechsel: nächstes Item ohne Lobby-Teleport
-    local nextQ = GetNextItem()
+local nextQ = GetNextItem()
     if nextQ and AF.Running then
-        -- Warten bis aktuelle Runde endet (Lobby-Erkennung)
-        SetStatus(string.format("⏳ Warte auf Rundenende → nächstes: '%s'", nextQ.item), D.Yellow)
+        SetStatus(string.format("⏳ Wechsel → '%s'", nextQ.item), D.Yellow)
+        -- Warte auf Lobby ohne Teleport (max. 10 Minuten)
         local waitDeadline = os.time() + 600
         while AF.Running and not CheckIsLobby() and os.time() < waitDeadline do
             task.wait(3)
         end
-        -- Jetzt in Lobby oder Timeout: nächste Runde starten
         if CheckIsLobby() and AF.Running then
-            task.wait(2)
-            return true   -- LobbyActionLoop übernimmt das nächste Item
+            task.wait(2)  -- Sicherheits-Wait
+            local nextChapId, nextWorldId, nextMode = FindBestChapter(nextQ.item)
+            if nextChapId then
+                SetStatus(string.format("🚀 Starte: [%s] %s", nextMode or "?", nextChapId), D.Cyan)
+                task.spawn(function()
+                    if nextMode == "Story" then
+                        SafeFire("Create");                                                    task.wait(0.35)
+                        SafeFire("Change-World",   { World   = nextWorldId });                 task.wait(0.35)
+                        SafeFire("Change-Chapter", { Chapter = nextChapId });                  task.wait(0.35)
+                        SafeFire("Submit");                                                    task.wait(0.50)
+                        SafeFire("Start")
+                    elseif nextMode == "Ranger" then
+                        SafeFire("Create");                                                    task.wait(0.35)
+                        SafeFire("Change-Mode",    { KeepWorld=nextWorldId, Mode="Ranger Stage" }); task.wait(0.50)
+                        SafeFire("Change-World",   { World   = nextWorldId });                 task.wait(0.35)
+                        SafeFire("Change-Chapter", { Chapter = nextChapId });                  task.wait(0.35)
+                        SafeFire("Submit");                                                    task.wait(0.50)
+                        SafeFire("Start")
+                    elseif nextMode == "Calamity" then
+                        SafeFire("Create");                                                    task.wait(0.35)
+                        SafeFire("Change-Mode",    { Mode    = "Calamity" });                  task.wait(0.35)
+                        SafeFire("Change-Chapter", { Chapter = nextChapId });                  task.wait(0.35)
+                        SafeFire("Submit");                                                    task.wait(0.50)
+                        SafeFire("Start")
+                    end
+                end)
+                return true
+            end
         end
-        -- Nicht in Lobby nach Timeout → klassischer Teleport-Fallback
+        -- Fallback Timeout
+        warn("[HazeHub] Queue-Wechsel Timeout – Teleport-Fallback.")
         DoTeleportToLobby(true)
-        local w = 0
-        while AF.Running and not CheckIsLobby() and w < 15 do
-            task.wait(1); w = w + 1
-        end
         return true
     else
-        -- Queue leer → Lobby-Teleport
-        SetStatus("Queue leer – Teleportiere zur Lobby.", D.Orange)
-        DoTeleportToLobby(false)
-        local w = 0
-        while AF.Running and not CheckIsLobby() and w < 15 do
-            task.wait(1); w = w + 1
-        end
+        SetStatus("✅ Queue leer.", D.Green)
+        AF.Active = false; AF.Running = false; _G.AutoFarmRunning = false
+        if CFG then CFG.AutoFarm = false end
+        pcall(SaveConfig); pcall(SaveSettings); SaveState()
         return true
     end
 end
-
 -- ============================================================
 --  DB
 -- ============================================================
@@ -1057,78 +1083,55 @@ local AF_Challenge = {
 local function ScanChallengeItems()
     AF_Challenge.Items = {}
     pcall(function()
-        local challengeFolder = RS:WaitForChild("Gameplay", 10)
-                                   :WaitForChild("Game", 10)
-                                   :WaitForChild("Challenge", 10)
-                                   :WaitForChild("Items", 10)
-        for _, item in ipairs(challengeFolder:GetChildren()) do
-            if item:IsA("UIGridLayout") or item:IsA("UIListLayout") then continue end
-            local entry = {
-                name      = item.Name,
-                dropRate  = item:GetAttribute("DropRate")  or 0,
-                maxDrop   = item:GetAttribute("MaxDrop")   or 1,
-                minDrop   = item:GetAttribute("MinDrop")   or 1,
-                chapName  = (item:FindFirstChild("ChallengeName") and tostring(item.ChallengeName.Value)) or item.Name,
-                world     = (item:FindFirstChild("World")         and tostring(item.World.Value))         or "Unknown",
-                chapter   = (item:FindFirstChild("Chapter")       and tostring(item.Chapter.Value))       or "Unknown",
-            }
-            table.insert(AF_Challenge.Items, entry)
+        local challengeItems = game:GetService("ReplicatedStorage")
+            :WaitForChild("Gameplay", 10)
+            :WaitForChild("Game",     10)
+            :WaitForChild("Challenge",10)
+            :WaitForChild("Items",    10)
+
+        for _, item in ipairs(challengeItems:GetChildren()) do
+            if item:IsA("UIGridLayout") or item:IsA("UIListLayout")
+            or item:IsA("UIPadding")    or item:IsA("UICorner") then continue end
+
+            local dropRate = item:GetAttribute("DropRate") or 0
+            local maxDrop  = item:GetAttribute("MaxDrop")  or 1
+            local minDrop  = item:GetAttribute("MinDrop")  or 1
+
+            if dropRate == 0 then
+                local dr = item:FindFirstChild("DropRate")
+                if dr then dropRate = tonumber(dr.Value) or 0 end
+            end
+            if maxDrop == 1 then
+                local md = item:FindFirstChild("MaxDrop")
+                if md then maxDrop = tonumber(md.Value) or 1 end
+            end
+            if minDrop == 1 then
+                local mi = item:FindFirstChild("MinDrop")
+                if mi then minDrop = tonumber(mi.Value) or 1 end
+            end
+
+            local chapName = item:GetAttribute("ChallengeName")
+                          or (item:FindFirstChild("ChallengeName") and tostring(item.ChallengeName.Value))
+                          or item.Name
+            local world    = item:GetAttribute("World")
+                          or (item:FindFirstChild("World") and tostring(item.World.Value))
+                          or "Unknown"
+            local chapter  = item:GetAttribute("Chapter")
+                          or (item:FindFirstChild("Chapter") and tostring(item.Chapter.Value))
+                          or "Unknown"
+
+            table.insert(AF_Challenge.Items, {
+                name     = item.Name,
+                dropRate = tonumber(dropRate) or 0,
+                maxDrop  = tonumber(maxDrop)  or 1,
+                minDrop  = tonumber(minDrop)  or 1,
+                chapName = chapName,
+                world    = world,
+                chapter  = chapter,
+            })
         end
     end)
     return #AF_Challenge.Items
-end
-
-local function FireCreateChallenge()
-    if PlayRoomEvent then
-        pcall(function()
-            PlayRoomEvent:FireServer("Create", { ["CreateChallengeRoom"] = true })
-        end)
-    end
-end
-
-local function StartChallengeLoop()
-    if AF_Challenge.Active then return end
-    if not AF_Challenge.SelIdx or not AF_Challenge.Items[AF_Challenge.SelIdx] then
-        SetStatus("⚠ Kein Challenge-Item gewählt!", D.Orange); return
-    end
-    AF_Challenge.Active  = true
-    AF_Challenge.Running = true
-    local item = AF_Challenge.Items[AF_Challenge.SelIdx]
-    SetStatus(string.format("⚡ Challenge: %s (%s)", item.chapName, item.world), D.Cyan)
-    task.spawn(function()
-        while AF_Challenge.Running do
-            if CheckIsLobby() then
-                SetStatus("⚡ Starte Challenge: " .. item.chapName, D.Yellow)
-                pcall(function()
-                    FireCreateChallenge()
-                    task.wait(0.5)
-                    -- Welt und Chapter setzen
-                    Fire("Change-World",   { World   = item.world })
-                    task.wait(0.4)
-                    Fire("Change-Chapter", { Chapter = item.chapter })
-                    task.wait(0.4)
-                    Fire("Submit")
-                    task.wait(0.5)
-                    Fire("Start")
-                end)
-                -- Warten bis nicht mehr in Lobby
-                local ws = os.clock()
-                while CheckIsLobby() and os.clock() - ws < 30 and AF_Challenge.Running do
-                    task.wait(1)
-                end
-            else
-                -- In Runde: warten bis zurück in Lobby
-                SetStatus("⚡ Challenge läuft: " .. item.chapName, D.Cyan)
-                local deadline = os.time() + 600
-                while not CheckIsLobby() and os.time() < deadline and AF_Challenge.Running do
-                    task.wait(3)
-                end
-                task.wait(2)
-            end
-        end
-        AF_Challenge.Active = false
-        SetStatus("⏹ Challenge gestoppt.", D.TextMid)
-    end)
 end
 
 -- ── Challenge UI ──────────────────────────────────────────────
@@ -1280,26 +1283,32 @@ local RaidState = {
 local function ScanRaidDrops(raidId)
     local results = {}
     pcall(function()
+        local LP = game.Players.LocalPlayer
         local itemsList = LP.PlayerGui.PlayRoom.Main.GameStage.Main.Base.Rewards.ItemsList
         for _, item in ipairs(itemsList:GetChildren()) do
             if item:IsA("UIGridLayout") or item:IsA("UIListLayout") then continue end
-            local iname   = item.Name
-            local dropAmt = 0
+            local iname    = item.Name
+            local dropAmt  = 0
             local dropRate = 0
             pcall(function()
                 local frame     = item:FindFirstChild("Frame")
                 local itemFrame = frame and frame:FindFirstChild("ItemFrame")
                 local info      = itemFrame and itemFrame:FindFirstChild("Info")
                 if info then
-                    local da = info:FindFirstChild("DropAmonut") -- note: typo in game
-                              or info:FindFirstChild("DropAmount")
+                    -- "DropAmonut" ist ein Typo im Spiel – beide prüfen
+                    local da = info:FindFirstChild("DropAmonut")
+                            or info:FindFirstChild("DropAmount")
                     local dr = info:FindFirstChild("DropRate")
-                    if da then dropAmt  = tonumber(da.Text or da.Value or 0) or 0 end
-                    if dr then dropRate = tonumber(dr.Text or dr.Value or 0) or 0 end
+                    if da then dropAmt  = tonumber(da.Text or da.Value) or 0 end
+                    if dr then dropRate = tonumber(dr.Text or dr.Value) or 0 end
                 end
             end)
             if iname ~= "" then
-                results[iname] = { dropAmount = dropAmt, dropRate = dropRate }
+                results[iname] = {
+                    dropAmount = dropAmt,
+                    dropRate   = dropRate,
+                    score      = (tonumber(dropRate) or 0) * (tonumber(dropAmt) or 1),
+                }
             end
         end
     end)
