@@ -516,13 +516,25 @@ BuildShop({
 })
 
 -- ============================================================
---  SHOP 3 – CALAMITY (FireForce + JJK)
+--  SHOPS 2-SPALTIG LAYOUT
+-- ============================================================
+local shopsRow = Instance.new("Frame", ShopPage)
+shopsRow.Size = UDim2.new(1, 0, 0, 0)
+shopsRow.AutomaticSize = Enum.AutomaticSize.Y
+shopsRow.BackgroundTransparency = 1
+HList(shopsRow, 8)
+
+-- ============================================================
+--  SHOP 3 – CALAMITY SHOP (FireForce + JJK) - linke Spalte
 --  ★ Pfad : RS.Player_Data.[Name].Calamity_Shop.FireForce / .JJK
 --  Remote: Calamity_Shop(ShopType, ItemName, Menge)
 --  Währung: Sol Token | Cursed Essence
 -- ============================================================
 do
-    local calCard = Card(ShopPage); Pad(calCard,10,12,10,12); VList(calCard,8)
+    local calCard = Card(shopsRow)
+    calCard.Size = UDim2.new(0.5, -4, 0, 0)
+    calCard.AutomaticSize = Enum.AutomaticSize.Y
+    Pad(calCard,10,12,10,12); VList(calCard,8)
     Stroke(calCard, D.Orange, 1.5, 0.25)
 
     local hdr = Instance.new("TextLabel",calCard)
@@ -587,13 +599,16 @@ do
 end
 
 -- ============================================================
---  SHOP 4 – RAID SHOP (Esper + JJK)
+--  SHOP 4 – RAID SHOP (Esper + JJK) - rechte Spalte
 --  ★ Pfad : RS.Player_Data.[Name].JJK_Raid_Shop.Esper / .JJK
 --  Remote: JJK_RaidShop(ShopType, ItemName, Menge)
 --  Währung: Esper Token | Cursed Scrolls
 -- ============================================================
 do
-    local raidCard = Card(ShopPage); Pad(raidCard,10,12,10,12); VList(raidCard,8)
+    local raidCard = Card(shopsRow)
+    raidCard.Size = UDim2.new(0.5, -4, 0, 0)
+    raidCard.AutomaticSize = Enum.AutomaticSize.Y
+    Pad(raidCard,10,12,10,12); VList(raidCard,8)
     Stroke(raidCard, D.Purple, 1.5, 0.25)
 
     local hdr = Instance.new("TextLabel",raidCard)
