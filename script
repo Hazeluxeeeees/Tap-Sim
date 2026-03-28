@@ -1025,8 +1025,8 @@ end
 -- ── GUI-Resize ────────────────────────────────────────────────
 -- Kompakt: 70%/80% der PC-Scale (kleiner als Desktop); UIScale nur bei Touch
 local PC_FRAME_SCALE_X, PC_FRAME_SCALE_Y = 0.40, 0.48
--- Mobile: deutlich groesser – 90% Breite, 72% Hoehe des Bildschirms
-local MOBILE_FRAME = UDim2.new(0.90, 0, 0.72, 0)
+-- Mobile: 85% Breite, 68% Hoehe des Bildschirms
+local MOBILE_FRAME = UDim2.new(0.855, 0, 0.684, 0)
 local TOUCH_MAIN_UI_SCALE = 1.0   -- kein zusaetzlicher Scale-Shrink auf Mobile
 
 local function SetGUISize(mode)
@@ -1043,7 +1043,7 @@ local function SetGUISize(mode)
     if useCompact then
         MainFrame.Size = MOBILE_FRAME
         -- Seitenverhaeltnis fuer 90% x 72%
-        if ma then ma.AspectRatio = 0.90 / 0.72; ma.DominantAxis = Enum.DominantAxis.Width end
+        if ma then ma.AspectRatio = 0.855 / 0.684; ma.DominantAxis = Enum.DominantAxis.Width end
         -- Sidebar 32%, Content 68%
         H.UI.Fr.Sidebar.Size=UDim2.new(0.32, 0, 1, 0)
         H.UI.Fr.Content.Position=UDim2.new(0.32, 4, 0, 25)
