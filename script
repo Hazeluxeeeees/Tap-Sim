@@ -819,12 +819,65 @@ headerLogoSlot.BackgroundTransparency=1; headerLogoSlot.BorderSizePixel=0
 local _headerMoon=BuildMoonLogo(headerLogoSlot,20,0,0)
 _headerMoon.AnchorPoint=Vector2.new(0.5,0.5); _headerMoon.Position=UDim2.new(0.5,0,0.5,0)
 local headerTimerLbl=Instance.new("TextLabel",headerStrip)
-headerTimerLbl.Size=UDim2.new(1,-36,1,0); headerTimerLbl.Position=UDim2.new(0,30,0,0)
+headerTimerLbl.Size=UDim2.new(1,-120,1,0); headerTimerLbl.Position=UDim2.new(0,30,0,0)
 headerTimerLbl.BackgroundTransparency=1; headerTimerLbl.Text="⏱  Session: 0s"
 headerTimerLbl.TextColor3=D.TextLow; headerTimerLbl.TextSize=10; headerTimerLbl.Font=Enum.Font.GothamMedium
 headerTimerLbl.TextScaled=false; headerTimerLbl.RichText=true; headerTimerLbl.TextStrokeTransparency=1
 headerTimerLbl.TextXAlignment=Enum.TextXAlignment.Right; H.UI.Lbl.HeaderTimer=headerTimerLbl
 task.spawn(function() while S.Running do task.wait(1); pcall(function() H.UI.Lbl.HeaderTimer.Text="⏱  Session: "..formatTime(os.time()-S.SessStart) end) end end)
+
+-- Status indicators
+local statusRow=Instance.new("Frame",headerStrip)
+statusRow.Size=UDim2.new(0,80,0,20); statusRow.Position=UDim2.new(1,-85,0,1)
+statusRow.BackgroundTransparency=1; HList(statusRow,4)
+
+-- Autofarm Module Status
+H.UI.Lbl.ModulStatus=Instance.new("TextLabel",statusRow)
+H.UI.Lbl.ModulStatus.Size=UDim2.new(1,0,1,0); H.UI.Lbl.ModulStatus.BackgroundTransparency=1
+H.UI.Lbl.ModulStatus.Text="🟠  Loading..."; H.UI.Lbl.ModulStatus.TextColor3=D.Orange
+H.UI.Lbl.ModulStatus.TextSize=8; H.UI.Lbl.ModulStatus.Font=Enum.Font.GothamMedium
+H.UI.Lbl.ModulStatus.TextXAlignment=Enum.TextXAlignment.Left
+
+-- Lobby/Round Status
+H.UI.Lbl.LobbyStatus=Instance.new("Frame",statusRow)
+H.UI.Lbl.LobbyStatus.Size=UDim2.new(0,50,0,16); H.UI.Lbl.LobbyStatus.BackgroundColor3=Color3.fromRGB(20,25,35)
+H.UI.Lbl.LobbyStatus.BackgroundTransparency=0.8; H.UI.Lbl.LobbyStatus.BorderSizePixel=0
+Corner(H.UI.Lbl.LobbyStatus,8); Stroke(H.UI.Lbl.LobbyStatus,D.Green,1,0.3)
+
+local lobbyIcon=Instance.new("Frame",H.UI.Lbl.LobbyStatus)
+lobbyIcon.Size=UDim2.new(0,8,0,8); lobbyIcon.Position=UDim2.new(0,4,0.5,-4)
+lobbyIcon.BackgroundColor3=D.Green; lobbyIcon.BorderSizePixel=0; Corner(lobbyIcon,99)
+
+local lobbyText=Instance.new("TextLabel",H.UI.Lbl.LobbyStatus)
+lobbyText.Size=UDim2.new(1,-16,1,0); lobbyText.Position=UDim2.new(0,14,0,0)
+lobbyText.BackgroundTransparency=1; lobbyText.Text="LOBBY"; lobbyText.TextColor3=D.Green
+lobbyText.TextSize=9; lobbyText.Font=Enum.Font.GothamBold; lobbyText.TextXAlignment=Enum.TextXAlignment.Left
+
+-- Update lobby status function
+local function UpdateLobbyStatus()
+    pcall(function()
+        local inLobby = game.PlaceId == K.LOBBY_ID
+        if inLobby then
+            lobbyText.Text = "LOBBY"
+            lobbyIcon.BackgroundColor3 = D.Green
+            lobbyText.TextColor3 = D.Green
+            Stroke(H.UI.Lbl.LobbyStatus,D.Green,1,0.3)
+        else
+            lobbyText.Text = "RUNDE"
+            lobbyIcon.BackgroundColor3 = D.Orange
+            lobbyText.TextColor3 = D.Orange
+            Stroke(H.UI.Lbl.LobbyStatus,D.Orange,1,0.3)
+        end
+    end)
+end
+
+-- Update lobby status every 2 seconds
+task.spawn(function()
+    while S.Running do
+        task.wait(2)
+        UpdateLobbyStatus()
+    end
+end)
 
 local glow=Instance.new("Frame",MainFrame)
 glow.Size=UDim2.new(1,0,0.35,0); glow.BackgroundColor3=Color3.fromRGB(255,255,255); glow.BackgroundTransparency=0.965; glow.BorderSizePixel=0; Corner(glow,12)
@@ -1306,26 +1359,13 @@ H.UI.Lbl.ModulStatus.Size=UDim2.new(1,0,1,0); H.UI.Lbl.ModulStatus.BackgroundTra
 H.UI.Lbl.ModulStatus.Text="🔴  Autofarm-Modul nicht geladen"; H.UI.Lbl.ModulStatus.TextColor3=D.Red
 H.UI.Lbl.ModulStatus.TextSize=10; H.UI.Lbl.ModulStatus.Font=Enum.Font.GothamBold; H.UI.Lbl.ModulStatus.TextXAlignment=Enum.TextXAlignment.Left
 
-local dbConfirmCard=Instance.new("Frame",dbStatusRow); dbConfirmCard.Size=UDim2.new(0.5,-3,1,0); dbConfirmCard.BackgroundColor3=D.Card; dbConfirmCard.BackgroundTransparency=D.GlassPane; dbConfirmCard.BorderSizePixel=0; Corner(dbConfirmCard,8); Stroke(dbConfirmCard,D.GreenBright,1.5,0.1); dbConfirmCard.Visible=false; Pad(dbConfirmCard,4,8,4,8)
-H.UI.Lbl.DBConfirm=Instance.new("TextLabel",dbConfirmCard)
-H.UI.Lbl.DBConfirm.Size=UDim2.new(1,0,1,0); H.UI.Lbl.DBConfirm.BackgroundTransparency=1
-H.UI.Lbl.DBConfirm.Text="✅  Datenbank OK!"; H.UI.Lbl.DBConfirm.TextColor3=D.GreenBright
-H.UI.Lbl.DBConfirm.TextSize=10; H.UI.Lbl.DBConfirm.Font=Enum.Font.GothamBold; H.UI.Lbl.DBConfirm.TextXAlignment=Enum.TextXAlignment.Left
-
-local function ShowDBConfirm(msg)
-    pcall(function()
-        dbConfirmCard.Visible=true; H.UI.Lbl.DBConfirm.Text="✅  "..(msg or "Datenbank aktualisiert!"); H.UI.Lbl.DBConfirm.TextColor3=D.GreenBright
-        task.spawn(function() for _=1,3 do Tw(dbConfirmCard,{BackgroundColor3=Color3.fromRGB(0,55,28)},TM); task.wait(0.5); Tw(dbConfirmCard,{BackgroundColor3=D.Card},TM); task.wait(0.5) end end)
-    end)
-    S.DBReady=true
-    pcall(function()
+-- Database confirmation removed - status now shown in header
+pcall(function()
         if H.UI.Lbl.ModulStatus then
             H.UI.Lbl.ModulStatus.Text = "🟢  Autofarm-Modul aktiv [DB: OK]"
             H.UI.Lbl.ModulStatus.TextColor3 = D.GreenBright
         end
     end)
-end
-_G._ShowDBConfirm=ShowDBConfirm
 
 H.UI.Fr.AutofarmInjection=Instance.new("Frame",GamePage)
 H.UI.Fr.AutofarmInjection.Name="AutofarmInjection"; H.UI.Fr.AutofarmInjection.Size=UDim2.new(1,0,0,0)
@@ -2219,7 +2259,7 @@ _G.HazeShared.CraftPage     = CraftPage
 _G.HazeShared.TraitPage     = TraitPage
 
 _G.HazeShared.OnDBReady=function(chapCount,msg)
-    pcall(function() S.DBReady=true; ShowDBConfirm(msg or string.format("Datenbank bereit! (%d Chapters)",chapCount or 0)) end)
+    pcall(function() S.DBReady=true; -- Database confirmation removed - status now in header end)
 end
 _G.HazeShared.SetModuleLoaded=function(version)
     pcall(function()
