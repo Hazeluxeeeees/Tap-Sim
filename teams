@@ -33,6 +33,46 @@ local TeamsPage = HS.TeamsPage
 local LP = game.Players.LocalPlayer
 local RS = game:GetService("ReplicatedStorage")
 
+-- ★ Mapper: Tag.Value → {name, instance}
+-- Gibt ALLE Einheiten zurück, inkl. Duplikate mit internem Tag als Unterscheidung
+local function GetAllUnitsFromCollection()
+    local result = {}
+    local col = RS:WaitForChild("Player_Data",5)
+                  :WaitForChild(LP.Name,5)
+                  :WaitForChild("Collection",5)
+    for _, unitFolder in ipairs(col:GetChildren()) do
+        if unitFolder:IsA("Folder") then
+            local tagObj = unitFolder:FindFirstChild("Tag")
+            local tagVal = tagObj and tostring(tagObj.Value) or ""
+            table.insert(result, {
+                name     = unitFolder.Name,   -- ← Anzeigename (z.B. "BlackBeard")
+                tag      = tagVal,             -- ← interner Key (z.B. ":6\Xmlb30W")
+                instance = unitFolder          -- ← Instance für Remotes
+            })
+        end
+    end
+    return result
+end
+
+-- Hilfsfunktion: Einheit per Name ODER Tag finden
+local function FindUnitInCollection(nameOrTag)
+    local units = GetAllUnitsFromCollection()
+    -- 1. Exakter Name
+    for _, u in ipairs(units) do
+        if u.name == nameOrTag then return u end
+    end
+    -- 2. Exakter Tag (interner Fallback)
+    for _, u in ipairs(units) do
+        if u.tag == nameOrTag then return u end
+    end
+    -- 3. Case-insensitiv
+    local low = nameOrTag:lower()
+    for _, u in ipairs(units) do
+        if u.name:lower() == low then return u end
+    end
+    return nil
+end
+
 -- ── Dateipfad (account-spezifisch) ──────────────────────────
 -- REQUIRED: Dateiname basiert auf LP.Name → kein Account-Überschreiben
 local FOLDER     = "HazeHUB"
@@ -56,33 +96,31 @@ task.spawn(function()
     end)
 end)
 
-local function FireUnEquip(unitName)
-    if not unitName or unitName == "" then return end
-    -- Sicherheits-Check: Tag-Werte enthalten immer "\" oder ":" → ablehnen
-    if unitName:find("\\") or unitName:find("^:") then
-        warn("[HazeHub/Teams] UnEquip abgebrochen – kein Name, sondern Tag: " .. unitName)
-        return
-    end
+-- ★ UnEquip ALLE Slots auf einmal
+local function FireUnEquipAll()
     pcall(function()
-        local pd  = RS:WaitForChild("Player_Data", 5)
-                      :WaitForChild(LP.Name, 5)
-        local col = pd:WaitForChild("Collection", 5)
-        -- Name-basierte Suche (exakt, dann case-insensitive)
-        local unitObj = col:FindFirstChild(unitName)
-        if not unitObj then
-            for _, ch in ipairs(col:GetChildren()) do
-                if ch.Name:lower() == unitName:lower() then
-                    unitObj = ch; break
-                end
-            end
-        end
-        if not unitObj then
-            warn("[HazeHub/Teams] UnEquip: '" .. unitName .. "' nicht in Collection.")
-            return
-        end
-        -- Korrekter Remote-Aufruf mit Instance-Objekt
-        RS.Remote.Server.Units.UnEquip:FireServer(unitObj)
+        RS.Remote.Server.Units.UnEquipAll:FireServer()
+        print("[HazeHub/Teams] Alle Slots geleert.")
     end)
+    task.wait(0.5) -- kurz warten damit Server Slots freigibt
+end
+
+-- ★ Equip: erwartet Instance-Objekt, NICHT String/Tag
+local function FireEquip(unitName)
+    if not unitName or unitName == "" then return false end
+    local u = FindUnitInCollection(unitName)
+    if not u then
+        warn("[HazeHub/Teams] Equip: '" .. unitName .. "' nicht gefunden.")
+        return false
+    end
+    local ok, err = pcall(function()
+        RS.Remote.Server.Units.Equip:FireServer(u.instance)
+    end)
+    if not ok then
+        warn("[HazeHub/Teams] Equip FireServer Fehler: " .. tostring(err))
+        return false
+    end
+    return true
 end
 
 -- AutoUpgrade: FireServer(Slot, Value)
@@ -126,14 +164,36 @@ local function SaveTeamsFile()
     end)
 end
 
-local function LoadTeamsFile()
-    if not (isfile and isfile(TEAMS_FILE)) then return end
-    local ok, data = pcall(function()
-        return Svc.Http:JSONDecode(readfile(TEAMS_FILE))
-    end)
-    if ok and type(data) == "table" then
-        TM_State.Teams = data
+local function LoadTeam(team)
+    -- 1. Alle Slots leeren
+    FireUnEquipAll()
+    task.wait(0.8)
+
+    -- 2. Einheiten equippen (Slot 1–6)
+    for i = 1, 6 do
+        local unitName = team.slots[i]
+        if unitName and unitName ~= "" then
+            local success = FireEquip(unitName)
+            if success then
+                print("[HazeHub/Teams] Slot " .. i .. " → " .. unitName)
+            end
+            task.wait(0.3)
+        end
     end
+
+    -- 3. AutoUpgrade wiederherstellen
+    if team.autoUpgrade then
+        for i = 1, 6 do
+            local v = team.autoUpgrade[i]
+            if v ~= nil then
+                pcall(function()
+                    RS.Remote.Server.Units.AutoUpgradeConfig:FireServer(i, v)
+                end)
+                task.wait(0.15)
+            end
+        end
+    end
+    print("[HazeHub/Teams] Team geladen: " .. (team.name or "?"))
 end
 
 -- ── UnEquip alle aktuellen Slots ──────────────────────────────
