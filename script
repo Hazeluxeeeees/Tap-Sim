@@ -155,17 +155,35 @@ local GlobalSession = { CurrentRound = 0, TotalTime = 0, AllRewards = {} }
 GlobalSession.Items = GlobalSession.AllRewards
 _G.GlobalSession = GlobalSession
 
--- ── Globale Funktions-Definitionen (vor UI-Erstellung) ──
--- Verhindert "attempt to call a nil value" Errors durch korrekte Scope-Reihenfolge
+-- ── GLOBALE FUNKTIONS-DEFINITIONEN (HOISTING - VERHINDERT SCOPE-FEHLER) ──
+-- ALLE wichtigen Funktionen werden hier definiert, BEVOR UI-Elemente erstellt werden
 
+-- Vorwärtsdeklarationen für alle UI-Funktionen
+local UpdateGoalsUI, UpdateSessionUI, RebuildWorldList, LoadWorldCache
+local SetGoalFromInventory, SetKeyDisplay, UpdateAutoRetryUI
+local ToggleAntiAFK, StartRaid, StopRaid
+local RefreshPlayerStats, SelectTab, OnMiniBtnClick, ToggleHubGui
+local SendWebhook, AccumulateRewards, UpdateSessionUI
+local UpdateGoalsUI, BuildItemPreview, LoadItemViewport
+local GetItemTextureId, ApplySharpTypography
+
+-- Globale Variablen
 local AntiAFKEnabled = true
 
--- Vorwärtsdeklarationen für UI-Funktionen
-local UpdateGoalsUI, UpdateSessionUI, RebuildWorldList, LoadWorldCache
-
+-- === KERNFUNKTIONEN ===
 local function ToggleAntiAFK()
     AntiAFKEnabled = not AntiAFKEnabled
-    -- UI-Update wird später durchgeführt, wenn UI-Elemente existieren
+    if afkDot and afkTxt then
+        if AntiAFKEnabled then
+            afkDot.BackgroundColor3 = D.Green
+            afkTxt.Text = "Anti-AFK  —  Aktiv"
+            afkTxt.TextColor3 = D.Green
+        else
+            afkDot.BackgroundColor3 = D.Red
+            afkTxt.Text = "Anti-AFK  —  Inaktiv"
+            afkTxt.TextColor3 = D.Red
+        end
+    end
 end
 
 local function StartRaid()
@@ -186,18 +204,192 @@ end
 
 local function SetGoalFromInventory(itemName)
     if not itemName or itemName == "" then return end
-    -- Wird später implementiert, wenn UI-Elemente existieren
+    SelectTab("Session")
+    if H.UI.Inp.GoalItem then H.UI.Inp.GoalItem.Text=itemName end
+    if H.UI.Inp.GoalAmt then H.UI.Inp.GoalAmt.Text="" end
+    task.defer(function() pcall(function() if H.UI.Inp.GoalAmt then H.UI.Inp.GoalAmt:CaptureFocus() end end) end)
+    if gItemOuter and gAmtOuter then
+        Stroke(gItemOuter,D.Purple,1.5,0); Stroke(gAmtOuter,D.Purple,1.5,0)
+        task.delay(2.5,function() Stroke(gItemOuter,D.Border,1,0.2); Stroke(gAmtOuter,D.Border,1,0.2) end)
+    end
 end
 
 local function SetKeyDisplay(k)
-    -- Wird später implementiert, wenn UI-Elemente existieren
+    if H.UI.Btn.KeyBtn then
+        H.UI.Btn.KeyBtn.Text="[ "..(k or "F4").." ]"
+        H.UI.Btn.KeyBtn.TextColor3=D.Accent
+        Stroke(H.UI.Btn.KeyBtn,D.Accent,1,0.3)
+    end
 end
 
 local function UpdateAutoRetryUI()
-    -- Wird später implementiert, wenn UI-Elemente existieren
+    if not H.UI.Btn.ARToggle or not H.UI.Lbl.ARStatus then return end
+    if H.Config.AutoRetry then
+        H.UI.Btn.ARToggle.Text="✅ AN"; H.UI.Btn.ARToggle.TextColor3=D.TextHi
+        H.UI.Lbl.ARStatus.Text="Auto Retry: AN"; H.UI.Lbl.ARStatus.TextColor3=D.Green
+        Stroke(H.UI.Btn.ARToggle,D.Green,1.5,0); Tw(H.UI.Btn.ARToggle,{BackgroundColor3=D.GreenDark,BackgroundTransparency=0.12})
+    else
+        H.UI.Btn.ARToggle.Text="⬜ AUS"; H.UI.Btn.ARToggle.TextColor3=D.TextLow
+        H.UI.Lbl.ARStatus.Text="Auto Retry: AUS"; H.UI.Lbl.ARStatus.TextColor3=D.TextMid
+        Stroke(H.UI.Btn.ARToggle,D.TextLow,1,0.4); Tw(H.UI.Btn.ARToggle,{BackgroundColor3=D.CardHover,BackgroundTransparency=D.GlassPane})
+    end
 end
 
--- Globale Registrierung (sofort verfügbar)
+-- === HELPER-FUNKTIONEN ===
+local function TeleportToLobby()
+    pcall(function() game:GetService("TeleportService"):Teleport(K.LOBBY_ID) end)
+end
+
+local function IsInLobby()
+    return game:GetService("Workspace"):FindFirstChild("Lobby") ~= nil
+end
+
+local function FmtDur(sec)
+    local h=math.floor(sec/3600); local m=math.floor((sec%3600)/60); local s=sec%60
+    if h>0 then return string.format("%dh %02dm %02ds",h,m,s) else return string.format("%dm %02ds",m,s) end
+end
+
+local function FmtNum(n)
+    n=math.floor(tonumber(n) or 0); local s=tostring(n); local r=""; local c=0
+    for i=#s,1,-1 do c=c+1; r=s:sub(i,i)..r; if c%3==0 and i>1 then r=","..r end end
+    return r
+end
+
+local function formatTime(sec)
+    local t = tonumber(sec) or 0
+    if t < 0 then t = 0 end
+    if t < 60 then return string.format("%ds", t) end
+    local minInt = math.floor(t / 60)
+    local secInt = t % 60
+    return string.format("%d:%02d", minInt, secInt)
+end
+
+local function GetInvAmt(itemName)
+    local n=0
+    pcall(function()
+        local f=Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Items",3)
+        local it=f:FindFirstChild(itemName)
+        if it and it:IsA("IntValue") then n=it.Value end
+    end)
+    return n
+end
+
+-- === SAVE/LOAD FUNKTIONEN ===
+local function GetSettingsFilePath()
+    return K.FOLDER .. "/" .. LP.Name .. "_settings.json"
+end
+
+local function GetAutoSaveFilePath()
+    return K.FOLDER .. "/" .. LP.Name .. "_autosave.json"
+end
+
+local function SaveConfig()
+    H.Config.GuiVisible = S.GuiVisible
+    H.Config.SavedGoals={}
+    for _,g in ipairs(S.Goals) do table.insert(H.Config.SavedGoals,{item=g.item,amount=g.amount}) end
+    if writefile then pcall(function() writefile(GetAutoSaveFilePath(), Svc.Http:JSONEncode(H.Config)) end) end
+end
+
+local function LoadConfig()
+    local savePath = GetAutoSaveFilePath()
+    if not (isfile and isfile(savePath)) then return end
+    local ok,data=pcall(function() return Svc.Http:JSONDecode(readfile(savePath)) end)
+    if ok and data then
+        for k,v in pairs(data) do H.Config[k]=v end
+        if data.SavedGoals then S.Goals=data.SavedGoals end
+    end
+end
+
+-- === REMOTE FUNKTIONEN ===
+local function PR(...) if R.PlayRoom then pcall(R.PlayRoom.FireServer,R.PlayRoom,...) end end
+local function FireVoteRetry()
+    task.spawn(function()
+        task.wait(1)
+        pcall(function()
+            if R.VoteRetry then R.VoteRetry:FireServer() end
+        end)
+    end)
+end
+
+local function FireCreateAndStart(worldId,mode,chapId)
+    task.spawn(function()
+        pcall(function()
+            PR("Create"); task.wait(0.3)
+            PR("Change-World",{World=worldId})
+            task.wait(0.3)
+            PR("Change-Mode",{Mode=mode})
+            task.wait(0.3)
+            PR("Change-Chapter",{Chapter=chapId})
+        end)
+    end)
+end
+
+-- === WORLD SCAN FUNKTIONEN ===
+local WORLD_CACHE_FILE = K.FOLDER .. "/" .. LP.Name .. "_WorldCache.json"
+
+local function SaveWorldData()
+    if not writefile then return end
+    if next(S.WorldData) == nil then return end
+    pcall(function() writefile(WORLD_CACHE_FILE, Svc.Http:JSONEncode({ worlds = S.WorldData, ids = S.WorldIds, ts = os.time() })) end)
+end
+
+local function LoadWorldCache()
+    if not (isfile and isfile(WORLD_CACHE_FILE)) then return false end
+    local ok,data=pcall(function() return Svc.Http:JSONDecode(readfile(WORLD_CACHE_FILE)) end)
+    if not ok or not data or type(data.worlds)~="table" then return false end
+    S.WorldData=data.worlds; S.WorldIds=data.ids; S.ScanDone=true; return true
+end
+
+-- === UI FACTORY FUNKTIONEN ===
+local function Tw(o,p,ti) Svc.Tween:Create(o,ti or TF,p):Play() end
+
+local function Corner(p,r)
+    local c=Instance.new("UICorner",p); c.CornerRadius=UDim.new(0,r or 10); return c
+end
+
+local function Stroke(p,col,th,tr)
+    local s=Instance.new("UIStroke",p); s.Color=col or D.Border; s.Thickness=th or 1; s.Transparency=tr or 0; return s
+end
+
+local function Pad(p,l,t,r,b)
+    local pl=Instance.new("UIPadding",p); pl.PaddingLeft=UDim.new(0,l or 0); pl.PaddingTop=UDim.new(0,t or 0)
+    pl.PaddingRight=UDim.new(0,r or 0); pl.PaddingBottom=UDim.new(0,b or 0); return pl
+end
+
+local function VList(p,spacing)
+    local l=Instance.new("UIListLayout",p); l.SortOrder=Enum.SortOrder.LayoutOrder; l.Padding=UDim.new(0,spacing or 8); return l
+end
+
+local function HList(p,spacing)
+    local l=Instance.new("UIListLayout",p); l.SortOrder=Enum.SortOrder.LayoutOrder; l.Padding=UDim.new(0,spacing or 8); l.FillDirection=Enum.FillDirection.Horizontal; return l
+end
+
+local function MkLbl(parent,text,size,color)
+    local lbl=Instance.new("TextLabel",parent); lbl.Text=text or ""; lbl.Size=UDim2.new(1,0,0,size or 12)
+    lbl.TextColor3=color or D.TextMid; lbl.TextSize=size or 12; lbl.Font=Enum.Font.Gotham; lbl.BackgroundTransparency=1; return lbl
+end
+
+local function SecLbl(parent,text)
+    local lbl=MkLbl(parent,text,13,D.Accent); lbl.Font=Enum.Font.GothamBold; return lbl
+end
+
+local function MkInput(parent,placeholder)
+    local outer=Instance.new("Frame",parent); outer.Size=UDim2.new(1,0,0,28); outer.BackgroundColor3=D.Input; outer.BackgroundTransparency=D.GlassPane or 0.18; outer.BorderSizePixel=0; Corner(outer,6); Stroke(outer,D.Border,1,0.4)
+    Pad(outer,8,0,8,0); local box=Instance.new("TextBox",outer); box.Size=UDim2.new(1,0,1,0); box.BackgroundTransparency=1; box.Text=placeholder or ""; box.PlaceholderText=placeholder or ""; box.TextColor3=D.TextHi; box.PlaceholderColor3=D.TextLow; box.TextSize=12; box.Font=Enum.Font.Gotham; return outer,box
+end
+
+local function Card(parent,sizeY)
+    local card=Instance.new("Frame",parent); card.Size=UDim2.new(1,0,0,sizeY or 60); card.BackgroundColor3=D.Card; card.BackgroundTransparency=D.GlassPane or 0.18; card.BorderSizePixel=0; Corner(card,8); Stroke(card,D.Border,1,0.5); return card
+end
+
+local function NeonBtn(parent,text,color,sizeY)
+    local btn=Instance.new("TextButton",parent); btn.Size=UDim2.new(1,0,0,sizeY or 34); btn.BackgroundColor3=color; btn.BackgroundTransparency=D.GlassPane or 0.18; btn.Text=text; btn.TextColor3=Color3.new(1,1,1); btn.TextSize=13; btn.Font=Enum.Font.GothamBold; btn.AutoButtonColor=false; btn.BorderSizePixel=0; Corner(btn,8); Stroke(btn,color,1.5,0)
+    btn.MouseEnter:Connect(function() Tw(btn,{BackgroundColor3=Color3.fromRGB(math.min(255,color.R*255*1.3),math.min(255,color.G*255*1.3),math.min(255,color.B*255*1.3))}) end)
+    btn.MouseLeave:Connect(function() Tw(btn,{BackgroundColor3=color}) end)
+    return btn
+end
+
+-- === GLOBALE REGISTRIERUNG (sofort verfügbar) ===
 _G.HazeHubFunctions.ToggleAntiAFK = ToggleAntiAFK
 _G.HazeHubFunctions.StartRaid = StartRaid
 _G.HazeHubFunctions.StopRaid = StopRaid
