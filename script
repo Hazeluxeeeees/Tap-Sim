@@ -2680,11 +2680,62 @@ local function LoadModule(url,name,delay,onErr)
             warn("[HazeHUB] "..name..": HttpGet fehlgeschlagen")
             if onErr then pcall(onErr,"HttpGet fehlgeschlagen") end; return
         end
-        local execOk,execErr=pcall(function() loadstring(raw)() end)
+        
+        -- Zusätzliche Sicherheit: Stelle sicher, dass alle globalen Variablen verfügbar sind
+        if not _G.HazeShared then
+            _G.HazeShared = {}
+        end
+        
+        -- Debugging: Zeige an, welche Funktionen verfügbar sind
+        print("[HazeHUB] Lade Modul '"..name.."' mit verfügbaren Funktionen:")
+        for funcName, func in pairs(_G.HazeHubFunctions or {}) do
+            print("  - "..funcName..": "..type(func))
+        end
+        
+        local execOk,execErr=pcall(function() 
+            -- Ersetze loadstring mit sicherer Ausführung
+            local func, err = loadstring(raw)
+            if not func then
+                warn("[HazeHUB] "..name..": loadstring Fehler - "..tostring(err))
+                return false
+            end
+            
+            -- Setze eine sichere Umgebung für die Ausführung
+            local oldEnv = getfenv(func)
+            setfenv(func, setmetatable({
+                -- Sichere globale Funktionen bereitstellen
+                ToggleAntiAFK = _G.HazeHubFunctions.ToggleAntiAFK,
+                StartRaid = _G.HazeHubFunctions.StartRaid,
+                StopRaid = _G.HazeHubFunctions.StopRaid,
+                SetGoalFromInventory = _G.HazeHubFunctions.SetGoalFromInventory,
+                SetKeyDisplay = _G.HazeHubFunctions.SetKeyDisplay,
+                UpdateAutoRetryUI = _G.HazeHubFunctions.UpdateAutoRetryUI,
+                -- Wichtige globale Variablen
+                _G = _G,
+                game = game,
+                workspace = workspace,
+                -- Alte Umgebung erhalten
+                unpack = oldEnv.unpack,
+                pairs = oldEnv.pairs,
+                ipairs = oldEnv.ipairs,
+                type = oldEnv.type,
+                tostring = oldEnv.tostring,
+                tonumber = oldEnv.tonumber,
+                warn = oldEnv.warn,
+                print = oldEnv.print,
+                pcall = oldEnv.pcall,
+                task = oldEnv.task,
+            }, {__index = oldEnv}))
+            
+            return func()
+        end)
+        
         if not execOk then
             warn("[HazeHUB] "..name.." Fehler: "..tostring(execErr):sub(1,120))
             if onErr then pcall(onErr,tostring(execErr):sub(1,60)) end
-        else print("[HazeHUB] Modul '"..name.."' geladen.") end
+        else 
+            print("[HazeHUB] Modul '"..name.."' geladen.") 
+        end
     end)
 end
 
