@@ -155,6 +155,53 @@ local GlobalSession = { CurrentRound = 0, TotalTime = 0, AllRewards = {} }
 GlobalSession.Items = GlobalSession.AllRewards
 _G.GlobalSession = GlobalSession
 
+-- ── Globale Funktions-Definitionen (vor UI-Erstellung) ──
+-- Verhindert "attempt to call a nil value" Errors durch korrekte Scope-Reihenfolge
+
+local AntiAFKEnabled = true
+
+local function ToggleAntiAFK()
+    AntiAFKEnabled = not AntiAFKEnabled
+    -- UI-Update wird später durchgeführt, wenn UI-Elemente existieren
+end
+
+local function StartRaid()
+    if _G.HazeShared and _G.HazeShared.StartFarmFromMain and type(_G.HazeShared.StartFarmFromMain) == "function" then
+        _G.HazeShared.StartFarmFromMain()
+    else
+        warn("[HazeHUB] StartFarmFromMain Funktion nicht gefunden!")
+    end
+end
+
+local function StopRaid()
+    if _G.HazeShared and _G.HazeShared.StopFarm and type(_G.HazeShared.StopFarm) == "function" then
+        _G.HazeShared.StopFarm()
+    else
+        warn("[HazeHUB] StopFarm Funktion nicht gefunden!")
+    end
+end
+
+local function SetGoalFromInventory(itemName)
+    if not itemName or itemName == "" then return end
+    -- Wird später implementiert, wenn UI-Elemente existieren
+end
+
+local function SetKeyDisplay(k)
+    -- Wird später implementiert, wenn UI-Elemente existieren
+end
+
+local function UpdateAutoRetryUI()
+    -- Wird später implementiert, wenn UI-Elemente existieren
+end
+
+-- Globale Registrierung (sofort verfügbar)
+_G.HazeHubFunctions.ToggleAntiAFK = ToggleAntiAFK
+_G.HazeHubFunctions.StartRaid = StartRaid
+_G.HazeHubFunctions.StopRaid = StopRaid
+_G.HazeHubFunctions.SetGoalFromInventory = SetGoalFromInventory
+_G.HazeHubFunctions.SetKeyDisplay = SetKeyDisplay
+_G.HazeHubFunctions.UpdateAutoRetryUI = UpdateAutoRetryUI
+
 -- Session: Währungen/XP (nicht in der Item-Drop-Liste / Webhook-Items)
 local _SessionCurrencyLower = { gem = true }
 for k in pairs(K.INFO) do _SessionCurrencyLower[string.lower(k)] = true end
@@ -1465,9 +1512,10 @@ H.UI.Btn.ARToggle.MouseButton1Click:Connect(function() H.Config.AutoRetry=not H.
 _G._UpdateAutoRetryUI=UpdateAutoRetryUI
 _G.HazeHubFunctions.UpdateAutoRetryUI=UpdateAutoRetryUI
 
--- Anti-AFK Toggle Funktion
-local AntiAFKEnabled = true
-local function ToggleAntiAFK()
+-- Raid-Funktionen sind bereits global definiert - hier nur UI-Implementierung
+
+-- Anti-AFK Toggle Funktion (UI-Implementierung)
+local function ToggleAntiAFKUI()
     AntiAFKEnabled = not AntiAFKEnabled
     if afkDot and afkTxt then
         if AntiAFKEnabled then
@@ -1481,7 +1529,7 @@ local function ToggleAntiAFK()
         end
     end
 end
-_G.HazeHubFunctions.ToggleAntiAFK = ToggleAntiAFK
+_G.HazeHubFunctions.ToggleAntiAFK = ToggleAntiAFKUI
 
 -- Anti-AFK (neu implementiert: Mouse-Simulation + VirtualUser Kombination)
 local afkCard=Card(MiscPage); Pad(afkCard,10,12,10,12); VList(afkCard,8); SecLbl(afkCard,"ANTI-AFK")
