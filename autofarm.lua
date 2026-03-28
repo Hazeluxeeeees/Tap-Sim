@@ -123,6 +123,17 @@ task.spawn(function()
     else warn("[HazeHub] PlayRoomEvent nicht gefunden!") end
 end)
 
+local function Fire(action, data)
+    if PlayRoomEvent then
+        pcall(function()
+            if data then PlayRoomEvent:FireServer(action, data)
+            else PlayRoomEvent:FireServer(action) end
+        end)
+    else 
+        if PR then PR(action, data) end 
+    end
+end
+
 local function SafeFire(action, data)
     if not action or action == "" then
         warn("[HazeHub] SafeFire: action nil – überspringe."); return
@@ -290,7 +301,11 @@ local nextQ = GetNextItem()
                 end)
                 return true
             end
-        end
+        end -- end: if cur >= q.amount
+        end -- end: if not q.done
+    end -- end: for i
+    return changed
+end
         -- Fallback Timeout
         warn("[HazeHub] Queue-Wechsel Timeout – Teleport-Fallback.")
         DoTeleportToLobby(true)
@@ -741,19 +756,31 @@ local function LobbyActionLoop(delaySeconds)
     if not useChapId then SetStatus("Kein Level für '"..q.item.."'!", D.Orange); RemoveFromQueue(q.item); pcall(UpdateQueueUI); return true end
     SetStatus(string.format("LOBBY: [%s] '%s' → %s", mode or "?", q.item, useChapId), D.Cyan)
     task.spawn(function() pcall(function()
-        if mode=="Story" then
-            Fire("Create"); task.wait(0.35); Fire("Change-World",{World=worldId}); task.wait(0.35); Fire("Change-Chapter",{Chapter=useChapId}); task.wait(0.35); Fire("Submit"); task.wait(0.50); Fire("Start")
-        elseif mode=="Ranger" then
-            Fire("Create"); task.wait(0.35); Fire("Change-Mode",{KeepWorld=worldId,Mode="Ranger Stage"}); task.wait(0.50); Fire("Change-World",{World=worldId}); task.wait(0.35); Fire("Change-Chapter",{Chapter=useChapId}); task.wait(0.35); Fire("Submit"); task.wait(0.50); Fire("Start")
-        elseif mode=="Calamity" then
-            Fire("Create"); task.wait(0.35); Fire("Change-Mode",{Mode="Calamity"}); task.wait(0.35); Fire("Change-Chapter",{Chapter=useChapId}); task.wait(0.35); Fire("Submit"); task.wait(0.50); Fire("Start")
+        if not useChapId then return end
+        if mode == "Story" then
+            if not worldId then return end
+            SafeFire("Create");                                          task.wait(0.35)
+            SafeFire("Change-World",   { World   = worldId });           task.wait(0.35)
+            SafeFire("Change-Chapter", { Chapter = useChapId });         task.wait(0.35)
+            SafeFire("Submit");                                          task.wait(0.50)
+            SafeFire("Start")
+        elseif mode == "Ranger" then
+            if not worldId then return end
+            SafeFire("Create");                                          task.wait(0.35)
+            SafeFire("Change-Mode",    { KeepWorld=worldId, Mode="Ranger Stage" }); task.wait(0.50)
+            SafeFire("Change-World",   { World   = worldId });           task.wait(0.35)
+            SafeFire("Change-Chapter", { Chapter = useChapId });         task.wait(0.35)
+            SafeFire("Submit");                                          task.wait(0.50)
+            SafeFire("Start")
+        elseif mode == "Calamity" then
+            SafeFire("Create");                                          task.wait(0.35)
+            SafeFire("Change-Mode",    { Mode    = "Calamity" });        task.wait(0.35)
+            SafeFire("Change-Chapter", { Chapter = useChapId });         task.wait(0.35)
+            SafeFire("Submit");                                          task.wait(0.50)
+            SafeFire("Start")
         end
-        print("[HazeHub] Raum gestartet: " .. useChapId)
+        print("[HazeHub] Raum gestartet: " .. (useChapId or "?"))
     end) end)
-    local ws=os.clock()
-    while AF.Running and CheckIsLobby() and os.clock()-ws<30 do task.wait(1) end
-    task.wait(1); return true
-end
 
 -- ============================================================
 --  FARM LOOP
