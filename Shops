@@ -444,15 +444,24 @@ local function BuildShop(opts)
 end
 
 -- ============================================================
---  SHOP 1 – GHOUL HUNT
+--  SHOPS 2x2 LAYOUT (alle Shops nebeneinander)
+-- ============================================================
+local shopsRow1 = Instance.new("Frame", ShopPage)
+shopsRow1.Size = UDim2.new(1, 0, 0, 0)
+shopsRow1.AutomaticSize = Enum.AutomaticSize.Y
+shopsRow1.BackgroundTransparency = 1
+HList(shopsRow1, 8)
+
+-- ============================================================
+--  SHOP 1 – GHOUL HUNT - linke Spalte
 --  Pfad  : RS.Player_Data.[Name].GhoulHunt
 --  Remote: GhoulHuntExchange(ItemName, Menge)
---  Währung: RCCells
+--  Währung: RCells
 -- ============================================================
 BuildShop({
-    parent       = ShopPage,
+    parent       = shopsRow1,
     name         = "👻  Ghoul Hunt",
-    currencyKey  = "RCCells",
+    currencyKey  = "RCells",
     accent       = D.Teal,
     timerType    = "daily415",
     folderGetter = function()
@@ -481,13 +490,13 @@ BuildShop({
 })
 
 -- ============================================================
---  SHOP 2 – MERCHANT
+--  SHOP 2 – MERCHANT - rechte Spalte
 --  Pfad  : RS.Player_Data.[Name].Merchant
 --  Remote: Merchant(ItemName, Menge)
 --  Währung: Gold
 -- ============================================================
 BuildShop({
-    parent       = ShopPage,
+    parent       = shopsRow1,
     name         = "🏦  Merchant",
     currencyKey  = "Gold",
     accent       = D.Gold,
@@ -516,13 +525,13 @@ BuildShop({
 })
 
 -- ============================================================
---  SHOPS 2-SPALTIG LAYOUT
+--  SHOPS ZWEITE ROW (Calamity + Raid)
 -- ============================================================
-local shopsRow = Instance.new("Frame", ShopPage)
-shopsRow.Size = UDim2.new(1, 0, 0, 0)
-shopsRow.AutomaticSize = Enum.AutomaticSize.Y
-shopsRow.BackgroundTransparency = 1
-HList(shopsRow, 8)
+local shopsRow2 = Instance.new("Frame", ShopPage)
+shopsRow2.Size = UDim2.new(1, 0, 0, 0)
+shopsRow2.AutomaticSize = Enum.AutomaticSize.Y
+shopsRow2.BackgroundTransparency = 1
+HList(shopsRow2, 8)
 
 -- ============================================================
 --  SHOP 3 – CALAMITY SHOP (FireForce + JJK) - linke Spalte
@@ -531,7 +540,7 @@ HList(shopsRow, 8)
 --  Währung: Sol Token | Cursed Essence
 -- ============================================================
 do
-    local calCard = Card(shopsRow)
+    local calCard = Card(shopsRow2)
     calCard.Size = UDim2.new(0.5, -4, 0, 0)
     calCard.AutomaticSize = Enum.AutomaticSize.Y
     Pad(calCard,10,12,10,12); VList(calCard,8)
@@ -605,7 +614,7 @@ end
 --  Währung: Esper Token | Cursed Scrolls
 -- ============================================================
 do
-    local raidCard = Card(shopsRow)
+    local raidCard = Card(shopsRow2)
     raidCard.Size = UDim2.new(0.5, -4, 0, 0)
     raidCard.AutomaticSize = Enum.AutomaticSize.Y
     Pad(raidCard,10,12,10,12); VList(raidCard,8)
