@@ -250,7 +250,208 @@ _G.HazeHUB.UpdateStatus = function(status, color)
 end
 
 -- ============================================================
---  WELT-SPEICHER FUNKTIONEN
+--  ZENTRALISIERTE DATENSTRUKTUR UND SPEICHERUNG
+-- ============================================================
+_G.HazeHUB.GameData = {
+    Story = {},
+    Ranger = {},
+    Raids = {},
+    Calamity = {},
+    timestamp = nil,
+    version = "1.0"
+}
+
+_G.HazeHUB.DataReady = false
+
+_G.HazeHUB.SaveAllData = function()
+    if not writefile then return false end
+    
+    -- Zeitstempel aktualisieren
+    _G.HazeHUB.GameData.timestamp = os.time()
+    
+    -- Daten aus den aktuellen Tabellen sammeln
+    if S.WorldData and S.WorldIds then
+        _G.HazeHUB.GameData.Story = {}
+        _G.HazeHUB.GameData.Ranger = {}
+        _G.HazeHUB.GameData.Calamity = {}
+        
+        for _, worldId in ipairs(S.WorldIds) do
+            local worldInfo = S.WorldData[worldId]
+            if worldInfo then
+                -- Story Chapters
+                if worldInfo.story and #worldInfo.story > 0 then
+                    _G.HazeHUB.GameData.Story[worldId] = {
+                        chapters = worldInfo.story,
+                        label = worldInfo.label or worldId
+                    }
+                end
+                
+                -- Ranger Stages
+                if worldInfo.ranger and #worldInfo.ranger > 0 then
+                    _G.HazeHUB.GameData.Ranger[worldId] = {
+                        stages = worldInfo.ranger,
+                        label = worldInfo.label or worldId
+                    }
+                end
+                
+                -- Calamity Stages
+                if worldInfo.calamity and #worldInfo.calamity > 0 then
+                    _G.HazeHUB.GameData.Calamity[worldId] = {
+                        stages = worldInfo.calamity,
+                        label = worldInfo.label or worldId
+                    }
+                end
+            end
+        end
+    end
+    
+    -- Raid-Daten hinzufügen (falls vorhanden)
+    if _G.RAID_DEFS then
+        _G.HazeHUB.GameData.Raids = _G.RAID_DEFS
+    end
+    
+    local success = pcall(function()
+        writefile("HazeHUB/HazeHUB_Cache.json", Svc.Http:JSONEncode(_G.HazeHUB.GameData))
+    end)
+    
+    if success then
+        print("[HazeHUB] Alle Spieldaten gespeichert: " .. 
+              #(_G.HazeHUB.GameData.Story or {}) .. " Story, " ..
+              #(_G.HazeHUB.GameData.Ranger or {}) .. " Ranger, " ..
+              #(_G.HazeHUB.GameData.Calamity or {}) .. " Calamity, " ..
+              #(_G.HazeHUB.GameData.Raids or {}) .. " Raids")
+        return true
+    else
+        warn("[HazeHUB] Fehler beim Speichern der Spieldaten")
+        return false
+    end
+end
+
+_G.HazeHUB.LoadAllData = function()
+    if not (isfile and isfile("HazeHUB/HazeHUB_Cache.json")) then return false end
+    
+    local success, rawData = pcall(function()
+        return readfile("HazeHUB/HazeHUB_Cache.json")
+    end)
+    
+    if not success or not rawData or #rawData < 10 then
+        warn("[HazeHUB] Cache-Datei nicht lesbar oder leer")
+        return false
+    end
+    
+    local success, gameData = pcall(function()
+        return Svc.Http:JSONDecode(rawData)
+    end)
+    
+    if not success or type(gameData) ~= "table" then
+        warn("[HazeHUB] Cache-Datei ungültig")
+        return false
+    end
+    
+    -- Daten wiederherstellen
+    _G.HazeHUB.GameData = gameData
+    
+    -- Welten-Daten für UI aktualisieren
+    S.WorldData = {}
+    S.WorldIds = {}
+    
+    -- Story Welten
+    for worldId, data in pairs(_G.HazeHUB.GameData.Story or {}) do
+        if not S.WorldData[worldId] then
+            S.WorldData[worldId] = { label = data.label, story = {}, ranger = {}, calamity = {} }
+            table.insert(S.WorldIds, worldId)
+        end
+        S.WorldData[worldId].story = data.chapters
+    end
+    
+    -- Ranger Welten
+    for worldId, data in pairs(_G.HazeHUB.GameData.Ranger or {}) do
+        if not S.WorldData[worldId] then
+            S.WorldData[worldId] = { label = data.label, story = {}, ranger = {}, calamity = {} }
+            table.insert(S.WorldIds, worldId)
+        end
+        S.WorldData[worldId].ranger = data.stages
+    end
+    
+    -- Calamity Welten
+    for worldId, data in pairs(_G.HazeHUB.GameData.Calamity or {}) do
+        if not S.WorldData[worldId] then
+            S.WorldData[worldId] = { label = data.label, story = {}, ranger = {}, calamity = {} }
+            table.insert(S.WorldIds, worldId)
+        end
+        S.WorldData[worldId].calamity = data.stages
+    end
+    
+    -- Raid-Daten wiederherstellen
+    if _G.HazeHUB.GameData.Raids then
+        _G.RAID_DEFS = _G.HazeHUB.GameData.Raids
+    end
+    
+    print("[HazeHUB] Cache geladen: " .. 
+          #(_G.HazeHUB.GameData.Story or {}) .. " Story, " ..
+          #(_G.HazeHUB.GameData.Ranger or {}) .. " Ranger, " ..
+          #(_G.HazeHUB.GameData.Calamity or {}) .. " Calamity, " ..
+          #(_G.HazeHUB.GameData.Raids or {}) .. " Raids")
+    
+    return true
+end
+
+_G.HazeHUB.RefreshAllData = function()
+    -- Cache-Datei löschen
+    if isfile and isfile("HazeHUB/HazeHUB_Cache.json") then
+        pcall(function() delfile("HazeHUB/HazeHUB_Cache.json") end)
+        print("[HazeHUB] Cache-Datei gelöscht")
+    end
+    
+    -- Daten zurücksetzen
+    _G.HazeHUB.GameData = {
+        Story = {},
+        Ranger = {},
+        Raids = {},
+        Calamity = {},
+        timestamp = nil,
+        version = "1.0"
+    }
+    
+    S.WorldData = {}
+    S.WorldIds = {}
+    _G.HazeHUB.DataReady = false
+    
+    -- Status aktualisieren
+    if H.UI.Lbl.WorldStatus then
+        H.UI.Lbl.WorldStatus.Text = "🔄 Scanne alle Daten..."
+        H.UI.Lbl.WorldStatus.TextColor3 = D.Yellow
+    end
+    
+    -- Welten neu scannen
+    task.spawn(function()
+        if LoadWorldCache then
+            pcall(LoadWorldCache)
+            
+            -- Daten speichern
+            pcall(_G.HazeHUB.SaveAllData)
+            
+            -- UI aktualisieren
+            if RebuildWorldList then
+                pcall(RebuildWorldList)
+            end
+            
+            -- Status aktualisieren
+            if H.UI.Lbl.WorldStatus then
+                H.UI.Lbl.WorldStatus.Text = "✅ Daten aktualisiert"
+                H.UI.Lbl.WorldStatus.TextColor3 = D.Green
+            end
+            
+            -- DataReady Flag setzen
+            _G.HazeHUB.DataReady = true
+            
+            print("[HazeHUB] Alle Daten aktualisiert und gespeichert")
+        end
+    end)
+end
+
+-- ============================================================
+--  WELT-SPEICHER FUNKTIONEN (Legacy - für Kompatibilität)
 -- ============================================================
 _G.HazeHUB.SaveWorlds = function()
     if not writefile then return false end
@@ -1571,10 +1772,10 @@ local refreshRow=Instance.new("Frame",wCard); refreshRow.Size=UDim2.new(1,0,0,32
 local refreshBtn=NeonBtn(refreshRow,"🔄 Welten neu scannen",D.Cyan,28)
 refreshBtn.Size=UDim2.new(1,0,0,32)
 refreshBtn.MouseButton1Click:Connect(function()
-    if _G.HazeHUB.RefreshWorlds and type(_G.HazeHUB.RefreshWorlds) == "function" then
-        pcall(_G.HazeHUB.RefreshWorlds)
+    if _G.HazeHUB.RefreshAllData and type(_G.HazeHUB.RefreshAllData) == "function" then
+        pcall(_G.HazeHUB.RefreshAllData)
     else
-        warn("[HazeHUB] RefreshWorlds Funktion nicht gefunden!")
+        warn("[HazeHUB] RefreshAllData Funktion nicht gefunden!")
     end
 end)
 SecLbl(wCard,"SPIELMODUS")
@@ -2859,22 +3060,59 @@ LoadModule(K.TEAMS_URL, "Teams", 5, function(err)
     end)
 end)
 
--- === WELT-DATEN BEIM START LADEN ===
+-- === GESAMT-DATEN BEIM START LADEN ===
 task.spawn(function()
-    -- Versuche gespeicherte Welten-Daten zu laden
-    if _G.HazeHUB.LoadWorlds and type(_G.HazeHUB.LoadWorlds) == "function" then
-        local loaded = pcall(_G.HazeHUB.LoadWorlds)
+    -- Versuche gespeicherte Spieldaten zu laden
+    if _G.HazeHUB.LoadAllData and type(_G.HazeHUB.LoadAllData) == "function" then
+        local loaded = pcall(_G.HazeHUB.LoadAllData)
         if loaded then
-            print("[HazeHUB] Gespeicherte Welten-Daten erfolgreich geladen")
+            print("[HazeHUB] Gespeicherte Spieldaten erfolgreich geladen")
+            
+            -- UI aktualisieren
+            if RebuildWorldList then
+                pcall(RebuildWorldList)
+            end
+            
+            -- Status aktualisieren
+            if H.UI.Lbl.WorldStatus then
+                H.UI.Lbl.WorldStatus.Text = "✅ Daten aus Cache geladen"
+                H.UI.Lbl.WorldStatus.TextColor3 = D.Green
+            end
+            
+            -- DataReady Flag setzen
+            _G.HazeHUB.DataReady = true
+            
         else
-            print("[HazeHUB] Keine gespeicherten Welten-Daten gefunden - starte Scan")
+            print("[HazeHUB] Keine gespeicherten Spieldaten gefunden - starte Scan")
+            
+            -- Status aktualisieren
+            if H.UI.Lbl.WorldStatus then
+                H.UI.Lbl.WorldStatus.Text = "🔄 Scanne Spieldaten..."
+                H.UI.Lbl.WorldStatus.TextColor3 = D.Yellow
+            end
+            
             -- Wenn keine gespeicherten Daten existieren, starte normalen Scan
             task.spawn(function()
                 task.wait(2) -- Kurze Verzögerung für UI-Initialisierung
                 if LoadWorldCache then
                     pcall(LoadWorldCache)
-                    -- Speichere die gescannten Daten für zukünftige Starts
-                    pcall(_G.HazeHUB.SaveWorlds)
+                    
+                    -- Daten speichern
+                    pcall(_G.HazeHUB.SaveAllData)
+                    
+                    -- UI aktualisieren
+                    if RebuildWorldList then
+                        pcall(RebuildWorldList)
+                    end
+                    
+                    -- Status aktualisieren
+                    if H.UI.Lbl.WorldStatus then
+                        H.UI.Lbl.WorldStatus.Text = "✅ Spieldaten gescannt & gespeichert"
+                        H.UI.Lbl.WorldStatus.TextColor3 = D.Green
+                    end
+                    
+                    -- DataReady Flag setzen
+                    _G.HazeHUB.DataReady = true
                 end
             end)
         end
