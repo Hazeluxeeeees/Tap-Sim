@@ -139,7 +139,18 @@ local H   = Haze
 local S   = Haze.S
 local K   = Haze.K
 local Svc = Haze.Svc
--- Globale Session (UI + Webhook – identische Daten)
+--- Globale Funktionstabelle für tab-übergreifende Sicherheit
+_G.HazeHubFunctions = {
+    SetGoalFromInventory = nil,
+    SetKeyDisplay = nil,
+    UpdateAutoRetryUI = nil,
+    TriggerResetRescan = nil,
+    StartRaid = nil,
+    StopRaid = nil,
+    ToggleAntiAFK = nil
+}
+
+--- Globale Session (UI + Webhook – identische Daten)
 local GlobalSession = { CurrentRound = 0, TotalTime = 0, AllRewards = {} }
 GlobalSession.Items = GlobalSession.AllRewards
 _G.GlobalSession = GlobalSession
@@ -1387,7 +1398,7 @@ do
     rrBtn.MouseButton1Click:Connect(function()
         if rrBtn.Text:find("läuft") then return end
         pcall(function() if isfile and isfile("HazeHUB/HazeHUB_RewardDB.json") then delfile("HazeHUB/HazeHUB_RewardDB.json") end end)
-        if _G.HazeShared and _G.HazeShared.TriggerResetRescan then
+        if _G.HazeShared and _G.HazeShared.TriggerResetRescan and type(_G.HazeShared.TriggerResetRescan) == "function" then
             rrBtn.Text="⏳ Scan läuft..."; rrBtn.TextColor3=D.Yellow; H.UI.Lbl.DBToolStatus.Text="⏳ Scan gestartet..."; H.UI.Lbl.DBToolStatus.TextColor3=D.Yellow
             task.spawn(function()
                 _G.HazeShared.TriggerResetRescan(function(msg) pcall(function() H.UI.Lbl.DBToolStatus.Text=msg; H.UI.Lbl.DBToolStatus.TextColor3=D.Green end) end)
@@ -1452,6 +1463,7 @@ local function UpdateAutoRetryUI()
 end
 H.UI.Btn.ARToggle.MouseButton1Click:Connect(function() H.Config.AutoRetry=not H.Config.AutoRetry; SaveConfig(); UpdateAutoRetryUI() end)
 _G._UpdateAutoRetryUI=UpdateAutoRetryUI
+_G.HazeHubFunctions.UpdateAutoRetryUI=UpdateAutoRetryUI
 
 -- Anti-AFK (neu implementiert: Mouse-Simulation + VirtualUser Kombination)
 local afkCard=Card(MiscPage); Pad(afkCard,10,12,10,12); VList(afkCard,8); SecLbl(afkCard,"ANTI-AFK")
@@ -1561,6 +1573,7 @@ local function SetGoalFromInventory(itemName)
     task.delay(2.5,function() Stroke(gItemOuter,D.Border,1,0.2); Stroke(gAmtOuter,D.Border,1,0.2) end)
 end
 _G._SetGoalFromInventory=SetGoalFromInventory
+_G.HazeHubFunctions.SetGoalFromInventory=SetGoalFromInventory
 SecLbl(SessPage,"📦  GEGENSTÄNDE ERHALTEN (diese Session)")
 H.UI.Fr.SessList=Card(SessPage); Pad(H.UI.Fr.SessList,6,8,6,8); VList(H.UI.Fr.SessList,4)
 H.UI.Lbl.SessEmpty=MkLbl(H.UI.Fr.SessList,"Noch keine Belohnungen – warte auf „Rewards - Items“ vom Server.",12,D.TextLow); H.UI.Lbl.SessEmpty.Size=UDim2.new(1,0,0,30); H.UI.Lbl.SessEmpty.TextXAlignment=Enum.TextXAlignment.Center; H.UI.Lbl.SessEmpty.Font=Enum.Font.GothamMedium; H.UI.Lbl.SessEmpty.RichText=true; H.UI.Lbl.SessEmpty.TextStrokeTransparency=1
@@ -1785,7 +1798,11 @@ local function RebuildInventory()
             local clickBtn=Instance.new("TextButton",row); clickBtn.Size=UDim2.new(1,0,1,0); clickBtn.BackgroundTransparency=1; clickBtn.Text=""; clickBtn.BorderSizePixel=0
             local cap=iname
             clickBtn.MouseButton1Click:Connect(function()
-                if _G._SetGoalFromInventory then _G._SetGoalFromInventory(cap) end
+                if _G.HazeHubFunctions.SetGoalFromInventory and type(_G.HazeHubFunctions.SetGoalFromInventory) == "function" then
+                    _G.HazeHubFunctions.SetGoalFromInventory(cap)
+                else
+                    warn("[HazeHUB] SetGoalFromInventory Funktion nicht gefunden!")
+                end
                 Tw(row,{BackgroundColor3=D.RowSelect}); task.delay(0.3,function() Tw(row,{BackgroundColor3=isRare and D.RedDark or D.CardHover}) end)
             end)
             clickBtn.MouseEnter:Connect(function() Tw(row,{BackgroundColor3=isRare and Color3.fromRGB(80,18,18) or D.CardHover}) end)
@@ -1984,6 +2001,7 @@ MkLbl(kbRow,"Toggle-Taste:",12,D.TextMid).Size=UDim2.new(0.52,0,1,0)
 H.UI.Btn.KeyBtn=Instance.new("TextButton",kbRow); H.UI.Btn.KeyBtn.Size=UDim2.new(0.46,0,0,34); H.UI.Btn.KeyBtn.BackgroundColor3=D.CardHover; H.UI.Btn.KeyBtn.Text="[ F4 ]"; H.UI.Btn.KeyBtn.TextColor3=D.Accent; H.UI.Btn.KeyBtn.TextSize=13; H.UI.Btn.KeyBtn.Font=Enum.Font.GothamBold; H.UI.Btn.KeyBtn.AutoButtonColor=false; H.UI.Btn.KeyBtn.BorderSizePixel=0; Corner(H.UI.Btn.KeyBtn,8); Stroke(H.UI.Btn.KeyBtn,D.Accent,1,0.3)
 local function SetKeyDisplay(k) H.UI.Btn.KeyBtn.Text="[ "..(k or "F4").." ]"; H.UI.Btn.KeyBtn.TextColor3=D.Accent; Stroke(H.UI.Btn.KeyBtn,D.Accent,1,0.3) end
 _G._SetKeyDisplay=SetKeyDisplay
+_G.HazeHubFunctions.SetKeyDisplay=SetKeyDisplay
 H.UI.Btn.KeyBtn.MouseButton1Click:Connect(function()
     if S.KeyListening then return end; S.KeyListening=true; H.UI.Btn.KeyBtn.Text="⌨ Taste drücken..."; H.UI.Btn.KeyBtn.TextColor3=D.Yellow; Stroke(H.UI.Btn.KeyBtn,D.Yellow,1.5,0)
     task.spawn(function() while S.KeyListening do Tw(H.UI.Btn.KeyBtn,{BackgroundColor3=Color3.fromRGB(58,52,8)}); task.wait(0.4); if S.KeyListening then Tw(H.UI.Btn.KeyBtn,{BackgroundColor3=D.CardHover}); task.wait(0.4) end end end)
