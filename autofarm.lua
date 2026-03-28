@@ -821,33 +821,54 @@ local function LobbyActionLoop(delaySeconds)
     end
     if not useChapId then SetStatus("Kein Level für '"..q.item.."'!", D.Orange); RemoveFromQueue(q.item); pcall(UpdateQueueUI); return true end
     SetStatus(string.format("LOBBY: [%s] '%s' → %s", mode or "?", q.item, useChapId), D.Cyan)
-    task.spawn(function() pcall(function()
-        if not useChapId then return end
+    task.spawn(function()
+    -- ★ Nil-Check VOR jedem FireServer
+    if not useChapId or useChapId == "" then
+        warn("[HazeHub] LobbyAction: useChapId ist nil – überspringe.")
+        return
+    end
+
+    local ok, err = pcall(function()
         if mode == "Story" then
-            if not worldId then return end
-            SafeFire("Create");                                          task.wait(0.35)
+            if not worldId or worldId == "" then
+                warn("[HazeHub] Story: worldId ist nil.")
+                return
+            end
+            SafeFire("Create");                                           task.wait(0.35)
             SafeFire("Change-World",   { World   = worldId });           task.wait(0.35)
             SafeFire("Change-Chapter", { Chapter = useChapId });         task.wait(0.35)
-            SafeFire("Submit");                                          task.wait(0.50)
+            SafeFire("Submit");                                           task.wait(0.50)
             SafeFire("Start")
+
         elseif mode == "Ranger" then
-            if not worldId then return end
-            SafeFire("Create");                                          task.wait(0.35)
-            SafeFire("Change-Mode",    { KeepWorld=worldId, Mode="Ranger Stage" }); task.wait(0.50)
+            if not worldId or worldId == "" then
+                warn("[HazeHub] Ranger: worldId ist nil.")
+                return
+            end
+            SafeFire("Create");                                           task.wait(0.35)
+            SafeFire("Change-Mode", { KeepWorld = worldId,
+                                      Mode      = "Ranger Stage" });     task.wait(0.50)
             SafeFire("Change-World",   { World   = worldId });           task.wait(0.35)
             SafeFire("Change-Chapter", { Chapter = useChapId });         task.wait(0.35)
-            SafeFire("Submit");                                          task.wait(0.50)
+            SafeFire("Submit");                                           task.wait(0.50)
             SafeFire("Start")
+
         elseif mode == "Calamity" then
-            SafeFire("Create");                                          task.wait(0.35)
+            -- Calamity braucht keine worldId
+            SafeFire("Create");                                           task.wait(0.35)
             SafeFire("Change-Mode",    { Mode    = "Calamity" });        task.wait(0.35)
             SafeFire("Change-Chapter", { Chapter = useChapId });         task.wait(0.35)
-            SafeFire("Submit");                                          task.wait(0.50)
+            SafeFire("Submit");                                           task.wait(0.50)
             SafeFire("Start")
         end
-        print("[HazeHub] Raum gestartet: " .. (useChapId or "?"))
-    end) end)
+    end)
 
+    if not ok then
+        warn("[HazeHub] LobbyActionLoop FireServer Fehler: " .. tostring(err))
+    else
+        print("[HazeHub] Raum gestartet: " .. tostring(useChapId))
+    end
+end)
 -- ============================================================
 --  FARM LOOP
 -- ============================================================
