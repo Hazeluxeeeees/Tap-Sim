@@ -1,26 +1,29 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB – autofarm.lua  v4.0.0
+--  HazeHUB – autofarm.lua  v5.0.0
 --
---  v4.0.0 Änderungen:
---    ✓ Vollständige _G.HazeHUB Tabelle (StartFarm, StopFarm,
---      UpdateWorldData, StartChallenge, ScanChallengeItems usw.)
---    ✓ Challenge-Modul vollständig reintegriert
---      · Scan: RS.Gameplay.Game.Challenge.Items
---      · Attribute: DropRate, MaxDrop, MinDrop pro Item
---      · Start-Remote: PlayRoom.Event:FireServer("Create",
---        {["CreateChallengeRoom"]=true})
---    ✓ Raid als eigener Spielmodus in WELT & KAPITEL AUSWAHL
---      · Modus-Buttons: Story | Ranger | Calamity | Raid
---      · Raid-Dropdown: dynamisch aus ChapterLevels-Scan
---        (JJK_Raid_*, Esper_Raid_*)
---      · Schwierigkeit bei Raids korrekt per SafeFire übermittelt
---    ✓ Alle spielbezogenen Logik-Funktionen aus Hauptskript
---      hierher migriert (CreateRoom, Welt-Wechsel, Start/Stop)
---    ✓ Callback-System: Buttons im Game-Tab rufen _G.HazeHUB.*
+--  v5.0.0 Änderungen:
+--    ✓ Verschachtelte Welten-Logik (Serie → Kapitel)
+--      · Modus wählen (Story/Ranger/Calamity/Raid/Challenge)
+--      · Dann Serie wählen (JJK, Naruto, OnePiece …)
+--      · Dann Kapitel/Stage aus der Serie wählen
+--    ✓ Smart-Scan aus ChapterLevels:
+--      · Extrahiert Serienname (vor erstem _) und Typ
+--      · Sortiert in WorldData.story / .ranger / .calamity / .raids
+--    ✓ Schwierigkeit je nach Modus:
+--      · Story & Calamity: Normal/Hard/Nightmare wählbar
+--      · Ranger: fest auf Nightmare
+--      · Esper-Raid: Normal/Nightmare; JJK-Raid: Normal (gesperrt)
+--    ✓ Challenge-Items: Scan über RS.Gameplay.Game.Challenge.Items
+--      · DropRate-Attribut korrekt extrahiert
+--    ✓ Universal Refresh: alle Kategorien gleichzeitig neu scannen
+--      → Ergebnis in HazeHUB_WorldCache.json gespeichert
+--    ✓ Remote-Integration: Change-World (Serie), Change-Chapter,
+--      Change-Difficulty basierend auf verschachtelter Auswahl
+--    ✓ _G.HazeHUB vollständige Tabelle (StartFarm, StopFarm, …)
 --    ✓ SafeFire überall (nil-Check vor FireServer)
 -- ╚══════════════════════════════════════════════════════════╝
 
-local VERSION  = "4.0.0"
+local VERSION  = "5.0.0"
 local LOBBY_ID = 111446873000464
 local MAIN_URL = "https://raw.githubusercontent.com/Hazeluxeeeees/Tap-Sim/refs/heads/main/script"
 
@@ -75,6 +78,7 @@ local DB_FILE       = FOLDER .. "/" .. LP.Name .. "_RewardDB.json"
 local QUEUE_FILE    = FOLDER .. "/" .. LP.Name .. "_Queue.json"
 local STATE_FILE    = FOLDER .. "/" .. LP.Name .. "_State.json"
 local SETTINGS_FILE = FOLDER .. "/" .. LP.Name .. "_settings.json"
+local CACHE_FILE    = FOLDER .. "/" .. LP.Name .. "_WorldCache.json"
 
 if makefolder then pcall(function() makefolder(FOLDER) end) end
 
@@ -82,40 +86,20 @@ if makefolder then pcall(function() makefolder(FOLDER) end) end
 --  SCHWIERIGKEITSGRAD-DEFINITIONEN
 -- ============================================================
 local DIFF_CHANGES_REWARDS = {
-    ["Esper_Raid"]   = true,
-    ["JJK_Raid"]     = false,
-    ["Calamity"]     = true,
+    ["EsperRaid"] = true,
+    ["JJKRaid"]   = false,
+    ["Calamity"]  = true,
 }
 
-local function DiffChangesRewards(chapId)
-    if not chapId then return false end
-    for prefix, val in pairs(DIFF_CHANGES_REWARDS) do
-        if chapId:find(prefix, 1, true) then return val end
-    end
-    return false
+local function DiffChangesRewards(mode)
+    return DIFF_CHANGES_REWARDS[mode] == true
 end
 
-local function GetDBKey(chapId, difficulty)
-    if DiffChangesRewards(chapId) then
+local function GetDBKey(chapId, mode, difficulty)
+    if DiffChangesRewards(mode) then
         return (chapId or "?") .. "::" .. (difficulty or "Normal")
     end
     return chapId or "?"
-end
-
-local CHAPTER_DIFFICULTIES = {
-    ["Calamity_Chapter1"]   = { "Normal", "Hard", "Nightmare" },
-    ["Calamity_Chapter2"]   = { "Nightmare" },
-    ["Esper_Raid_Chapter1"] = { "Normal", "Nightmare" },
-    ["JJK_Raid_Chapter1"]   = { "Normal" },
-    ["JJK_Raid_Chapter2"]   = { "Normal" },
-}
-
-local function GetDifficultiesForChap(chapId, mode)
-    if CHAPTER_DIFFICULTIES[chapId] then
-        return CHAPTER_DIFFICULTIES[chapId]
-    end
-    if mode == "Ranger" then return { "Nightmare" } end
-    return { "Normal", "Hard", "Nightmare" }
 end
 
 -- ============================================================
@@ -129,10 +113,16 @@ local AF = {
     RewardDatabase = {},
     SelDifficulty  = "Normal",
     -- Challenge-State
-    Challenges     = {},           -- gescannte Challenge-Daten
-    ChallengeItems = {},           -- gescannte Items aus RS.Gameplay.Game.Challenge.Items
-    -- Raid-State (dynamisch gescannt aus ChapterLevels)
-    RaidChapters   = {},           -- { {id, label, difficulty, mode} }
+    ChallengeItems = {},
+    -- Verschachtelte Welten-Struktur
+    -- WorldData[seriesName] = {
+    --   story    = { "SeriesName_Chapter1", … }
+    --   ranger   = { "SeriesName_RangerStage1", … }
+    --   calamity = { "SeriesName_Chapter1", … }
+    --   raids    = { { id, label, mode, difficulty } … }
+    -- }
+    WorldData      = {},
+    SeriesIds      = {},   -- geordnete Liste der Serien-Keys
     UI             = { Lbl = {}, Fr = {}, Btn = {} },
 }
 _G.AutoFarmRunning = false
@@ -204,61 +194,272 @@ local function SafeFire(action, data)
 end
 
 -- ============================================================
+--  SMART-SCAN: ChapterLevels → Verschachtelte WorldData
+--
+--  Pfad: RS.Player_Data[LP.Name].ChapterLevels
+--  Namens-Konvention:
+--    SeriesName_Chapter1       → Story
+--    SeriesName_RangerStage1   → Ranger
+--    Calamity_Chapter1         → Calamity (Sonderfall: Typ "Calamity")
+--    JJK_Raid_Chapter1         → Raid "JJK"
+--    Esper_Raid_Chapter1       → Raid "Esper"
+--
+--  Ergebnis: AF.WorldData[seriesKey] = {
+--    story    = {...},
+--    ranger   = {...},
+--    calamity = {...},
+--    raids    = { {id, label, mode, difficulty} }
+--  }
+-- ============================================================
+local function ExtractSeriesAndType(name)
+    -- Sonderfälle: Raids (z. B. JJK_Raid_Chapter1, Esper_Raid_Chapter1)
+    local raidSeries, raidChap = name:match("^(.-)_Raid_(.+)$")
+    if raidSeries and raidChap then
+        return raidSeries, "raid", name
+    end
+
+    -- Calamity (z. B. Calamity_Chapter1)
+    local calChap = name:match("^Calamity_(.+)$")
+    if calChap then
+        return "Calamity", "calamity", name
+    end
+
+    -- Ranger (z. B. JJK_RangerStage1, Naruto_RangerStage2)
+    local ranSeries, ranStage = name:match("^(.-)_RangerStage(%d+)$")
+    if ranSeries then
+        return ranSeries, "ranger", name
+    end
+
+    -- Story (z. B. JJK_Chapter1, OnePiece_Chapter3)
+    local storySeries, storyChap = name:match("^(.-)_Chapter(%d+)$")
+    if storySeries then
+        return storySeries, "story", name
+    end
+
+    -- Fallback: erster Teil vor _ ist Serie
+    local fallbackSeries = name:match("^([^_]+)")
+    return fallbackSeries or name, "story", name
+end
+
+local function ScanChapterLevels()
+    local newWorldData = {}
+    local newSeriesIds = {}
+
+    local chapterLevels = nil
+    local ok, result = pcall(function()
+        local pd = RS:WaitForChild("Player_Data", 5)
+        local pf = pd:WaitForChild(LP.Name,       5)
+        return pf:WaitForChild("ChapterLevels",   5)
+    end)
+
+    if not ok or not result then
+        warn("[HazeHub] ChapterLevels nicht gefunden – Fallback wird geladen.")
+        return false
+    end
+    chapterLevels = result
+
+    for _, child in pairs(chapterLevels:GetChildren()) do
+        local name = child.Name
+        local series, typ, fullId = ExtractSeriesAndType(name)
+
+        if not newWorldData[series] then
+            newWorldData[series] = { story = {}, ranger = {}, calamity = {}, raids = {} }
+            table.insert(newSeriesIds, series)
+        end
+
+        if typ == "story" then
+            table.insert(newWorldData[series].story, fullId)
+        elseif typ == "ranger" then
+            table.insert(newWorldData[series].ranger, fullId)
+        elseif typ == "calamity" then
+            table.insert(newWorldData[series].calamity, fullId)
+        elseif typ == "raid" then
+            -- Esper-Raid: Normal + Nightmare; JJK-Raid: nur Normal
+            local isEsper = (series:lower():find("esper") ~= nil)
+            local raidMode = isEsper and "EsperRaid" or "JJKRaid"
+
+            table.insert(newWorldData[series].raids, {
+                id         = fullId .. "::Normal",
+                chapId     = fullId,
+                label      = (isEsper and "🔮 " or "🗡 ") .. fullId .. " (Normal)",
+                mode       = raidMode,
+                difficulty = "Normal",
+            })
+            if isEsper then
+                table.insert(newWorldData[series].raids, {
+                    id         = fullId .. "::Nightmare",
+                    chapId     = fullId,
+                    label      = "🔮 " .. fullId .. " (Nightmare)",
+                    mode       = raidMode,
+                    difficulty = "Nightmare",
+                })
+            end
+            print("[HazeHub] Raid gescannt: " .. fullId .. " [" .. raidMode .. "]")
+        end
+    end
+
+    -- Kapitel/Stages numerisch sortieren
+    local function sortByNum(a, b)
+        local na = tonumber(a:match("(%d+)$")) or 0
+        local nb = tonumber(b:match("(%d+)$")) or 0
+        return na < nb
+    end
+    for _, sd in pairs(newWorldData) do
+        table.sort(sd.story,    sortByNum)
+        table.sort(sd.ranger,   sortByNum)
+        table.sort(sd.calamity, sortByNum)
+        table.sort(sd.raids, function(a, b) return a.id < b.id end)
+    end
+    table.sort(newSeriesIds, function(a, b) return a:lower() < b:lower() end)
+
+    AF.WorldData  = newWorldData
+    AF.SeriesIds  = newSeriesIds
+
+    -- Globale HazeShared-Kompatibilität
+    local legacyWorldData = {}
+    local legacyWorldIds  = {}
+    for _, sid in ipairs(newSeriesIds) do
+        local sd = newWorldData[sid]
+        legacyWorldData[sid] = {
+            story    = sd.story,
+            ranger   = sd.ranger,
+            calamity = sd.calamity,
+        }
+        table.insert(legacyWorldIds, sid)
+    end
+    if ST then ST.WorldData = legacyWorldData; ST.WorldIds = legacyWorldIds; ST.ScanDone = true end
+
+    print(string.format("[HazeHub] ChapterLevels gescannt: %d Serien", #newSeriesIds))
+    for _, sid in ipairs(newSeriesIds) do
+        local sd = newWorldData[sid]
+        print(string.format("  %s → Story:%d Ranger:%d Calamity:%d Raids:%d",
+            sid, #sd.story, #sd.ranger, #sd.calamity, #sd.raids))
+    end
+
+    return true
+end
+
+-- ============================================================
+--  WORLDCACHE LADEN / SPEICHERN
+-- ============================================================
+local function SaveWorldCache()
+    if not writefile then return end
+    pcall(function()
+        local out = {
+            worldData  = AF.WorldData,
+            seriesIds  = AF.SeriesIds,
+            ts         = os.time(),
+            version    = VERSION,
+        }
+        writefile(CACHE_FILE, Svc.Http:JSONEncode(out))
+    end)
+    print("[HazeHub] WorldCache gespeichert.")
+end
+
+local function LoadWorldCache()
+    if not (isfile and isfile(CACHE_FILE)) then return false end
+    local raw; pcall(function() raw = readfile(CACHE_FILE) end)
+    if not raw or #raw < 10 then return false end
+    local ok, data = pcall(function() return Svc.Http:JSONDecode(raw) end)
+    if not ok or type(data) ~= "table" then return false end
+    if not data.worldData or not data.seriesIds then return false end
+
+    AF.WorldData = data.worldData
+    AF.SeriesIds = data.seriesIds
+
+    -- Legacy-Sync
+    local legacyWorldData = {}
+    local legacyWorldIds  = {}
+    for _, sid in ipairs(AF.SeriesIds) do
+        local sd = AF.WorldData[sid] or {}
+        legacyWorldData[sid] = { story = sd.story or {}, ranger = sd.ranger or {}, calamity = sd.calamity or {} }
+        table.insert(legacyWorldIds, sid)
+    end
+    if ST then ST.WorldData = legacyWorldData; ST.WorldIds = legacyWorldIds; ST.ScanDone = true end
+
+    print(string.format("[HazeHub] WorldCache geladen: %d Serien", #AF.SeriesIds))
+    return true
+end
+
+-- ============================================================
 --  CHALLENGE-MODUL: ITEM-SCAN
 --  Pfad: RS.Gameplay.Game.Challenge.Items
---  Attribute pro Item: DropRate, MaxDrop, MinDrop
 -- ============================================================
 local function ScanChallengeItems()
     local items = {}
-    local ok, challengeFolder = pcall(function()
+    local ok, challengeItems = pcall(function()
         local gp = RS:WaitForChild("Gameplay", 5)
-        local gf = gp:WaitForChild("Game",      5)
-        local cf = gf:WaitForChild("Challenge",  5)
-        return cf:WaitForChild("Items", 5)
+        local gf = gp:WaitForChild("Game",     5)
+        local cf = gf:WaitForChild("Challenge", 5)
+        return cf:WaitForChild("Items",         5)
     end)
-    if not ok or not challengeFolder then
+    if not ok or not challengeItems then
         warn("[HazeHub] Challenge.Items Pfad nicht gefunden.")
         return items
     end
 
-    for _, item in pairs(challengeFolder:GetChildren()) do
-        if item:IsA("Folder") or item:IsA("Model") or item:IsA("BasePart")
-           or item:IsA("Configuration") or item:IsA("StringValue") then
-            local entry = {
-                id       = item.Name,
-                label    = item.Name,
-                dropRate = tonumber(item:GetAttribute("DropRate")) or 0,
-                maxDrop  = tonumber(item:GetAttribute("MaxDrop"))  or 0,
-                minDrop  = tonumber(item:GetAttribute("MinDrop"))  or 0,
-            }
-            -- Fallback: Kind-Werte (falls Attribute als ValueBase-Kinder gespeichert)
-            if entry.dropRate == 0 then
-                local dr = item:FindFirstChild("DropRate")
-                if dr then entry.dropRate = tonumber(dr.Value) or 0 end
+    for _, item in pairs(challengeItems:GetChildren()) do
+        -- Akzeptiere alle nicht-UI Instanzen
+        if item:IsA("UIGridLayout") or item:IsA("UIListLayout")
+        or item:IsA("UIPadding")    or item:IsA("UICorner") then continue end
+
+        local entry = {
+            id       = item.Name,
+            label    = item.Name,
+            dropRate = 0,
+            maxDrop  = 0,
+            minDrop  = 0,
+        }
+
+        -- Priorität 1: Attribute am Item
+        local dr = item:GetAttribute("DropRate")
+        local md = item:GetAttribute("MaxDrop")
+        local mi = item:GetAttribute("MinDrop")
+        if dr then entry.dropRate = tonumber(dr) or 0 end
+        if md then entry.maxDrop  = tonumber(md) or 0 end
+        if mi then entry.minDrop  = tonumber(mi) or 0 end
+
+        -- Priorität 2: Kind-ValueBase-Objekte
+        if entry.dropRate == 0 then
+            local v = item:FindFirstChild("DropRate")
+            if v and v:IsA("NumberValue") or (v and v:IsA("IntValue")) then
+                entry.dropRate = tonumber(v.Value) or 0
             end
-            if entry.maxDrop == 0 then
-                local md = item:FindFirstChild("MaxDrop")
-                if md then entry.maxDrop = tonumber(md.Value) or 0 end
-            end
-            if entry.minDrop == 0 then
-                local mi = item:FindFirstChild("MinDrop")
-                if mi then entry.minDrop = tonumber(mi.Value) or 0 end
-            end
-            table.insert(items, entry)
-            print(string.format(
-                "[HazeHub] Challenge-Item: %s  DR=%.2f  Max=%d  Min=%d",
-                entry.label, entry.dropRate, entry.maxDrop, entry.minDrop))
         end
+        if entry.maxDrop == 0 then
+            local v = item:FindFirstChild("MaxDrop")
+            if v then entry.maxDrop = tonumber(v.Value) or 0 end
+        end
+        if entry.minDrop == 0 then
+            local v = item:FindFirstChild("MinDrop")
+            if v then entry.minDrop = tonumber(v.Value) or 0 end
+        end
+
+        -- Priorität 3: Info-Unterordner
+        if entry.dropRate == 0 then
+            local info = item:FindFirstChild("Info")
+            if info then
+                local drv = info:FindFirstChild("DropRate")
+                local mdv = info:FindFirstChild("MaxDrop")
+                local miv = info:FindFirstChild("MinDrop")
+                if drv then entry.dropRate = tonumber(drv.Value) or 0 end
+                if mdv then entry.maxDrop  = tonumber(mdv.Value) or 0 end
+                if miv then entry.minDrop  = tonumber(miv.Value) or 0 end
+            end
+        end
+
+        table.insert(items, entry)
+        print(string.format("[HazeHub] Challenge-Item: %-24s  DR=%.2f  Max=%d  Min=%d",
+            entry.label, entry.dropRate, entry.maxDrop, entry.minDrop))
     end
+
     AF.ChallengeItems = items
     print("[HazeHub] Challenge-Items gescannt: " .. #items)
     return items
 end
 
 -- ============================================================
---  CHALLENGE STARTEN
---  Remote: RS.Remote.Server.PlayRoom.Event:FireServer("Create",
---          {["CreateChallengeRoom"]=true})
+--  CHALLENGE-RAUM STARTEN
 -- ============================================================
 local function StartChallengeRoom()
     if not PlayRoomEvent then
@@ -274,153 +475,75 @@ local function StartChallengeRoom()
 end
 
 -- ============================================================
---  RAID-KAPITEL-SCAN aus ChapterLevels
---  Erkennt alle Einträge, die "Raid" im Namen tragen.
---  Gibt { {id, label, mode, difficulty} } zurück.
--- ============================================================
-local function ScanRaidChapters()
-    local raids = {}
-    local ok, chapLevels = pcall(function()
-        return RS
-            :WaitForChild("Player_Data", 5)
-            :WaitForChild(LP.Name,       5)
-            :WaitForChild("ChapterLevels", 5)
-    end)
-    if not ok or not chapLevels then
-        warn("[HazeHub] ChapterLevels nicht gefunden – Raid-Scan übersprungen.")
-        return raids
-    end
-
-    for _, child in pairs(chapLevels:GetChildren()) do
-        local n = child.Name
-        if n:find("Raid", 1, true) then
-            -- Esper-Raid unterstützt Normal + Nightmare
-            if n:find("Esper", 1, true) then
-                table.insert(raids, {
-                    id         = n .. "::Normal",
-                    label      = "🔮 " .. n .. " (Normal)",
-                    chapId     = n,
-                    mode       = "EsperRaid",
-                    difficulty = "Normal",
-                })
-                table.insert(raids, {
-                    id         = n .. "::Nightmare",
-                    label      = "🔮 " .. n .. " (Nightmare)",
-                    chapId     = n,
-                    mode       = "EsperRaid",
-                    difficulty = "Nightmare",
-                })
-            else
-                -- JJK-Raid und alle anderen: nur Normal
-                table.insert(raids, {
-                    id         = n .. "::Normal",
-                    label      = "🗡 " .. n .. " (Normal)",
-                    chapId     = n,
-                    mode       = "JJKRaid",
-                    difficulty = "Normal",
-                })
-            end
-            print("[HazeHub] Raid gescannt: " .. n)
-        end
-    end
-
-    table.sort(raids, function(a, b) return a.id < b.id end)
-    AF.RaidChapters = raids
-    print("[HazeHub] Raid-Kapitel gesamt: " .. #raids)
-    return raids
-end
-
--- ============================================================
 --  ROOM STARTEN – zentrale Funktion
+--  Basiert auf der verschachtelten Auswahl:
+--    seriesName  = Serienname (z. B. "JJK")
+--    chapId      = vollständige Kapitel-ID (z. B. "JJK_Chapter1")
+--    mode        = "Story" | "Ranger" | "Calamity" | "EsperRaid" | "JJKRaid" | "Challenge"
+--    difficulty  = "Normal" | "Hard" | "Nightmare"
 -- ============================================================
-local function FireStartRoom(mode, worldId, chapId, difficulty)
+local function FireStartRoom(mode, seriesName, chapId, difficulty)
     if not chapId or chapId == "" then
         warn("[HazeHub] FireStartRoom: chapId nil – abgebrochen."); return false
     end
     difficulty = difficulty or "Normal"
+    -- worldId für Remotes: bei Raids ist es der Raid-World-Key
+    local worldId = seriesName or chapId:match("^([^_]+)")
 
     local ok = pcall(function()
         if mode == "Story" then
-            if not worldId then error("worldId nil") end
-            SafeFire("Create")
-            task.wait(0.35)
-            SafeFire("Change-World",      { World      = worldId })
-            task.wait(0.35)
-            SafeFire("Change-Chapter",    { Chapter    = chapId })
-            task.wait(0.35)
-            SafeFire("Change-Difficulty", { Difficulty = difficulty })
-            task.wait(0.35)
-            SafeFire("Submit")
-            task.wait(0.50)
+            SafeFire("Create");                                              task.wait(0.35)
+            SafeFire("Change-World",      { World      = worldId });         task.wait(0.35)
+            SafeFire("Change-Chapter",    { Chapter    = chapId });          task.wait(0.35)
+            SafeFire("Change-Difficulty", { Difficulty = difficulty });      task.wait(0.35)
+            SafeFire("Submit");                                              task.wait(0.50)
             SafeFire("Start")
 
         elseif mode == "Ranger" then
-            if not worldId then error("worldId nil") end
-            SafeFire("Create")
-            task.wait(0.35)
+            SafeFire("Create");                                              task.wait(0.35)
             SafeFire("Change-Mode",       { KeepWorld = worldId, Mode = "Ranger Stage" })
             task.wait(0.50)
-            SafeFire("Change-World",      { World     = worldId })
-            task.wait(0.35)
-            SafeFire("Change-Chapter",    { Chapter   = chapId })
-            task.wait(0.35)
-            SafeFire("Change-Difficulty", { Difficulty = "Nightmare" })
-            task.wait(0.35)
-            SafeFire("Submit")
-            task.wait(0.50)
+            SafeFire("Change-World",      { World     = worldId });          task.wait(0.35)
+            SafeFire("Change-Chapter",    { Chapter   = chapId });           task.wait(0.35)
+            SafeFire("Change-Difficulty", { Difficulty = "Nightmare" });    task.wait(0.35)
+            SafeFire("Submit");                                              task.wait(0.50)
             SafeFire("Start")
 
         elseif mode == "EsperRaid" then
-            SafeFire("Create")
-            task.wait(0.35)
+            SafeFire("Create");                                              task.wait(0.35)
             SafeFire("Change-Mode",       { KeepWorld = "OnePiece", Mode = "Raids Stage" })
             task.wait(0.50)
-            SafeFire("Change-World",      { World     = "EsperRaid" })
-            task.wait(0.35)
-            SafeFire("Change-Chapter",    { Chapter   = chapId })
-            task.wait(0.35)
-            SafeFire("Change-Difficulty", { Difficulty = difficulty })
-            task.wait(0.35)
-            SafeFire("Submit")
-            task.wait(0.50)
+            SafeFire("Change-World",      { World     = "EsperRaid" });      task.wait(0.35)
+            SafeFire("Change-Chapter",    { Chapter   = chapId });           task.wait(0.35)
+            SafeFire("Change-Difficulty", { Difficulty = difficulty });      task.wait(0.35)
+            SafeFire("Submit");                                              task.wait(0.50)
             SafeFire("Start")
 
         elseif mode == "JJKRaid" then
-            SafeFire("Create")
-            task.wait(0.35)
+            SafeFire("Create");                                              task.wait(0.35)
             SafeFire("Change-Mode",       { KeepWorld = "OnePiece", Mode = "Raids Stage" })
             task.wait(0.50)
-            SafeFire("Change-World",      { World     = "JJKRaid" })
-            task.wait(0.35)
-            SafeFire("Change-Chapter",    { Chapter   = chapId })
-            task.wait(0.35)
-            SafeFire("Change-Difficulty", { Difficulty = "Normal" })
-            task.wait(0.35)
-            SafeFire("Submit")
-            task.wait(0.50)
+            SafeFire("Change-World",      { World     = "JJKRaid" });        task.wait(0.35)
+            SafeFire("Change-Chapter",    { Chapter   = chapId });           task.wait(0.35)
+            SafeFire("Change-Difficulty", { Difficulty = "Normal" });        task.wait(0.35)
+            SafeFire("Submit");                                              task.wait(0.50)
             SafeFire("Start")
 
         elseif mode == "Calamity" then
-            SafeFire("Create")
-            task.wait(0.35)
-            SafeFire("Change-Mode",       { Mode      = "Calamity" })
-            task.wait(0.35)
-            SafeFire("Change-Chapter",    { Chapter   = chapId })
-            task.wait(0.35)
-            SafeFire("Change-Difficulty", { Difficulty = difficulty })
-            task.wait(0.35)
-            SafeFire("Submit")
-            task.wait(0.50)
+            SafeFire("Create");                                              task.wait(0.35)
+            SafeFire("Change-Mode",       { Mode      = "Calamity" });       task.wait(0.35)
+            SafeFire("Change-Chapter",    { Chapter   = chapId });           task.wait(0.35)
+            SafeFire("Change-Difficulty", { Difficulty = difficulty });      task.wait(0.35)
+            SafeFire("Submit");                                              task.wait(0.50)
             SafeFire("Start")
 
         elseif mode == "Challenge" then
-            -- Challenge-Raum über separates Remote
             StartChallengeRoom()
         end
     end)
 
     if ok then
-        print(string.format("[HazeHub] Raum gestartet: [%s/%s] %s", mode, difficulty, chapId))
+        print(string.format("[HazeHub] Raum gestartet: [%s/%s] %s (Welt: %s)", mode, difficulty, chapId, worldId))
     end
     return ok
 end
@@ -653,66 +776,97 @@ local function WaitForItemsListFilled(timeoutSec)
 end
 
 -- ============================================================
---  DEEP-SCAN TASK-LISTE
+--  FIRE-ROOM FÜR SCAN (intern, nutzt Fire statt SafeFire)
+-- ============================================================
+local function FireRoomForScan(t)
+    local mode       = t.mode
+    local seriesName = t.seriesName or t.worldId
+    local chapId     = t.chapId
+    local difficulty = t.difficulty or "Normal"
+
+    if mode == "Story" then
+        Fire("Create");                                               task.wait(0.5)
+        Fire("Change-World",      { World      = seriesName });      task.wait(0.5)
+        Fire("Change-Chapter",    { Chapter    = chapId });          task.wait(2.0)
+
+    elseif mode == "Ranger" then
+        Fire("Create");                                               task.wait(0.5)
+        Fire("Change-Mode",       { KeepWorld  = seriesName, Mode = "Ranger Stage" })
+        task.wait(1.0)
+        Fire("Change-World",      { World      = seriesName });      task.wait(0.5)
+        Fire("Change-Chapter",    { Chapter    = chapId });          task.wait(2.0)
+
+    elseif mode == "EsperRaid" then
+        Fire("Create");                                               task.wait(0.5)
+        Fire("Change-Mode",       { KeepWorld  = "OnePiece", Mode = "Raids Stage" })
+        task.wait(0.8)
+        Fire("Change-World",      { World      = "EsperRaid" });     task.wait(0.5)
+        Fire("Change-Chapter",    { Chapter    = chapId });          task.wait(0.5)
+        Fire("Change-Difficulty", { Difficulty = difficulty });      task.wait(2.0)
+
+    elseif mode == "JJKRaid" then
+        Fire("Create");                                               task.wait(0.5)
+        Fire("Change-Mode",       { KeepWorld  = "OnePiece", Mode = "Raids Stage" })
+        task.wait(0.8)
+        Fire("Change-World",      { World      = "JJKRaid" });       task.wait(0.5)
+        Fire("Change-Chapter",    { Chapter    = chapId });          task.wait(0.5)
+        Fire("Change-Difficulty", { Difficulty = "Normal" });        task.wait(2.0)
+
+    elseif mode == "Calamity" then
+        Fire("Create");                                               task.wait(0.5)
+        Fire("Change-Mode",       { Mode       = "Calamity" });      task.wait(0.5)
+        Fire("Change-Chapter",    { Chapter    = chapId });          task.wait(0.5)
+        Fire("Change-Difficulty", { Difficulty = difficulty });      task.wait(2.0)
+    end
+end
+
+-- ============================================================
+--  DEEP-SCAN TASK-LISTE (aus WorldData aufbauen)
 -- ============================================================
 local function BuildScanTaskList()
     local tasks = {}
-    local WorldData = HS.GetWorldData()
-    local WorldIds  = HS.GetWorldIds()
 
-    for _, wid in ipairs(WorldIds) do
-        local wd = WorldData[wid] or {}
-        local isCal     = wid:lower():find("calamity") ~= nil
-        local isEsper   = wid == "EsperRaid"
-        local isJJKRaid = wid == "JJKRaid"
+    for _, sid in ipairs(AF.SeriesIds) do
+        local sd = AF.WorldData[sid] or {}
 
-        for _, cid in ipairs(wd.story or {}) do
-            if isCal then
-                local diffs = GetDifficultiesForChap(cid, "Calamity")
-                for _, diff in ipairs(diffs) do
-                    table.insert(tasks, {
-                        worldId    = wid, chapId     = cid,
-                        mode       = "Calamity",  difficulty = diff,
-                        dbKey      = GetDBKey(cid, diff),
-                    })
-                end
-            else
-                table.insert(tasks, {
-                    worldId    = wid, chapId     = cid,
-                    mode       = "Story",     difficulty = "Normal",
-                    dbKey      = GetDBKey(cid, "Normal"),
-                })
-            end
-        end
-
-        for _, cid in ipairs(wd.ranger or {}) do
+        -- Story
+        for _, cid in ipairs(sd.story or {}) do
             table.insert(tasks, {
-                worldId    = wid, chapId     = cid,
-                mode       = "Ranger",    difficulty = "Nightmare",
-                dbKey      = GetDBKey(cid, "Nightmare"),
+                seriesName = sid, chapId = cid,
+                mode       = "Story", difficulty = "Normal",
+                dbKey      = GetDBKey(cid, "Story", "Normal"),
             })
         end
 
-        if isEsper then
-            for _, cid in ipairs(wd.story or {}) do
-                for _, diff in ipairs({ "Normal", "Nightmare" }) do
-                    table.insert(tasks, {
-                        worldId    = wid, chapId     = cid,
-                        mode       = "EsperRaid", difficulty = diff,
-                        dbKey      = GetDBKey(cid, diff),
-                    })
-                end
+        -- Ranger (immer Nightmare)
+        for _, cid in ipairs(sd.ranger or {}) do
+            table.insert(tasks, {
+                seriesName = sid, chapId = cid,
+                mode       = "Ranger", difficulty = "Nightmare",
+                dbKey      = GetDBKey(cid, "Ranger", "Nightmare"),
+            })
+        end
+
+        -- Calamity (Normal + Hard + Nightmare)
+        for _, cid in ipairs(sd.calamity or {}) do
+            for _, diff in ipairs({ "Normal", "Hard", "Nightmare" }) do
+                table.insert(tasks, {
+                    seriesName = sid, chapId = cid,
+                    mode       = "Calamity", difficulty = diff,
+                    dbKey      = GetDBKey(cid, "Calamity", diff),
+                })
             end
         end
 
-        if isJJKRaid then
-            for _, cid in ipairs(wd.story or {}) do
-                table.insert(tasks, {
-                    worldId    = wid, chapId     = cid,
-                    mode       = "JJKRaid",   difficulty = "Normal",
-                    dbKey      = GetDBKey(cid, "Normal"),
-                })
-            end
+        -- Raids
+        for _, raidEntry in ipairs(sd.raids or {}) do
+            table.insert(tasks, {
+                seriesName = sid,
+                chapId     = raidEntry.chapId,
+                mode       = raidEntry.mode,
+                difficulty = raidEntry.difficulty,
+                dbKey      = GetDBKey(raidEntry.chapId, raidEntry.mode, raidEntry.difficulty),
+            })
         end
     end
 
@@ -720,58 +874,17 @@ local function BuildScanTaskList()
 end
 
 -- ============================================================
---  FIRE-ROOM FÜR SCAN (intern)
--- ============================================================
-local function FireRoomForScan(t)
-    local mode       = t.mode
-    local worldId    = t.worldId
-    local chapId     = t.chapId
-    local difficulty = t.difficulty or "Normal"
-
-    if mode == "Story" then
-        Fire("Create");                                          task.wait(0.5)
-        Fire("Change-World",      { World      = worldId });     task.wait(0.5)
-        Fire("Change-Chapter",    { Chapter    = chapId });      task.wait(2.0)
-
-    elseif mode == "Ranger" then
-        Fire("Create");                                          task.wait(0.5)
-        Fire("Change-Mode",       { KeepWorld  = worldId, Mode = "Ranger Stage" })
-        task.wait(1.0)
-        Fire("Change-World",      { World      = worldId });     task.wait(0.5)
-        Fire("Change-Chapter",    { Chapter    = chapId });      task.wait(2.0)
-
-    elseif mode == "EsperRaid" then
-        Fire("Create");                                          task.wait(0.5)
-        Fire("Change-Mode",       { KeepWorld  = "OnePiece", Mode = "Raids Stage" })
-        task.wait(0.8)
-        Fire("Change-World",      { World      = "EsperRaid" }); task.wait(0.5)
-        Fire("Change-Chapter",    { Chapter    = chapId });      task.wait(0.5)
-        Fire("Change-Difficulty", { Difficulty = difficulty });  task.wait(2.0)
-
-    elseif mode == "JJKRaid" then
-        Fire("Create");                                          task.wait(0.5)
-        Fire("Change-Mode",       { KeepWorld  = "OnePiece", Mode = "Raids Stage" })
-        task.wait(0.8)
-        Fire("Change-World",      { World      = "JJKRaid" });   task.wait(0.5)
-        Fire("Change-Chapter",    { Chapter    = chapId });      task.wait(0.5)
-        Fire("Change-Difficulty", { Difficulty = "Normal" });    task.wait(2.0)
-
-    elseif mode == "Calamity" then
-        Fire("Create");                                          task.wait(0.5)
-        Fire("Change-Mode",       { Mode       = "Calamity" }); task.wait(0.5)
-        Fire("Change-Chapter",    { Chapter    = chapId });      task.wait(0.5)
-        Fire("Change-Difficulty", { Difficulty = difficulty });  task.wait(2.0)
-    end
-end
-
--- ============================================================
 --  DEEP-SCAN
 -- ============================================================
 local function ScanAllRewards(onProgress)
     if AF.Scanning then return false end
-    if not HS.IsScanDone() then
-        pcall(function() onProgress("Weltdaten fehlen – Game-Tab öffnen!") end)
-        return false
+    -- Stelle sicher, dass WorldData vorhanden ist
+    if #AF.SeriesIds == 0 then
+        local scanned = ScanChapterLevels()
+        if not scanned or #AF.SeriesIds == 0 then
+            pcall(function() onProgress("Weltdaten fehlen – Rescan klicken!") end)
+            return false
+        end
     end
 
     AF.Scanning = true; AF.RewardDatabase = {}
@@ -813,9 +926,12 @@ local function ScanAllRewards(onProgress)
             local cnt = 0; for _ in pairs(items) do cnt = cnt + 1 end
             if hasItems then
                 AF.RewardDatabase[t.dbKey] = {
-                    world      = t.worldId, mode       = t.mode,
-                    chapId     = t.chapId,  difficulty = t.difficulty,
-                    dbKey      = t.dbKey,   items      = items,
+                    seriesName = t.seriesName,
+                    mode       = t.mode,
+                    chapId     = t.chapId,
+                    difficulty = t.difficulty,
+                    dbKey      = t.dbKey,
+                    items      = items,
                 }
                 print(string.format("[HazeHub] OK %s: %d Items", label, cnt))
             else
@@ -872,9 +988,10 @@ local function FindBestChapter(itemName)
     for dbKey, data in pairs(AF.RewardDatabase) do
         if data.items and data.items[itemName] then
             local r = data.items[itemName].dropRate or 0
-            if data.mode == "Story" or data.mode == "Ranger" then
-                local wantedDiff = data.mode == "Ranger" and "Nightmare" or AF.SelDifficulty
-                if data.difficulty ~= wantedDiff then continue end
+            if data.mode == "Ranger" then
+                if data.difficulty ~= "Nightmare" then continue end
+            elseif data.mode == "Story" then
+                if data.difficulty ~= AF.SelDifficulty then continue end
             end
             if r > bestRate then
                 bestRate = r; bestKey = dbKey; bestData = data
@@ -885,7 +1002,7 @@ local function FindBestChapter(itemName)
     if bestData then
         print(string.format("[HazeHub] Best '%s': [%s/%s] %s (%.1f%%)",
             itemName, bestData.mode, bestData.difficulty, bestData.chapId, bestRate))
-        return bestData.chapId, bestData.world, bestData.mode, bestData.difficulty, bestRate
+        return bestData.chapId, bestData.seriesName, bestData.mode, bestData.difficulty, bestRate
     end
 
     warn("[HazeHub] '" .. itemName .. "' nicht in DB.")
@@ -1032,12 +1149,12 @@ local function SyncInventoryWithQueue()
                     end
                     if CheckIsLobby() and AF.Running then
                         task.wait(2)
-                        local nextChapId, nextWorldId, nextMode, nextDiff = FindBestChapter(nextQ.item)
+                        local nextChapId, nextSeries, nextMode, nextDiff = FindBestChapter(nextQ.item)
                         if nextChapId then
                             SetStatus(string.format("🚀 Starte: [%s/%s] %s",
                                 nextMode or "?", nextDiff or "?", nextChapId), D.Cyan)
                             task.spawn(function()
-                                FireStartRoom(nextMode, nextWorldId, nextChapId, nextDiff)
+                                FireStartRoom(nextMode, nextSeries, nextChapId, nextDiff)
                             end)
                             return true
                         end
@@ -1080,23 +1197,16 @@ local function LobbyActionLoop(delaySeconds)
         return false
     end
 
-    local chapId, worldId, mode, difficulty = FindBestChapter(q.item)
+    local chapId, seriesName, mode, difficulty = FindBestChapter(q.item)
 
     if not chapId then
-        for _, data in pairs(AF.RewardDatabase) do
-            worldId = data.world; mode = data.mode
-            chapId  = data.chapId or data.dbKey:match("^([^:]+)")
-            difficulty = data.difficulty or "Normal"
-            break
-        end
-    end
-    if not chapId then
-        local ids = HS.GetWorldIds()
-        if #ids > 0 then
-            local wd = HS.GetWorldData()[ids[1]] or {}
-            if wd.story and #wd.story > 0 then
-                worldId = ids[1]; mode = "Story"
-                chapId  = wd.story[1]; difficulty = "Normal"
+        -- Fallback: erste verfügbare Serie und Kapitel
+        for _, sid in ipairs(AF.SeriesIds) do
+            local sd = AF.WorldData[sid] or {}
+            if sd.story and #sd.story > 0 then
+                seriesName = sid; mode = "Story"
+                chapId = sd.story[1]; difficulty = "Normal"
+                break
             end
         end
     end
@@ -1109,7 +1219,7 @@ local function LobbyActionLoop(delaySeconds)
         mode or "?", difficulty or "?", q.item, chapId), D.Cyan)
 
     task.spawn(function()
-        FireStartRoom(mode, worldId, chapId, difficulty)
+        FireStartRoom(mode, seriesName, chapId, difficulty)
     end)
 
     local ws = os.clock()
@@ -1214,12 +1324,9 @@ _G.AddToQueue            = AddOrUpdateQueueItem
 
 -- ============================================================
 --  _G.HazeHUB – GLOBALE FUNKTIONS-TABELLE
---  Alle spielbezogenen Logik-Funktionen sind hier definiert.
---  Das Hauptskript ruft diese über Callbacks auf.
 -- ============================================================
 if not _G.HazeHUB then _G.HazeHUB = {} end
 
--- Basis-Farm-Steuerung
 _G.HazeHUB.StartFarm = function()
     HS.StartFarmFromMain()
 end
@@ -1232,53 +1339,19 @@ _G.HazeHUB.IsFarmActive = function()
     return AF.Active
 end
 
--- Welt-/Kapitel-Daten für UI-Buttons im Hauptskript
-_G.HazeHUB.UpdateWorldData = function()
-    -- Triggert einen Neuaufbau der Weltliste (via HS.GetWorldData)
-    -- Das Hauptskript-UI kann RebuildWorldList() aufrufen.
-    if _G.HazeHUB.RebuildWorldList then
-        pcall(_G.HazeHUB.RebuildWorldList)
-    end
-    print("[HazeHub] UpdateWorldData aufgerufen.")
-end
-
--- Raum erstellen & starten (wird vom "Create & Start Room"-Button aufgerufen)
-_G.HazeHUB.CreateAndStartRoom = function(mode, worldId, chapId, difficulty)
+_G.HazeHUB.CreateAndStartRoom = function(mode, seriesName, chapId, difficulty)
     if not chapId then
         warn("[HazeHub] CreateAndStartRoom: kein chapId!"); return false
     end
-    return FireStartRoom(mode, worldId, chapId, difficulty or "Normal")
+    return FireStartRoom(mode, seriesName, chapId, difficulty or "Normal")
 end
 
--- Raid starten (für Raid-Buttons im Game-Tab)
-_G.HazeHUB.StartRaid = function(raidEntry)
-    -- raidEntry = { chapId, mode, difficulty } aus dem Raid-Dropdown
-    if type(raidEntry) == "table" then
-        FireStartRoom(raidEntry.mode, nil, raidEntry.chapId, raidEntry.difficulty)
-    else
-        -- Fallback: ersten gefundenen Raid starten
-        if #AF.RaidChapters > 0 then
-            local r = AF.RaidChapters[1]
-            FireStartRoom(r.mode, nil, r.chapId, r.difficulty)
-        else
-            warn("[HazeHub] StartRaid: keine Raid-Kapitel verfügbar!")
-        end
-    end
-end
-
-_G.HazeHUB.StopRaid = function()
-    StopFarm()
-end
-
--- Challenge starten
 _G.HazeHUB.StartChallenge = function()
     return StartChallengeRoom()
 end
 
--- Challenge-Items scannen und zurückgeben
 _G.HazeHUB.ScanChallengeItems = function()
     local items = ScanChallengeItems()
-    -- Status-Update im UI
     pcall(function()
         if AF.UI.Lbl.ChallengeStatus then
             AF.UI.Lbl.ChallengeStatus.Text = string.format(
@@ -1289,32 +1362,32 @@ _G.HazeHUB.ScanChallengeItems = function()
     return items
 end
 
--- Raid-Kapitel scannen und Dropdown aktualisieren
-_G.HazeHUB.ScanAndUpdateRaids = function()
-    local raids = ScanRaidChapters()
-    -- Callback zum Aktualisieren des Raid-Dropdowns im UI
-    if _G.HazeHUB.RebuildRaidDropdown then
-        pcall(_G.HazeHUB.RebuildRaidDropdown, raids)
-    end
-    return raids
-end
-
--- Raid-Kapitel für externes UI abrufen
-_G.HazeHUB.GetRaidChapters = function()
-    return AF.RaidChapters
-end
-
--- Challenge-Items für externes UI abrufen
 _G.HazeHUB.GetChallengeItems = function()
     return AF.ChallengeItems
 end
 
--- Schwierigkeit setzen (für Callbacks aus dem Hauptskript)
 _G.HazeHUB.SetDifficulty = function(diff)
     AF.SelDifficulty = diff or "Normal"
 end
 
--- DB neu scannen (Callback für Rescan-Button)
+-- Universal Refresh: alle Kategorien gleichzeitig scannen
+_G.HazeHUB.RefreshAllWorlds = function(onProgress)
+    task.spawn(function()
+        pcall(function() if onProgress then onProgress("🔄 Scanne ChapterLevels...") end end)
+        local ok = ScanChapterLevels()
+        if ok then
+            SaveWorldCache()
+            pcall(function() if onProgress then onProgress("✅ Welten aktualisiert – " .. #AF.SeriesIds .. " Serien gefunden.") end end)
+        else
+            pcall(function() if onProgress then onProgress("⚠ Scan fehlgeschlagen – prüfe ChapterLevels-Pfad.") end end)
+        end
+        -- UI-Rebuild via Callback
+        if _G.HazeHUB.RebuildSeriesUI then
+            pcall(_G.HazeHUB.RebuildSeriesUI)
+        end
+    end)
+end
+
 _G.HazeHUB.TriggerRescan = function(onProgress)
     if AF.Scanning then
         if onProgress then pcall(onProgress, "⚠ Scan läuft bereits!") end
@@ -1326,12 +1399,10 @@ _G.HazeHUB.TriggerRescan = function(onProgress)
     end)
 end
 
--- Status-Update Callback (für Hauptskript-Labels)
 _G.HazeHUB.UpdateStatus = function(text, color)
     SetStatus(text, color)
 end
 
--- Queue-Steuerung
 _G.HazeHUB.AddToQueue = AddOrUpdateQueueItem
 _G.HazeHUB.ClearQueue = function()
     AF.Queue = {}; SaveQueueFile(); pcall(UpdateQueueUI)
@@ -1340,13 +1411,20 @@ _G.HazeHUB.GetQueue = function()
     return AF.Queue
 end
 
--- Hilfsfunktionen
 _G.HazeHUB.IsInLobby = function()
     return CheckIsLobby()
 end
 
 _G.HazeHUB.TeleportToLobby = function(keepFarm)
     DoTeleportToLobby(keepFarm)
+end
+
+_G.HazeHUB.GetWorldData = function()
+    return AF.WorldData
+end
+
+_G.HazeHUB.GetSeriesIds = function()
+    return AF.SeriesIds
 end
 
 -- ============================================================
@@ -1463,54 +1541,125 @@ task.spawn(function()
 end)
 
 -- ============================================================
---  WELT & KAPITEL AUSWAHL (mit Raid als eigenem Modus)
+--  WELT & KAPITEL AUSWAHL (Verschachtelt: Modus → Serie → Kapitel)
 -- ============================================================
 local worldCard = Card(Container); Pad(worldCard, 10,10,10,10); VList(worldCard, 8)
 SecLbl(worldCard, "🌍  WELT & KAPITEL AUSWAHL")
 
--- Modus-Auswahl: Story | Ranger | Calamity | Raid | Challenge
+-- Modus-Auswahl
 local modeSelRow = Instance.new("Frame", worldCard)
 modeSelRow.Size = UDim2.new(1,0,0,28); modeSelRow.BackgroundTransparency = 1; HList(modeSelRow, 4)
 
 local WORLD_MODI = {
-    { id = "Story",     label = "📖",  color = D.Cyan   },
-    { id = "Ranger",    label = "🏹",  color = D.Green  },
-    { id = "Calamity",  label = "⚡",  color = D.Orange },
-    { id = "Raid",      label = "⚔",  color = D.Purple },
-    { id = "Challenge", label = "🏆",  color = D.Gold   },
+    { id = "Story",     label = "📖 Story",    color = D.Cyan   },
+    { id = "Ranger",    label = "🏹 Ranger",   color = D.Green  },
+    { id = "Calamity",  label = "⚡ Calamity", color = D.Orange },
+    { id = "Raid",      label = "⚔ Raid",     color = D.Purple },
+    { id = "Challenge", label = "🏆 Challenge",color = D.Gold   },
 }
 
-local SelWorldMode = "Story"
-local SelWorldId   = nil
-local SelChapId    = nil
-local SelRaidEntry = nil  -- aktuelle Raid-Auswahl { chapId, mode, difficulty }
+-- Auswahl-State
+local SelMode       = "Story"
+local SelSeries     = nil
+local SelChapId     = nil
+local SelDiff       = "Normal"
+local SelRaidEntry  = nil
 
-AF.UI.Btn.WorldModeBtns = {}
+AF.UI.Btn.ModeBtns   = {}
+AF.UI.Btn.SeriesBtns = {}
+AF.UI.Btn.ChapBtns   = {}
+AF.UI.Btn.DiffBtns   = {}
 
--- Schwierigkeit für Story/Calamity
-local SelDiffForRoom = "Normal"
-
--- Kapitel-Buttons Rebuild
-local ChapBtnsFrame = Instance.new("Frame", worldCard)
-ChapBtnsFrame.Size = UDim2.new(1,0,0,0); ChapBtnsFrame.AutomaticSize = Enum.AutomaticSize.Y
-ChapBtnsFrame.BackgroundTransparency = 1; HList(ChapBtnsFrame, 4)
-
+-- Status-Label
 local WorldStatusLbl = Instance.new("TextLabel", worldCard)
 WorldStatusLbl.Size = UDim2.new(1,0,0,16); WorldStatusLbl.BackgroundTransparency = 1
-WorldStatusLbl.Text = "Modus → Welt → Kapitel wählen"
+WorldStatusLbl.Text = "Modus → Serie → Kapitel wählen"
 WorldStatusLbl.TextColor3 = D.TextLow; WorldStatusLbl.TextSize = 10
 WorldStatusLbl.Font = Enum.Font.GothamSemibold
 WorldStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
 
-local function HighlightWorldMode(activeId)
+-- ── Ebene 2: Serie ──────────────────────────────────────────
+local seriesCard = Card(worldCard); Pad(seriesCard, 8,8,8,8); VList(seriesCard, 5)
+seriesCard.Visible = false
+SecLbl(seriesCard, "SERIE WÄHLEN")
+local seriesScrollF = Instance.new("ScrollingFrame", seriesCard)
+seriesScrollF.Size = UDim2.new(1,0,0,90)
+seriesScrollF.CanvasSize = UDim2.new(0,0,0,0)
+seriesScrollF.AutomaticCanvasSize = Enum.AutomaticSize.Y
+seriesScrollF.ScrollBarThickness = 4
+seriesScrollF.ScrollBarImageColor3 = D.CyanDim
+seriesScrollF.BackgroundTransparency = 1
+seriesScrollF.BorderSizePixel = 0
+HList(seriesScrollF, 4)
+
+-- ── Ebene 3: Kapitel/Stage ──────────────────────────────────
+local chapCard = Card(worldCard); Pad(chapCard, 8,8,8,8); VList(chapCard, 5)
+chapCard.Visible = false
+SecLbl(chapCard, "KAPITEL / STAGE WÄHLEN")
+local chapScrollF = Instance.new("ScrollingFrame", chapCard)
+chapScrollF.Size = UDim2.new(1,0,0,80)
+chapScrollF.CanvasSize = UDim2.new(0,0,0,0)
+chapScrollF.AutomaticCanvasSize = Enum.AutomaticSize.Y
+chapScrollF.ScrollBarThickness = 4
+chapScrollF.ScrollBarImageColor3 = D.CyanDim
+chapScrollF.BackgroundTransparency = 1
+chapScrollF.BorderSizePixel = 0
+HList(chapScrollF, 4)
+
+-- ── Schwierigkeit ────────────────────────────────────────────
+local diffCard = Card(worldCard); Pad(diffCard, 8,8,8,8); VList(diffCard, 5)
+diffCard.Visible = false
+SecLbl(diffCard, "SCHWIERIGKEIT")
+local diffRow = Instance.new("Frame", diffCard)
+diffRow.Size = UDim2.new(1,0,0,26); diffRow.BackgroundTransparency = 1; HList(diffRow, 6)
+local DC = { Normal = D.Green, Hard = D.Orange, Nightmare = D.Red }
+
+local function SetDiffHighlight(active)
+    for diff, btn in pairs(AF.UI.Btn.DiffBtns) do
+        local isActive = (diff == active)
+        local col = DC[diff] or D.TextMid
+        if isActive then
+            Tw(btn, { BackgroundColor3 = Color3.fromRGB(
+                math.clamp(math.floor(col.R*255*0.28),0,255),
+                math.clamp(math.floor(col.G*255*0.28),0,255),
+                math.clamp(math.floor(col.B*255*0.28),0,255)) })
+            local s = btn:FindFirstChildOfClass("UIStroke"); if s then s.Transparency = 0 end
+        else
+            Tw(btn, { BackgroundColor3 = D.CardHover })
+            local s = btn:FindFirstChildOfClass("UIStroke"); if s then s.Transparency = 0.4 end
+        end
+    end
+end
+
+for _, diff in ipairs({ "Normal", "Hard", "Nightmare" }) do
+    local db = Instance.new("TextButton", diffRow)
+    db.Size = UDim2.new(0.32,0,0,24); db.BackgroundColor3 = D.CardHover
+    db.Text = diff; db.TextColor3 = DC[diff]; db.TextSize = 10
+    db.Font = Enum.Font.GothamBold; db.AutoButtonColor = false; db.BorderSizePixel = 0
+    Corner(db, 7); Stroke(db, DC[diff], 1, 0.4)
+    AF.UI.Btn.DiffBtns[diff] = db
+    local capDiff = diff
+    db.MouseButton1Click:Connect(function()
+        -- Ranger ist immer gesperrt; Raid-JJK ist gesperrt
+        if SelMode == "Ranger" then return end
+        if SelMode == "Raid" and SelRaidEntry and SelRaidEntry.mode == "JJKRaid" then return end
+        SelDiff = capDiff
+        AF.SelDifficulty = capDiff
+        SetDiffHighlight(capDiff)
+    end)
+end
+SetDiffHighlight("Normal")
+
+-- ── Highlight-Funktionen ─────────────────────────────────────
+local function HighlightMode(activeId)
     for _, def in ipairs(WORLD_MODI) do
-        local mb = AF.UI.Btn.WorldModeBtns[def.id]; if not mb then continue end
+        local mb = AF.UI.Btn.ModeBtns[def.id]; if not mb then continue end
         if def.id == activeId then
             local c = def.color
-            local rr = math.clamp(math.floor(c.R*255*0.22),0,255)
-            local rg = math.clamp(math.floor(c.G*255*0.22),0,255)
-            local rb = math.clamp(math.floor(c.B*255*0.22),0,255)
-            Tw(mb, { BackgroundColor3 = Color3.fromRGB(rr,rg,rb) })
+            Tw(mb, { BackgroundColor3 = Color3.fromRGB(
+                math.clamp(math.floor(c.R*255*0.22),0,255),
+                math.clamp(math.floor(c.G*255*0.22),0,255),
+                math.clamp(math.floor(c.B*255*0.22),0,255)) })
             Stroke(mb, c, 1.5, 0)
         else
             Tw(mb, { BackgroundColor3 = D.CardHover })
@@ -1519,79 +1668,183 @@ local function HighlightWorldMode(activeId)
     end
 end
 
--- Raid-Dropdown: wird dynamisch mit Raid-Kapitel-Daten befüllt
-local RaidDropCard = Card(worldCard); Pad(RaidDropCard, 8,8,8,8); VList(RaidDropCard, 5)
-RaidDropCard.Visible = false
-SecLbl(RaidDropCard, "RAID KAPITEL WÄHLEN")
+local function HighlightSeries(activeId)
+    for sid, btn in pairs(AF.UI.Btn.SeriesBtns) do
+        if sid == activeId then
+            Tw(btn, { BackgroundColor3 = D.RowSelect }); Stroke(btn, D.Accent, 1.5, 0)
+        else
+            Tw(btn, { BackgroundColor3 = D.CardHover }); Stroke(btn, D.Border, 1, 0.4)
+        end
+    end
+end
 
-local RaidScrollFrame = Instance.new("ScrollingFrame", RaidDropCard)
-RaidScrollFrame.Size = UDim2.new(1,0,0,120)
-RaidScrollFrame.CanvasSize = UDim2.new(0,0,0,0)
-RaidScrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-RaidScrollFrame.ScrollBarThickness = 4
-RaidScrollFrame.ScrollBarImageColor3 = D.CyanDim
-RaidScrollFrame.BackgroundTransparency = 1
-RaidScrollFrame.BorderSizePixel = 0
-VList(RaidScrollFrame, 3)
+local function HighlightChap(activeId)
+    for cid, btn in pairs(AF.UI.Btn.ChapBtns) do
+        if cid == activeId then
+            Tw(btn, { BackgroundColor3 = D.RowSelect }); Stroke(btn, D.Accent, 1.5, 0)
+        else
+            Tw(btn, { BackgroundColor3 = D.CardHover }); Stroke(btn, D.Border, 1, 0.4)
+        end
+    end
+end
 
-local RaidStatusLbl = MkLbl(RaidDropCard, "⏳ Raid-Kapitel laden...", 10, D.Yellow)
-RaidStatusLbl.Size = UDim2.new(1,0,0,18)
-
-local function RebuildRaidDropdown(raidList)
-    raidList = raidList or AF.RaidChapters
-    for _, v in pairs(RaidScrollFrame:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
+-- ── Kapitel-Buttons aufbauen ──────────────────────────────────
+local function RebuildChapButtons(chapList, isRaidList)
+    for _, v in pairs(chapScrollF:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
+    AF.UI.Btn.ChapBtns = {}
+    SelChapId   = nil
     SelRaidEntry = nil
 
-    if not raidList or #raidList == 0 then
-        RaidStatusLbl.Text = "⚠ Keine Raid-Kapitel gefunden – Rescan klicken"
-        RaidStatusLbl.TextColor3 = D.Orange
+    if not chapList or #chapList == 0 then
+        chapCard.Visible = false
+        diffCard.Visible = false
         return
     end
 
-    RaidStatusLbl.Text = string.format("✅ %d Raid-Kapitel verfügbar", #raidList)
-    RaidStatusLbl.TextColor3 = D.Green
+    chapCard.Visible = true
 
-    for _, entry in ipairs(raidList) do
-        local capEntry = entry
-        local btn = Instance.new("TextButton", RaidScrollFrame)
-        btn.Size = UDim2.new(1,0,0,28); btn.BackgroundColor3 = D.CardHover
-        btn.Text = entry.label; btn.TextColor3 = D.TextHi
-        btn.TextSize = 11; btn.Font = Enum.Font.GothamSemibold
-        btn.AutoButtonColor = false; btn.BorderSizePixel = 0
-        Corner(btn, 7); Stroke(btn, D.Border, 1, 0.4)
+    for _, entry in ipairs(chapList) do
+        local isRaid  = isRaidList == true
+        local chapId  = isRaid and entry.chapId or entry
+        local capEntry = isRaid and entry or nil
+        local num = chapId:match("(%d+)$") or chapId
 
-        btn.MouseButton1Click:Connect(function()
+        -- Für Raids: Schwierigkeits-Suffix anzeigen
+        local labelText = isRaid
+            and string.format("[%s] %s", entry.difficulty or "?", num)
+            or  "Kap. " .. num
+
+        local cb = Instance.new("TextButton", chapScrollF)
+        cb.Size = UDim2.new(0,52,0,26); cb.BackgroundColor3 = D.CardHover
+        cb.Text = labelText; cb.TextColor3 = D.TextHi
+        cb.TextSize = 10; cb.Font = Enum.Font.GothamBold
+        cb.AutoButtonColor = false; cb.BorderSizePixel = 0; Corner(cb,7); Stroke(cb,D.Border,1,0.4)
+
+        local capChapId = chapId
+        AF.UI.Btn.ChapBtns[chapId] = cb
+
+        cb.MouseButton1Click:Connect(function()
+            SelChapId    = capChapId
             SelRaidEntry = capEntry
-            SelChapId    = capEntry.chapId
-            -- Alle Buttons zurücksetzen
-            for _, ch in pairs(RaidScrollFrame:GetChildren()) do
-                if ch:IsA("TextButton") then
-                    Tw(ch, { BackgroundColor3 = D.CardHover }); Stroke(ch, D.Border, 1, 0.4)
+
+            HighlightChap(capChapId)
+
+            -- Schwierigkeit basierend auf Modus und Raid-Typ einrichten
+            if SelMode == "Ranger" then
+                -- Gesperrt auf Nightmare
+                SelDiff = "Nightmare"
+                SetDiffHighlight("Nightmare")
+                diffCard.Visible = true
+                for diff, btn in pairs(AF.UI.Btn.DiffBtns) do
+                    btn.TextColor3 = (diff == "Nightmare") and DC["Nightmare"] or D.TextLow
+                    btn.TextTransparency = (diff == "Nightmare") and 0 or 0.6
                 end
+            elseif isRaid then
+                if capEntry and capEntry.mode == "JJKRaid" then
+                    -- JJK-Raid: Normal gesperrt
+                    SelDiff = "Normal"
+                    SetDiffHighlight("Normal")
+                    diffCard.Visible = true
+                    for diff, btn in pairs(AF.UI.Btn.DiffBtns) do
+                        btn.TextColor3 = (diff == "Normal") and DC["Normal"] or D.TextLow
+                        btn.TextTransparency = (diff == "Normal") and 0 or 0.6
+                    end
+                else
+                    -- Esper-Raid: Normal/Nightmare wählbar
+                    SelDiff = capEntry and capEntry.difficulty or "Normal"
+                    SetDiffHighlight(SelDiff)
+                    diffCard.Visible = true
+                    for diff, btn in pairs(AF.UI.Btn.DiffBtns) do
+                        local allowed = (diff == "Normal" or diff == "Nightmare")
+                        btn.TextColor3 = allowed and DC[diff] or D.TextLow
+                        btn.TextTransparency = allowed and 0 or 0.6
+                    end
+                end
+            else
+                -- Story / Calamity: alle Schwierigkeiten
+                diffCard.Visible = true
+                for _, btn in pairs(AF.UI.Btn.DiffBtns) do
+                    btn.TextTransparency = 0
+                    local s = btn:FindFirstChildOfClass("UIStroke"); if s then s.Transparency = 0.4 end
+                end
+                SetDiffHighlight(SelDiff)
             end
-            Tw(btn, { BackgroundColor3 = D.RowSelect }); Stroke(btn, D.Purple, 1.5, 0)
-            WorldStatusLbl.Text = string.format(
-                "⚔ %s  [%s]", capEntry.label, capEntry.difficulty)
-            WorldStatusLbl.TextColor3 = D.Purple
+
+            -- Status aktualisieren
+            WorldStatusLbl.Text = string.format("✅  [%s] %s → %s  (Schwierigkeit wählen)",
+                SelMode, SelSeries or "?", capChapId)
+            WorldStatusLbl.TextColor3 = D.Cyan
         end)
     end
 end
 
--- Callback für _G.HazeHUB
-_G.HazeHUB.RebuildRaidDropdown = RebuildRaidDropdown
+-- ── Serien-Buttons aufbauen ───────────────────────────────────
+local function RebuildSeriesButtons()
+    for _, v in pairs(seriesScrollF:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
+    AF.UI.Btn.SeriesBtns = {}
+    SelSeries  = nil
+    SelChapId  = nil
+    chapCard.Visible = false
+    diffCard.Visible = false
 
--- Scan-Button für Raids
-local raidScanBtn = NeonBtn(RaidDropCard, "🔄 Raids neu scannen", D.Purple, 28)
-raidScanBtn.MouseButton1Click:Connect(function()
-    RaidStatusLbl.Text = "⏳ Scanne Raid-Kapitel..."
-    RaidStatusLbl.TextColor3 = D.Yellow
-    task.spawn(function()
-        local raids = ScanRaidChapters()
-        RebuildRaidDropdown(raids)
-    end)
-end)
+    -- Bestimme, welche Serien für den aktuellen Modus vorhanden sind
+    local availableSeries = {}
+    for _, sid in ipairs(AF.SeriesIds) do
+        local sd = AF.WorldData[sid] or {}
+        local hasContent = false
+        if SelMode == "Story"    and sd.story    and #sd.story    > 0 then hasContent = true end
+        if SelMode == "Ranger"   and sd.ranger   and #sd.ranger   > 0 then hasContent = true end
+        if SelMode == "Calamity" and sd.calamity and #sd.calamity > 0 then hasContent = true end
+        if SelMode == "Raid"     and sd.raids    and #sd.raids    > 0 then hasContent = true end
+        if hasContent then table.insert(availableSeries, sid) end
+    end
 
--- Challenge-Sektion
+    if #availableSeries == 0 then
+        local noLbl = Instance.new("TextLabel", seriesScrollF)
+        noLbl.Size = UDim2.new(1,0,0,24); noLbl.BackgroundTransparency = 1
+        noLbl.Text = "⚠ Keine Serien – Welten neu scannen!"
+        noLbl.TextColor3 = D.Orange; noLbl.TextSize = 10; noLbl.Font = Enum.Font.GothamSemibold
+        return
+    end
+
+    for _, sid in ipairs(availableSeries) do
+        local capSid = sid
+        local sb = Instance.new("TextButton", seriesScrollF)
+        sb.Size = UDim2.new(0,70,0,26); sb.BackgroundColor3 = D.CardHover
+        sb.Text = sid; sb.TextColor3 = D.TextHi
+        sb.TextSize = 10; sb.Font = Enum.Font.GothamBold
+        sb.AutoButtonColor = false; sb.BorderSizePixel = 0; Corner(sb,7); Stroke(sb,D.Border,1,0.4)
+        sb.TextTruncate = Enum.TextTruncate.AtEnd
+
+        AF.UI.Btn.SeriesBtns[sid] = sb
+
+        sb.MouseButton1Click:Connect(function()
+            SelSeries = capSid
+            HighlightSeries(capSid)
+
+            WorldStatusLbl.Text = string.format("📂  Serie: %s [%s] → Kapitel wählen", capSid, SelMode)
+            WorldStatusLbl.TextColor3 = D.Yellow
+
+            local sd = AF.WorldData[capSid] or {}
+            if SelMode == "Story" then
+                RebuildChapButtons(sd.story, false)
+            elseif SelMode == "Ranger" then
+                RebuildChapButtons(sd.ranger, false)
+            elseif SelMode == "Calamity" then
+                RebuildChapButtons(sd.calamity, false)
+            elseif SelMode == "Raid" then
+                RebuildChapButtons(sd.raids, true)
+            end
+        end)
+    end
+end
+
+-- Globaler Callback für UI-Rebuild nach Scan
+_G.HazeHUB.RebuildSeriesUI = function()
+    RebuildSeriesButtons()
+end
+
+-- ── Challenge-Karte ──────────────────────────────────────────
 local ChallengeCard = Card(worldCard); Pad(ChallengeCard, 8,8,8,8); VList(ChallengeCard, 6)
 ChallengeCard.Visible = false
 SecLbl(ChallengeCard, "🏆  CHALLENGE")
@@ -1663,238 +1916,125 @@ startChallengeBtn.MouseButton1Click:Connect(function()
     AF.UI.Lbl.ChallengeStatus.TextColor3 = D.Green
 end)
 
--- Welt-Buttons (Story/Ranger)
-local worldBtnFrame = Instance.new("Frame", worldCard)
-worldBtnFrame.Size = UDim2.new(1,0,0,0); worldBtnFrame.AutomaticSize = Enum.AutomaticSize.Y
-worldBtnFrame.BackgroundTransparency = 1; VList(worldBtnFrame, 4)
-
-local function RebuildChapBtns(chapList)
-    for _, v in pairs(ChapBtnsFrame:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
-    if not chapList or #chapList == 0 then return end
-    SelChapId = chapList[1]
-    for i, cid in ipairs(chapList) do
-        local num = cid:match("(%d+)$") or tostring(i)
-        local cb = Instance.new("TextButton", ChapBtnsFrame)
-        cb.Size = UDim2.new(0,34,0,26); cb.BackgroundColor3 = D.CardHover; cb.Text = num
-        cb.TextColor3 = D.TextHi; cb.TextSize = 12; cb.Font = Enum.Font.GothamBold
-        cb.AutoButtonColor = false; cb.BorderSizePixel = 0; Corner(cb,7); Stroke(cb,D.Border,1,0.4)
-        local capCid = cid
-        cb.MouseButton1Click:Connect(function()
-            SelChapId = capCid
-            for _, b in pairs(ChapBtnsFrame:GetChildren()) do
-                if b:IsA("TextButton") then
-                    Tw(b,{BackgroundColor3=D.CardHover}); local s=b:FindFirstChildOfClass("UIStroke"); if s then s.Color=D.Border; s.Transparency=0.4 end
-                end
-            end
-            Tw(cb,{BackgroundColor3=D.RowSelect}); Stroke(cb,D.Accent,1.5,0)
-            WorldStatusLbl.Text = string.format("⚙ %s [%s] → %s", SelWorldId or "?", SelWorldMode, capCid)
-            WorldStatusLbl.TextColor3 = D.Cyan
-        end)
-    end
-    if ChapBtnsFrame:FindFirstChildOfClass("TextButton") then
-        local first = ChapBtnsFrame:FindFirstChildOfClass("TextButton")
-        Tw(first,{BackgroundColor3=D.RowSelect}); Stroke(first,D.Accent,1.5,0)
-    end
-end
-
-local function RebuildWorldBtns()
-    for _, v in pairs(worldBtnFrame:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
-    for _, v in pairs(ChapBtnsFrame:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
-
-    local worldData = HS.GetWorldData()
-    local worldIds  = HS.GetWorldIds()
-
-    if SelWorldMode == "Calamity" then
-        SelWorldId = "Calamity"
-        local wd = worldData["Calamity"] or {}
-        RebuildChapBtns(wd.story or {})
-        WorldStatusLbl.Text = "⚡ Calamity → Kapitel wählen"
-        WorldStatusLbl.TextColor3 = D.Orange
-        return
-    end
-
-    if SelWorldMode == "Raid" then
-        -- Raid-Modus: kein Welt-Button, direkt Dropdown
-        WorldStatusLbl.Text = "⚔ Raid → Kapitel aus Liste wählen"
-        WorldStatusLbl.TextColor3 = D.Purple
-        -- Raids scannen falls noch leer
-        if #AF.RaidChapters == 0 then
-            task.spawn(function()
-                local raids = ScanRaidChapters()
-                RebuildRaidDropdown(raids)
-            end)
-        else
-            RebuildRaidDropdown(AF.RaidChapters)
-        end
-        return
-    end
-
-    if SelWorldMode == "Challenge" then
-        WorldStatusLbl.Text = "🏆 Challenge → Items scannen & Raum starten"
-        WorldStatusLbl.TextColor3 = D.Gold
-        return
-    end
-
-    -- Story / Ranger
-    for _, wid in ipairs(worldIds) do
-        local wd = worldData[wid] or {}
-        local hasCaps = (SelWorldMode == "Ranger" and #(wd.ranger or {}) > 0)
-                     or (SelWorldMode == "Story"  and #(wd.story  or {}) > 0)
-        if not hasCaps then continue end
-
-        local wb = Instance.new("TextButton", worldBtnFrame)
-        wb.Size = UDim2.new(1,0,0,30); wb.BackgroundColor3 = D.CardHover
-        wb.Text = "🌍  " .. wid
-        wb.TextColor3 = D.TextHi; wb.TextSize = 11; wb.Font = Enum.Font.GothamSemibold
-        wb.AutoButtonColor = false; wb.BorderSizePixel = 0; Corner(wb,7); Stroke(wb,D.Border,1,0.4)
-
-        local capWid = wid
-        wb.MouseButton1Click:Connect(function()
-            SelWorldId = capWid
-            for _, b in pairs(worldBtnFrame:GetChildren()) do
-                if b:IsA("TextButton") then
-                    Tw(b,{BackgroundColor3=D.CardHover}); local s=b:FindFirstChildOfClass("UIStroke"); if s then s.Color=D.Border; s.Transparency=0.4 end
-                end
-            end
-            Tw(wb,{BackgroundColor3=D.RowSelect}); Stroke(wb,D.Accent,1.5,0)
-            WorldStatusLbl.Text = "🌍 " .. capWid .. " [" .. SelWorldMode .. "] → Kapitel wählen"
-            WorldStatusLbl.TextColor3 = D.Yellow
-            local chapList = (SelWorldMode == "Ranger") and wd.ranger or wd.story
-            RebuildChapBtns(chapList or {})
-        end)
-    end
-end
-
--- Schwierigkeit (für Story & Raid)
-local diffCard2 = Card(worldCard); Pad(diffCard2, 8,8,8,8); VList(diffCard2, 5)
-SecLbl(diffCard2, "SCHWIERIGKEIT")
-local diffRow2 = Instance.new("Frame", diffCard2)
-diffRow2.Size = UDim2.new(1,0,0,26); diffRow2.BackgroundTransparency = 1; HList(diffRow2, 6)
-local DC2 = { Normal = D.Green, Hard = D.Orange, Nightmare = D.Red }
-local diffBtns2 = {}
-local function SetDiffHighlight2(active)
-    for diff, btn in pairs(diffBtns2) do
-        local isActive = (diff == active)
-        local col = DC2[diff] or D.TextMid
-        if isActive then
-            Tw(btn, { BackgroundColor3 = Color3.fromRGB(
-                math.clamp(math.floor(col.R*255*0.28),0,255),
-                math.clamp(math.floor(col.G*255*0.28),0,255),
-                math.clamp(math.floor(col.B*255*0.28),0,255)) })
-            local s = btn:FindFirstChildOfClass("UIStroke"); if s then s.Transparency = 0 end
-        else
-            Tw(btn, { BackgroundColor3 = D.CardHover })
-            local s = btn:FindFirstChildOfClass("UIStroke"); if s then s.Transparency = 0.4 end
-        end
-    end
-end
-for _, diff in ipairs({ "Normal", "Hard", "Nightmare" }) do
-    local db = Instance.new("TextButton", diffRow2)
-    db.Size = UDim2.new(0.32,0,0,24); db.BackgroundColor3 = D.CardHover
-    db.Text = diff; db.TextColor3 = DC2[diff]; db.TextSize = 10
-    db.Font = Enum.Font.GothamBold; db.AutoButtonColor = false; db.BorderSizePixel = 0
-    Corner(db, 7); Stroke(db, DC2[diff], 1, 0.4)
-    diffBtns2[diff] = db
-    local capDiff = diff
-    db.MouseButton1Click:Connect(function()
-        SelDiffForRoom = capDiff
-        AF.SelDifficulty = capDiff
-        SetDiffHighlight2(capDiff)
-    end)
-end
-SetDiffHighlight2("Normal")
-
--- Modus-Buttons bauen
+-- ── Modus-Buttons bauen ───────────────────────────────────────
 for _, def in ipairs(WORLD_MODI) do
     local mb = Instance.new("TextButton", modeSelRow)
-    mb.Size = UDim2.new(0,32,0,26); mb.BackgroundColor3 = D.CardHover
+    mb.Size = UDim2.new(0,62,0,26); mb.BackgroundColor3 = D.CardHover
     mb.Text = def.label; mb.TextColor3 = def.color
-    mb.TextSize = 13; mb.Font = Enum.Font.GothamBold
+    mb.TextSize = 10; mb.Font = Enum.Font.GothamBold
     mb.AutoButtonColor = false; mb.BorderSizePixel = 0; Corner(mb, 7); Stroke(mb, D.Border, 1, 0.5)
+    mb.TextTruncate = Enum.TextTruncate.AtEnd
+
     local capId = def.id
     mb.MouseButton1Click:Connect(function()
-        SelWorldMode = capId
-        HighlightWorldMode(capId)
-        -- Sichtbarkeit der Sektionen steuern
-        RaidDropCard.Visible    = (capId == "Raid")
-        ChallengeCard.Visible   = (capId == "Challenge")
-        worldBtnFrame.Visible   = (capId ~= "Raid" and capId ~= "Challenge")
-        ChapBtnsFrame.Visible   = (capId ~= "Raid" and capId ~= "Challenge")
-        diffCard2.Visible       = (capId == "Story" or capId == "Raid" or capId == "Calamity")
-        RebuildWorldBtns()
-    end)
-    AF.UI.Btn.WorldModeBtns[def.id] = mb
-end
-HighlightWorldMode("Story")
-worldBtnFrame.Visible  = true
-ChapBtnsFrame.Visible  = true
-RaidDropCard.Visible   = false
-ChallengeCard.Visible  = false
-diffCard2.Visible      = true
+        SelMode = capId
+        SelSeries  = nil
+        SelChapId  = nil
+        SelRaidEntry = nil
+        HighlightMode(capId)
 
--- Create & Start Room Button
+        -- Sektions-Sichtbarkeit
+        seriesCard.Visible  = (capId ~= "Challenge")
+        chapCard.Visible    = false
+        diffCard.Visible    = false
+        ChallengeCard.Visible = (capId == "Challenge")
+
+        if capId ~= "Challenge" then
+            RebuildSeriesButtons()
+            WorldStatusLbl.Text = "Serie wählen…"
+            WorldStatusLbl.TextColor3 = D.TextMid
+        else
+            WorldStatusLbl.Text = "🏆 Challenge → Items scannen & Raum starten"
+            WorldStatusLbl.TextColor3 = D.Gold
+        end
+    end)
+    AF.UI.Btn.ModeBtns[def.id] = mb
+end
+
+HighlightMode("Story")
+seriesCard.Visible   = false
+chapCard.Visible     = false
+diffCard.Visible     = false
+ChallengeCard.Visible = false
+
+-- ── Create & Start Room Button ────────────────────────────────
 local createStartBtn = NeonBtn(worldCard, "🚀  Create & Start Room", D.Green, 36)
 createStartBtn.MouseButton1Click:Connect(function()
-    -- Callback an _G.HazeHUB
-    if SelWorldMode == "Raid" then
+    if SelMode == "Challenge" then
+        createStartBtn.Text = "⏳ Challenge startet..."
+        task.spawn(function() StartChallengeRoom() end)
+    elseif SelMode == "Raid" then
         if not SelRaidEntry then
-            WorldStatusLbl.Text = "⚠ Raid-Kapitel wählen!"
-            WorldStatusLbl.TextColor3 = D.Red
-            return
+            WorldStatusLbl.Text = "⚠ Raid-Kapitel wählen!"; WorldStatusLbl.TextColor3 = D.Red; return
         end
-        WorldStatusLbl.Text = "⚙ Raid: " .. SelRaidEntry.label
+        WorldStatusLbl.Text = "⚙ Raid: " .. (SelRaidEntry.label or SelRaidEntry.chapId)
         WorldStatusLbl.TextColor3 = D.Yellow
         createStartBtn.Text = "⏳ Gestartet..."
+        local capEntry = SelRaidEntry
         task.spawn(function()
-            _G.HazeHUB.StartRaid(SelRaidEntry)
-        end)
-    elseif SelWorldMode == "Challenge" then
-        createStartBtn.Text = "⏳ Challenge startet..."
-        task.spawn(function()
-            StartChallengeRoom()
+            FireStartRoom(capEntry.mode, SelSeries, capEntry.chapId, capEntry.difficulty)
         end)
     else
         if not SelChapId then
-            WorldStatusLbl.Text = "⚠ Welt & Kapitel wählen!"
-            WorldStatusLbl.TextColor3 = D.Red
-            return
+            WorldStatusLbl.Text = "⚠ Serie & Kapitel wählen!"; WorldStatusLbl.TextColor3 = D.Red; return
         end
         WorldStatusLbl.Text = "⚙ Erstelle: " .. SelChapId
         WorldStatusLbl.TextColor3 = D.Yellow
         createStartBtn.Text = "⏳ Gestartet..."
-        local capMode  = SelWorldMode
-        local capWorld = SelWorldId
-        local capChap  = SelChapId
-        local capDiff  = SelDiffForRoom
+        local capMode   = SelMode
+        local capSeries = SelSeries
+        local capChap   = SelChapId
+        local capDiff   = SelDiff
         task.spawn(function()
-            FireStartRoom(capMode, capWorld, capChap, capDiff)
+            FireStartRoom(capMode, capSeries, capChap, capDiff)
         end)
     end
     task.delay(2.5, function()
         pcall(function()
             createStartBtn.Text = "🚀  Create & Start Room"
-            if SelChapId or SelRaidEntry then
-                WorldStatusLbl.Text = "✅ Gestartet"
-                WorldStatusLbl.TextColor3 = D.Green
-            end
+            WorldStatusLbl.Text = "✅ Gestartet"
+            WorldStatusLbl.TextColor3 = D.Green
         end)
     end)
 end)
 
--- SCHWIERIGKEIT (Autofarm-interne Auswahl)
-local diffCard = Card(Container); Pad(diffCard, 8,10,8,10); VList(diffCard, 6)
-SecLbl(diffCard, "⚙  SCHWIERIGKEIT (Farm-DB)")
-MkLbl(diffCard, "Ranger: immer Nightmare  |  Raids/Calamity: automatisch", 9, D.TextLow).Size = UDim2.new(1,0,0,14)
+-- ── Welten neu scannen (Universal Refresh) ────────────────────
+local refreshBtn = NeonBtn(worldCard, "🔄 Welten neu scannen", D.CyanDim, 28)
+refreshBtn.MouseButton1Click:Connect(function()
+    refreshBtn.Text = "⏳ Scanne…"
+    refreshBtn.TextColor3 = D.Yellow
+    WorldStatusLbl.Text = "🔄 Scanne ChapterLevels…"
+    WorldStatusLbl.TextColor3 = D.Yellow
+    task.spawn(function()
+        local ok = ScanChapterLevels()
+        if ok then
+            SaveWorldCache()
+            RebuildSeriesButtons()
+            WorldStatusLbl.Text = string.format("✅ %d Serien gefunden", #AF.SeriesIds)
+            WorldStatusLbl.TextColor3 = D.Green
+        else
+            WorldStatusLbl.Text = "⚠ Scan fehlgeschlagen!"
+            WorldStatusLbl.TextColor3 = D.Red
+        end
+        refreshBtn.Text = "🔄 Welten neu scannen"
+        refreshBtn.TextColor3 = Color3.new(1,1,1)
+    end)
+end)
 
-local diffRow = Instance.new("Frame", diffCard)
-diffRow.Size = UDim2.new(1,0,0,28); diffRow.BackgroundTransparency = 1; HList(diffRow, 6)
+-- ── Farm-Schwierigkeit ────────────────────────────────────────
+local diffFarmCard = Card(Container); Pad(diffFarmCard, 8,10,8,10); VList(diffFarmCard, 6)
+SecLbl(diffFarmCard, "⚙  FARM-SCHWIERIGKEIT (Reward-DB)")
+MkLbl(diffFarmCard, "Ranger: immer Nightmare  |  Raids/Calamity: automatisch", 9, D.TextLow).Size = UDim2.new(1,0,0,14)
 
-local DIFF_COLORS = { Normal = D.Green, Hard = D.Orange, Nightmare = D.Red }
-local diffBtns = {}
-local function SetDiffHighlight(active)
-    for diff, btn in pairs(diffBtns) do
+local diffFarmRow = Instance.new("Frame", diffFarmCard)
+diffFarmRow.Size = UDim2.new(1,0,0,28); diffFarmRow.BackgroundTransparency = 1; HList(diffFarmRow, 6)
+
+local DIFF_FARM_COLORS = { Normal = D.Green, Hard = D.Orange, Nightmare = D.Red }
+local diffFarmBtns = {}
+local function SetDiffFarmHighlight(active)
+    for diff, btn in pairs(diffFarmBtns) do
         local isActive = (diff == active)
-        local col = DIFF_COLORS[diff] or D.TextMid
+        local col = DIFF_FARM_COLORS[diff] or D.TextMid
         if isActive then
             Tw(btn, { BackgroundColor3 = Color3.fromRGB(
                 math.clamp(math.floor(col.R*255*0.28),0,255),
@@ -1908,22 +2048,22 @@ local function SetDiffHighlight(active)
     end
 end
 for _, diff in ipairs({ "Normal", "Hard", "Nightmare" }) do
-    local col = DIFF_COLORS[diff]
-    local db  = Instance.new("TextButton", diffRow)
+    local col = DIFF_FARM_COLORS[diff]
+    local db  = Instance.new("TextButton", diffFarmRow)
     db.Size = UDim2.new(0.32,0,0,26); db.BackgroundColor3 = D.CardHover
     db.Text = diff; db.TextColor3 = col; db.TextSize = 10
     db.Font = Enum.Font.GothamBold; db.AutoButtonColor = false; db.BorderSizePixel = 0
     Corner(db, 7); Stroke(db, col, 1, 0.4)
-    diffBtns[diff] = db
+    diffFarmBtns[diff] = db
     local capDiff = diff
     db.MouseButton1Click:Connect(function()
         AF.SelDifficulty = capDiff
-        SetDiffHighlight(capDiff)
+        SetDiffFarmHighlight(capDiff)
     end)
 end
-SetDiffHighlight("Normal")
+SetDiffFarmHighlight("Normal")
 
--- SCAN-PROGRESS
+-- ── Scan-Progress ─────────────────────────────────────────────
 local spCard = Card(Container); Pad(spCard, 8,10,8,10); VList(spCard, 6)
 SecLbl(spCard, "🔄  DATENBANK SCAN")
 
@@ -1950,6 +2090,13 @@ forceBtn.MouseLeave:Connect(function() Tw(forceBtn, {BackgroundColor3 = Color3.f
 forceBtn.MouseButton1Click:Connect(function()
     if AF.Scanning then SetStatus("Scan läuft!", D.Yellow); return end
     if not CheckIsLobby() then SetStatus("Nur in Lobby scannen!", D.Orange); return end
+    -- Sicherstellen, dass WorldData vorhanden
+    if #AF.SeriesIds == 0 then
+        SetStatus("Scanne zuerst Welten…", D.Yellow)
+        local ok = ScanChapterLevels()
+        if not ok then SetStatus("Welt-Scan fehlgeschlagen!", D.Red); return end
+        SaveWorldCache()
+    end
     ClearDB()
     forceBtn.Text = "Scannt..."; forceBtn.TextColor3 = D.Yellow
     AF.UI.Fr.ScanBar.Visible = true
@@ -1962,7 +2109,7 @@ forceBtn.MouseButton1Click:Connect(function()
     end)
 end)
 
--- QUEUE-KARTE
+-- ── Queue-Karte ───────────────────────────────────────────────
 local qCard = Card(Container); Pad(qCard, 10,10,10,10); VList(qCard, 8)
 SecLbl(qCard, "AUTO-FARM QUEUE")
 
@@ -2080,6 +2227,11 @@ HS.TriggerResetRescan = function(onProgress)
         end
     end)
     task.spawn(function()
+        -- Welten neu laden falls nötig
+        if #AF.SeriesIds == 0 then
+            local ok = ScanChapterLevels()
+            if ok then SaveWorldCache() end
+        end
         local function combined(msg)
             pcall(function() AF.UI.Lbl.ScanProgress.Text = msg end)
             if onProgress then pcall(function() onProgress(msg) end) end
@@ -2100,14 +2252,26 @@ HS.TriggerResetRescan = function(onProgress)
     end)
 end
 
--- _G.HazeHUB Aliase für Hauptskript-Callbacks
-_G.HazeHUB.TriggerRescan    = HS.TriggerResetRescan
-_G.HazeHUB.ScanAllRewards   = function(cb) return ScanAllRewards(cb or function() end) end
-_G.HazeHUB.FireStartRoom    = FireStartRoom
+-- _G.HazeHUB Aliase
+_G.HazeHUB.TriggerRescan   = HS.TriggerResetRescan
+_G.HazeHUB.ScanAllRewards  = function(cb) return ScanAllRewards(cb or function() end) end
+_G.HazeHUB.FireStartRoom   = FireStartRoom
+_G.HazeHUB.ScanChapterLevels = ScanChapterLevels
 
 -- ============================================================
 --  STARTUP
 -- ============================================================
+-- 1) WorldCache laden
+local cacheLoaded = LoadWorldCache()
+if not cacheLoaded then
+    -- Sofort live scannen
+    task.spawn(function()
+        local ok = ScanChapterLevels()
+        if ok then SaveWorldCache() end
+    end)
+end
+
+-- 2) Reward-DB laden
 if isfile and isfile(DB_FILE) then
     if LoadDB() then
         local c = DBCount()
@@ -2126,17 +2290,7 @@ else
     AF.UI.Lbl.ScanProgress.TextColor3 = D.TextLow
 end
 
--- Raid-Kapitel beim Start scannen (im Hintergrund)
-task.spawn(function()
-    task.wait(3)
-    local raids = ScanRaidChapters()
-    if #raids > 0 then
-        RebuildRaidDropdown(raids)
-        print(string.format("[HazeHub] Startup: %d Raid-Kapitel gescannt.", #raids))
-    end
-end)
-
--- Challenge-Items beim Start scannen (im Hintergrund)
+-- 3) Challenge-Items im Hintergrund scannen
 task.spawn(function()
     task.wait(4)
     local items = ScanChallengeItems()
@@ -2144,6 +2298,16 @@ task.spawn(function()
         RebuildChallengeItemsUI(items)
         print(string.format("[HazeHub] Startup: %d Challenge-Items gescannt.", #items))
     end
+end)
+
+-- 4) Serien-UI nach kurzem Delay aufbauen (WorldData sollte bereit sein)
+task.spawn(function()
+    task.wait(2)
+    -- Story als Standard-Modus anzeigen
+    SelMode = "Story"
+    HighlightMode("Story")
+    seriesCard.Visible = true
+    RebuildSeriesButtons()
 end)
 
 task.spawn(TryAutoResume)
@@ -2155,5 +2319,5 @@ pcall(function()
     end
 end)
 
-print(string.format("[HazeHub] autofarm.lua v%s geladen | Spieler: %s | DB: %d Einträge",
-    VERSION, LP.Name, DBCount()))
+print(string.format("[HazeHub] autofarm.lua v%s geladen | Spieler: %s | DB: %d Einträge | Serien: %d",
+    VERSION, LP.Name, DBCount(), #AF.SeriesIds))
