@@ -1,22 +1,20 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB – trait.lua  v2.6.0
+--  HazeHUB – trait.lua  v2.7.0
 --
---  v2.6.0 (Neue Features):
---    ✓ Kategorisierte Trait-Übersicht nach Rarity
---      (Mythic/Legendary/Epic/Rare/Uncommon/Common)
---      mit farblicher Kennzeichnung + Checkbox-Auswahl
---    ✓ Multi-Stat-Selection: Pro Stat ein eigenes Ziel-Rating
---      wählen (z. B. Attack ≥ S, Range ≥ A+)
---    ✓ AND-Verknüpfung: AutoStatRerollLoop stoppt nur wenn
---      ALLE ausgewählten Stats ihr jeweiliges Zielrating erfüllen
---    ✓ _G.HazeHUB.StatLoopActive = false als Abbruch-Sicherung
---      (reagiert auf Tab-Wechsel und Stop-Button sofort)
---  v2.5.1:
---    ✓ Mobile: quadratische Unit-Kacheln, kompakteres Padding
---    ✓ Unit-/Rating-Scroll: CanvasSize via Layout, ElasticBehavior Never
+--  v2.7.0 (Fixes & Verbesserungen):
+--    ✓ UI: Trait-Buttons ohne separaten Text darunter –
+--      Trait-Name selbst ist der klickbare Button
+--    ✓ UI: Kompakteres UIGridLayout für Trait-Kategorien
+--      ("Alle auswählen"-Checkbox dezent oben rechts)
+--    ✓ Stop-Condition: Vergleichstabelle (C-=1 … O+=17)
+--      Loop stoppt bei aktuellem Rating >= niedrigstem Ziel
+--    ✓ Multi-Stat AND: Stoppt erst wenn ALLE Stats erfüllt
+--    ✓ Anti-Skip: task.wait(0.15) + Double-Check vor Remote
+--    ✓ Remote Security: UnitTag aus Collection[Name].Tag.Value
+--    ✓ _G.HazeHUB.StatLoopActive als Abbruch-Sicherung
 -- ╚══════════════════════════════════════════════════════════╝
 
-local VERSION = "2.6.0"
+local VERSION = "2.7.0"
 
 -- ── Warten bis HazeShared bereit ──────────────────────────────
 local _w = 0
@@ -43,7 +41,7 @@ local TraitPage     = HS.TraitPage
 local TraitSticky   = HS.TraitSticky
 local TraitPageRoot = HS.TraitPageRoot
 
--- UIScale-Bereinigung (verhindert Doppelskalierung auf Mobile)
+-- UIScale-Bereinigung
 pcall(function()
     local root = TraitPageRoot or TraitPage
     for _, d in ipairs(root:GetDescendants()) do
@@ -89,7 +87,6 @@ local RARITY_COLORS = {
     Divine    = Color3.fromRGB(0,   220, 255),
 }
 
--- Rarity-Sortierreihenfolge (höchste zuerst)
 local RARITY_ORDER = {
     Divine = 0, Mythic = 1, Legendary = 2, Epic = 3, Rare = 4, Uncommon = 5, Common = 6
 }
@@ -108,24 +105,29 @@ local TR = {
     Units                = {},
     Rolling              = false,
     RollCount            = 0,
-    -- Ziel-Traits: Set von Trait-Namen
     TargetTraits         = {},
-    -- Stat-Reroll State
     StatRolling          = false,
     StatRollCount        = 0,
     SelectedStatMode     = "All",
-    -- ★ v2.6.0: Pro-Stat Ziel-Rating (AND-Verknüpfung)
-    -- StatTargetRatings[statName] = "S+" (das Mindestring für diesen Stat)
-    -- Nur Stats mit einem Eintrag werden geprüft
+    -- v2.7.0: Pro-Stat Ziel-Rating – Vergleich >= (besser oder gleich stoppt ebenfalls)
     StatTargetRatings    = {},
     UI = { Lbl = {}, Fr = {}, Btn = {}, Inp = {} },
 }
 
--- Globale Abbruch-Sicherung
 if not _G.HazeHUB then _G.HazeHUB = {} end
 _G.HazeHUB.StatLoopActive = false
 
--- ── Alle Ratings (vollständige Liste) ─────────────────────────
+-- ── Vollständige Rating-Liste mit numerischen Werten ──────────
+-- v2.7.0 FIX: Vergleichstabelle für >= Stop-Condition
+local STAT_RANK_VALUE = {
+    ["C-"]  = 1,  ["C"]   = 2,  ["C+"]  = 3,
+    ["B-"]  = 4,  ["B"]   = 5,  ["B+"]  = 6,
+    ["A-"]  = 7,  ["A"]   = 8,  ["A+"]  = 9,
+    ["S-"]  = 10, ["S"]   = 11, ["S+"]  = 12,
+    ["SS"]  = 13, ["SSS"] = 14,
+    ["O-"]  = 15, ["O"]   = 16, ["O+"]  = 17,
+}
+
 local ALL_RATINGS = {
     "C-", "C", "C+",
     "B-", "B", "B+",
@@ -135,44 +137,37 @@ local ALL_RATINGS = {
     "O-", "O", "O+",
 }
 
--- ── STAT_RANK_VALUE ───────────────────────────────────────────
-local STAT_RANK_VALUE = {
-    ["C-"]  = 0,  ["C"]   = 1,  ["C+"]  = 2,
-    ["B-"]  = 3,  ["B"]   = 4,  ["B+"]  = 5,
-    ["A-"]  = 6,  ["A"]   = 7,  ["A+"]  = 8,
-    ["S-"]  = 9,  ["S"]   = 10, ["S+"]  = 11,
-    ["SS"]  = 12, ["SSS"] = 13,
-    ["O-"]  = 14, ["O"]   = 15, ["O+"]  = 16,
-}
-
 local function ToRankString(v)
     local s = tostring(v or ""):upper():gsub("%s+", ""):gsub("PLUS", "+")
     if STAT_RANK_VALUE[s] then return s end
     local n = tonumber(v)
     if n then
-        if n >= 16 then return "O+"  end
-        if n >= 15 then return "O"   end
-        if n >= 14 then return "O-"  end
-        if n >= 13 then return "SSS" end
-        if n >= 12 then return "SS"  end
-        if n >= 11 then return "S+"  end
-        if n >= 10 then return "S"   end
-        if n >= 9  then return "S-"  end
-        if n >= 8  then return "A+"  end
-        if n >= 7  then return "A"   end
-        if n >= 6  then return "A-"  end
-        if n >= 5  then return "B+"  end
-        if n >= 4  then return "B"   end
-        if n >= 3  then return "B-"  end
-        if n >= 2  then return "C+"  end
-        if n >= 1  then return "C"   end
+        if n >= 17 then return "O+"  end
+        if n >= 16 then return "O"   end
+        if n >= 15 then return "O-"  end
+        if n >= 14 then return "SSS" end
+        if n >= 13 then return "SS"  end
+        if n >= 12 then return "S+"  end
+        if n >= 11 then return "S"   end
+        if n >= 10 then return "S-"  end
+        if n >= 9  then return "A+"  end
+        if n >= 8  then return "A"   end
+        if n >= 7  then return "A-"  end
+        if n >= 6  then return "B+"  end
+        if n >= 5  then return "B"   end
+        if n >= 4  then return "B-"  end
+        if n >= 3  then return "C+"  end
+        if n >= 2  then return "C"   end
         return "C-"
     end
     return "C-"
 end
 
+-- v2.7.0 FIX: >= Vergleich (stoppt auch wenn BESSER als Ziel)
 local function RankAtLeast(rank, target)
-    return (STAT_RANK_VALUE[ToRankString(rank)] or 0) >= (STAT_RANK_VALUE[ToRankString(target)] or 0)
+    local rv = STAT_RANK_VALUE[ToRankString(rank)]   or 1
+    local tv = STAT_RANK_VALUE[ToRankString(target)] or 1
+    return rv >= tv
 end
 
 -- ── Stat-Namen ────────────────────────────────────────────────
@@ -190,8 +185,6 @@ local STAT_SEND_NAMES = {
     RangePotential          = "Range",
     SpeedPotential          = "Speed",
 }
-
--- Kurze Anzeigenamen für die UI
 local STAT_DISPLAY_NAMES = {
     AttackCooldownPotential = "Cooldown",
     DamagePotential         = "Damage",
@@ -231,10 +224,10 @@ local function SetStatus(txt, col)
     pcall(function() TR.UI.Lbl.Status.Text = txt; TR.UI.Lbl.Status.TextColor3 = col or D.TextMid end)
 end
 
--- ── Sticky-Leiste (Reroll-Counter) ────────────────────────────
+-- ── Sticky-Leiste ─────────────────────────────────────────────
 local stickyParent = TraitSticky or TraitPage
 if not TraitSticky then
-    warn("[HazeHub-Trait] TraitSticky fehlt – Reroll-Leiste im Scrollbereich (Hub updaten).")
+    warn("[HazeHub-Trait] TraitSticky fehlt – Reroll-Leiste im Scrollbereich.")
 end
 
 local stickyCard = Card(stickyParent, 26); Pad(stickyCard, 4, 10, 4, 10)
@@ -307,9 +300,7 @@ unitGrid.SortOrder             = Enum.SortOrder.LayoutOrder
 local function refreshUnitScrollCanvas()
     local y = unitGrid.AbsoluteContentSize.Y
     unitListFrame.Size = UDim2.new(1, 0, 0, y)
-    pcall(function()
-        unitScroll.CanvasSize = UDim2.new(0, 0, 0, y + 6)
-    end)
+    pcall(function() unitScroll.CanvasSize = UDim2.new(0, 0, 0, y + 6) end)
 end
 unitGrid:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refreshUnitScrollCanvas)
 
@@ -332,14 +323,14 @@ local unitEmptyLbl = MkLbl(unitListFrame, "Keine Einheiten gefunden.", 11, D.Tex
 unitEmptyLbl.Size = UDim2.new(1, 0, 0, 26)
 TR.UI.Lbl.UnitEmpty = unitEmptyLbl
 
--- ── Aktueller Trait & Ziel-Traits (2-spaltig) ───────────────────────
+-- ── 2-spaltige Zeile: Aktueller Trait + Ziel-Traits ──────────
 local traitsRow = Instance.new("Frame", TraitPage)
 traitsRow.Size = UDim2.new(1, 0, 0, 0)
 traitsRow.AutomaticSize = Enum.AutomaticSize.Y
 traitsRow.BackgroundTransparency = 1
 HList(traitsRow, 8)
 
--- Aktueller Trait (Live) - linke Spalte
+-- ── Linke Spalte: Aktueller Trait ─────────────────────────────
 local currentTraitCard = Card(traitsRow)
 currentTraitCard.Size = UDim2.new(0.5, -4, 0, 0)
 currentTraitCard.AutomaticSize = Enum.AutomaticSize.Y
@@ -488,10 +479,10 @@ local function GetUnitTagValue(unitName)
     local uName = unitName and tostring(unitName) or nil
     if not uName or uName == "" then return nil end
     local ok, tagValue = pcall(function()
-        local playerData  = RS:WaitForChild("Player_Data", 10)
+        local playerData    = RS:WaitForChild("Player_Data", 10)
         local accountFolder = playerData:WaitForChild(LP.Name, 10)
-        local collection  = accountFolder:WaitForChild("Collection", 5)
-        local unitFolder  = collection:FindFirstChild(uName)
+        local collection    = accountFolder:WaitForChild("Collection", 5)
+        local unitFolder    = collection:FindFirstChild(uName)
         if not unitFolder then
             for _, ch in ipairs(collection:GetChildren()) do
                 if string.lower(ch.Name) == string.lower(uName) then
@@ -513,20 +504,20 @@ end
 
 local function UpdateLiveTraitDisplay()
     if not TR.SelectedUnit then
-        TR.UI.Lbl.UnitName.Text       = "Keine Einheit gewählt"
-        TR.UI.Lbl.UnitName.TextColor3 = D.TextLow
-        TR.UI.Lbl.MainTrait.Text      = "–"
+        TR.UI.Lbl.UnitName.Text        = "Keine Einheit gewählt"
+        TR.UI.Lbl.UnitName.TextColor3  = D.TextLow
+        TR.UI.Lbl.MainTrait.Text       = "–"
         TR.UI.Lbl.MainTrait.TextColor3 = D.TextLow
-        TR.UI.Lbl.SubTrait.Text       = "–"
-        TR.UI.Lbl.SubTrait.TextColor3 = D.TextLow
-        TR.UI.Lbl.MainRarity.Text     = ""
-        TR.UI.Lbl.SubRarity.Text      = ""
-        TR.UI.Lbl.TraitInfo.Text      = ""
+        TR.UI.Lbl.SubTrait.Text        = "–"
+        TR.UI.Lbl.SubTrait.TextColor3  = D.TextLow
+        TR.UI.Lbl.MainRarity.Text      = ""
+        TR.UI.Lbl.SubRarity.Text       = ""
+        TR.UI.Lbl.TraitInfo.Text       = ""
         return
     end
     local main, sub = GetUnitTraits(TR.SelectedUnit)
     main = main or "–"; sub = sub or "–"
-    TR.UI.Lbl.UnitName.Text = "✔ " .. (TR.SelectedUnitName or TR.SelectedUnit.Name)
+    TR.UI.Lbl.UnitName.Text       = "✔ " .. (TR.SelectedUnitName or TR.SelectedUnit.Name)
     TR.UI.Lbl.UnitName.TextColor3 = D.Cyan
     TR.UI.Lbl.MainTrait.Text      = main
     TR.UI.Lbl.SubTrait.Text       = sub
@@ -819,17 +810,18 @@ task.spawn(function()
     end
 end)
 
--- ╔══════════════════════════════════════════════════════════╓
---  ★ ZIEL-TRAITS – Kategorisierte Übersicht nach Rarity (v2.6.0)
+-- ╔══════════════════════════════════════════════════════════╗
+--  ★ ZIEL-TRAITS – v2.7.0 Kompakt-UI ohne doppelten Text
+--    Trait-Name selbst ist der klickbare Button (kein
+--    separates Text-Element darunter)
 -- ╚══════════════════════════════════════════════════════════╝
 local targetCard = Card(traitsRow)
 targetCard.Size = UDim2.new(0.5, -4, 0, 0)
 targetCard.AutomaticSize = Enum.AutomaticSize.Y
 Pad(targetCard, 10, 12, 10, 12)
-VList(targetCard, 8)
+VList(targetCard, 6)
 SecLbl(targetCard, "🎯 ZIEL-TRAITS (nach Rarity)")
 
--- Zeige ausgewählte Traits kompakt
 TR.UI.Lbl.SelectedTraitsInfo = MkLbl(targetCard, "Keine Ziel-Traits gewählt", 10, D.TextLow)
 TR.UI.Lbl.SelectedTraitsInfo.Size = UDim2.new(1, 0, 0, 14)
 
@@ -858,22 +850,22 @@ local function UpdateTargetTraitInfo()
     end
 end
 
--- Rarity-Filter-Buttons oben
+-- Rarity-Filter (kompakte Tabs)
 local rarFilterRow = Instance.new("Frame", targetCard)
 rarFilterRow.Size                  = UDim2.new(1, 0, 0, 0)
 rarFilterRow.AutomaticSize         = Enum.AutomaticSize.Y
 rarFilterRow.BackgroundTransparency = 1
 local rarFilterGrid = Instance.new("UIGridLayout", rarFilterRow)
-rarFilterGrid.CellSize    = UDim2.new(0.33, -3, 0, 22)
+rarFilterGrid.CellSize    = UDim2.new(0.33, -3, 0, 20)
 rarFilterGrid.CellPadding = UDim2.new(0, 3, 0, 3)
 
-local ActiveRarityFilter = nil   -- nil = alle anzeigen
+local ActiveRarityFilter = nil
 
--- Suchfeld für Trait-Namen
-local traitSearchOuter, traitSearchBox = MkInput(targetCard, "Trait suchen...", 26)
-traitSearchOuter.Size = UDim2.new(1, 0, 0, 26)
+-- Suchfeld
+local traitSearchOuter, traitSearchBox = MkInput(targetCard, "Trait suchen...", 24)
+traitSearchOuter.Size = UDim2.new(1, 0, 0, 24)
 
--- Trait-Liste (scrollbar, nach Rarity gruppiert)
+-- Scrollbereich für Traits
 local traitListScroll = Instance.new("ScrollingFrame", targetCard)
 traitListScroll.Name                  = "TraitListScroll"
 traitListScroll.Size                  = UDim2.new(1, 0, 0, 220)
@@ -891,7 +883,7 @@ local traitListFrame = Instance.new("Frame", traitListScroll)
 traitListFrame.Size                  = UDim2.new(1, 0, 0, 0)
 traitListFrame.BackgroundTransparency = 1
 traitListFrame.AutomaticSize         = Enum.AutomaticSize.Y
-VList(traitListFrame, 3)
+VList(traitListFrame, 2)
 
 local function refreshTraitScrollCanvas()
     local traitLayout = traitListFrame:FindFirstChildOfClass("UIListLayout")
@@ -902,27 +894,28 @@ traitListFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
     task.defer(refreshTraitScrollCanvas)
 end)
 
--- Baut die kategorisierte Trait-Liste auf
+-- ── v2.7.0: Kompakt-Trait-Liste ───────────────────────────────
+-- Jede Rarity-Gruppe hat einen Header mit "Alle"-Button rechts.
+-- Die Trait-Buttons sind kompakt (kein doppelter Text):
+--   [✓] TraitName                    (ein TextButton, kein Label darunter)
 local function RebuildTraitTargetList(searchFilter)
     for _, v in pairs(traitListFrame:GetChildren()) do
         if v:IsA("Frame") or v:IsA("TextLabel") then v:Destroy() end
     end
     searchFilter = (searchFilter or ""):lower()
 
-    -- Traits nach Rarity gruppieren
     local grouped = {}
     for traitName, data in pairs(AllTraits) do
         local rarity = (data and data.Rarity) or "Common"
-        -- Filter anwenden
         if ActiveRarityFilter and rarity ~= ActiveRarityFilter then continue end
         if searchFilter ~= "" and not traitName:lower():find(searchFilter, 1, true) then continue end
         if not grouped[rarity] then grouped[rarity] = {} end
         table.insert(grouped[rarity], traitName)
     end
 
-    -- Rarity-Gruppen sortieren und anzeigen
     local rarityOrder = { "Divine", "Mythic", "Legendary", "Epic", "Rare", "Uncommon", "Common" }
     local totalShown = 0
+
     for _, rarity in ipairs(rarityOrder) do
         local traits = grouped[rarity]
         if not traits or #traits == 0 then continue end
@@ -931,52 +924,56 @@ local function RebuildTraitTargetList(searchFilter)
 
         local col = GetRarityColor(rarity)
 
-        -- Rarity-Header mit "Alle wählen" Button
+        -- ── Rarity-Header-Zeile (kompakt, 20px hoch) ──────────
         local headerRow = Instance.new("Frame", traitListFrame)
-        headerRow.Size                  = UDim2.new(1, 0, 0, 22)
+        headerRow.Size                  = UDim2.new(1, 0, 0, 20)
         headerRow.BackgroundColor3      = D.CardHover
-        headerRow.BackgroundTransparency = 0.45
+        headerRow.BackgroundTransparency = 0.4
         headerRow.BorderSizePixel       = 0
-        Corner(headerRow, 5)
-        Stroke(headerRow, col, 1, 0.3)
+        Corner(headerRow, 4)
+        Stroke(headerRow, col, 1, 0.25)
 
+        -- Farb-Akzent links
         local acLine = Instance.new("Frame", headerRow)
         acLine.Size             = UDim2.new(0, 3, 1, 0)
         acLine.BackgroundColor3 = col
         acLine.BorderSizePixel  = 0
         Corner(acLine, 2)
 
-        local headerLbl = Instance.new("TextLabel", headerRow)
-        headerLbl.Position               = UDim2.new(0, 8, 0, 0)
-        headerLbl.Size                   = UDim2.new(0.6, 0, 1, 0)
-        headerLbl.BackgroundTransparency = 1
-        headerLbl.Text                   = rarity .. "  (" .. #traits .. ")"
-        headerLbl.TextColor3             = col
-        headerLbl.TextSize               = 11
-        headerLbl.Font                   = Enum.Font.GothamBold
-        headerLbl.TextXAlignment         = Enum.TextXAlignment.Left
-
-        -- Zähler ausgewählter Traits dieser Rarity
+        -- Rarity-Label
         local selCount = 0
         for _, tn in ipairs(traits) do if TR.TargetTraits[tn] then selCount = selCount + 1 end end
 
+        local headerLbl = Instance.new("TextLabel", headerRow)
+        headerLbl.Position               = UDim2.new(0, 8, 0, 0)
+        headerLbl.Size                   = UDim2.new(0.58, 0, 1, 0)
+        headerLbl.BackgroundTransparency = 1
+        headerLbl.Text                   = rarity .. " (" .. #traits .. ")"
+        headerLbl.TextColor3             = col
+        headerLbl.TextSize               = 10
+        headerLbl.Font                   = Enum.Font.GothamBold
+        headerLbl.TextXAlignment         = Enum.TextXAlignment.Left
+
+        -- "Alle" Toggle-Button – dezent oben rechts in Header
         local selectAllBtn = Instance.new("TextButton", headerRow)
-        selectAllBtn.Position               = UDim2.new(0.62, 0, 0.1, 0)
-        selectAllBtn.Size                   = UDim2.new(0.37, -4, 0.8, 0)
-        selectAllBtn.BackgroundColor3       = D.TabActive
-        selectAllBtn.BackgroundTransparency = 0.3
-        selectAllBtn.Text                   = selCount == #traits and "✕ Alle ab" or "✓ Alle"
-        selectAllBtn.TextColor3             = selCount == #traits and D.Red or col
-        selectAllBtn.TextSize               = 9
+        selectAllBtn.Position               = UDim2.new(0.6, 0, 0.1, 0)
+        selectAllBtn.Size                   = UDim2.new(0.39, -4, 0.8, 0)
+        selectAllBtn.BackgroundColor3       = selCount == #traits and col or D.CardHover
+        selectAllBtn.BackgroundTransparency = selCount == #traits and 0.25 or 0.5
+        selectAllBtn.Text                   = selCount == #traits and "✕ alle" or "✓ alle"
+        selectAllBtn.TextColor3             = selCount == #traits and col or D.TextLow
+        selectAllBtn.TextSize               = 8
         selectAllBtn.Font                   = Enum.Font.GothamBold
         selectAllBtn.AutoButtonColor        = false
         selectAllBtn.BorderSizePixel        = 0
-        Corner(selectAllBtn, 5)
+        Corner(selectAllBtn, 4)
+        if selCount == #traits then
+            Stroke(selectAllBtn, col, 1, 0.3)
+        end
 
         local capRarity = rarity
         local capTraits = traits
         selectAllBtn.MouseButton1Click:Connect(function()
-            -- Toggle: alle auswählen oder alle abwählen
             local allSelected = true
             for _, tn in ipairs(capTraits) do
                 if not TR.TargetTraits[tn] then allSelected = false; break end
@@ -989,49 +986,41 @@ local function RebuildTraitTargetList(searchFilter)
             RebuildTraitTargetList(traitSearchBox.Text)
         end)
 
-        -- Einzelne Trait-Checkboxen (kompakt, 2 pro Zeile via Grid)
+        -- ── Trait-Button-Grid (3 pro Zeile, kompakt 18px) ─────
+        -- v2.7.0 FIX: Kein separater Text unterhalb des Buttons.
+        -- Der Button selbst zeigt [✓] TraitName in einer Zeile.
         local gridFrame = Instance.new("Frame", traitListFrame)
         gridFrame.Size                  = UDim2.new(1, 0, 0, 0)
         gridFrame.AutomaticSize         = Enum.AutomaticSize.Y
         gridFrame.BackgroundTransparency = 1
 
         local grid = Instance.new("UIGridLayout", gridFrame)
-        grid.CellSize    = UDim2.new(0.5, -3, 0, 22)
-        grid.CellPadding = UDim2.new(0, 3, 0, 3)
+        grid.CellSize    = UDim2.new(0.333, -3, 0, 18)
+        grid.CellPadding = UDim2.new(0, 3, 0, 2)
         grid.SortOrder   = Enum.SortOrder.LayoutOrder
 
         for _, traitName in ipairs(traits) do
             local isSelected = TR.TargetTraits[traitName] == true
+
+            -- v2.7.0: Ein einziger TextButton mit Trait-Name – KEIN separates Label darunter
             local btn = Instance.new("TextButton", gridFrame)
             btn.BackgroundColor3      = isSelected and col or D.CardHover
-            btn.BackgroundTransparency = isSelected and 0.2 or 0.55
+            btn.BackgroundTransparency = isSelected and 0.2 or 0.6
             btn.BorderSizePixel       = 0
-            Corner(btn, 5)
-            Stroke(btn, isSelected and col or D.Border, 1, isSelected and 0 or 0.5)
-
-            local checkMark = Instance.new("TextLabel", btn)
-            checkMark.Size                  = UDim2.new(0, 12, 0, 12)
-            checkMark.Position              = UDim2.new(0, 3, 0.5, -6)
-            checkMark.BackgroundTransparency = 1
-            checkMark.Text                  = isSelected and "✓" or ""
-            checkMark.TextColor3            = col
-            checkMark.TextSize              = 8
-            checkMark.Font                  = Enum.Font.GothamBold
-            checkMark.TextXAlignment        = Enum.TextXAlignment.Center
-
-            local nameLbl = Instance.new("TextLabel", btn)
-            nameLbl.Position               = UDim2.new(0, 18, 0, 0)
-            nameLbl.Size                   = UDim2.new(1, -20, 1, 0)
-            nameLbl.BackgroundTransparency = 1
-            nameLbl.Text                   = traitName
-            nameLbl.TextColor3             = isSelected and col or D.TextMid
-            nameLbl.TextSize               = 10
-            nameLbl.Font                   = Enum.Font.GothamMedium
-            nameLbl.TextXAlignment         = Enum.TextXAlignment.Left
-            nameLbl.TextTruncate           = Enum.TextTruncate.AtEnd
+            btn.Text                  = (isSelected and "✓ " or "") .. traitName
+            btn.TextColor3            = isSelected and col or D.TextMid
+            btn.TextSize              = 9
+            btn.Font                  = Enum.Font.GothamBold
+            btn.AutoButtonColor       = false
+            btn.TextTruncate          = Enum.TextTruncate.AtEnd
+            btn.TextXAlignment        = Enum.TextXAlignment.Left
+            -- kleiner linker Abstand damit Text nicht direkt am Rand klebt
+            local btnPad = Instance.new("UIPadding", btn)
+            btnPad.PaddingLeft = UDim.new(0, 4)
+            Corner(btn, 4)
+            Stroke(btn, isSelected and col or D.Border, 1, isSelected and 0 or 0.6)
 
             local capName = traitName
-            local capCol  = col
             btn.MouseButton1Click:Connect(function()
                 if TR.TargetTraits[capName] then
                     TR.TargetTraits[capName] = nil
@@ -1043,7 +1032,6 @@ local function RebuildTraitTargetList(searchFilter)
             end)
         end
 
-        -- Canvas nach Grid-Befüllung aktualisieren
         grid:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
             task.defer(refreshTraitScrollCanvas)
         end)
@@ -1065,23 +1053,21 @@ for _, rarity in ipairs(RARITY_FILTER_LIST) do
     btn.BackgroundColor3      = D.CardHover
     btn.BackgroundTransparency = 0.5
     btn.BorderSizePixel       = 0
-    Corner(btn, 5)
+    Corner(btn, 4)
     Stroke(btn, col, 1, 0.5)
     btn.Text         = rarity:sub(1, 3)
     btn.TextColor3   = col
-    btn.TextSize     = 9
+    btn.TextSize     = 8
     btn.Font         = Enum.Font.GothamBold
     btn.AutoButtonColor = false
 
     local capRarity = rarity
     btn.MouseButton1Click:Connect(function()
         if ActiveRarityFilter == capRarity then
-            -- Zweiter Klick = Filter aufheben
             ActiveRarityFilter = nil
             Tw(btn, { BackgroundColor3 = D.CardHover, BackgroundTransparency = 0.5 })
             local s = btn:FindFirstChildOfClass("UIStroke"); if s then s.Transparency = 0.5 end
         else
-            -- Anderen Filter deaktivieren
             if ActiveRarityFilter and TR.UI.Btn.RarityFilters[ActiveRarityFilter] then
                 local oldBtn = TR.UI.Btn.RarityFilters[ActiveRarityFilter]
                 Tw(oldBtn, { BackgroundColor3 = D.CardHover, BackgroundTransparency = 0.5 })
@@ -1098,17 +1084,17 @@ end
 
 -- Quick-Buttons
 local traitQuickRow = Instance.new("Frame", targetCard)
-traitQuickRow.Size                  = UDim2.new(1, 0, 0, 24)
+traitQuickRow.Size                  = UDim2.new(1, 0, 0, 22)
 traitQuickRow.BackgroundTransparency = 1
-HList(traitQuickRow, 6)
+HList(traitQuickRow, 5)
 
 local clearAllTraitsBtn = Instance.new("TextButton", traitQuickRow)
 clearAllTraitsBtn.Size               = UDim2.new(0.48, 0, 1, 0)
 clearAllTraitsBtn.BackgroundColor3   = D.CardHover; clearAllTraitsBtn.BackgroundTransparency = 0.35
 clearAllTraitsBtn.Text               = "✕ Alle abwählen"; clearAllTraitsBtn.TextColor3 = D.Red
-clearAllTraitsBtn.TextSize           = 10; clearAllTraitsBtn.Font = Enum.Font.GothamBold
+clearAllTraitsBtn.TextSize           = 9; clearAllTraitsBtn.Font = Enum.Font.GothamBold
 clearAllTraitsBtn.AutoButtonColor    = false; clearAllTraitsBtn.BorderSizePixel = 0
-Corner(clearAllTraitsBtn, 6); Stroke(clearAllTraitsBtn, D.Red, 1, 0.4)
+Corner(clearAllTraitsBtn, 5); Stroke(clearAllTraitsBtn, D.Red, 1, 0.4)
 clearAllTraitsBtn.MouseButton1Click:Connect(function()
     TR.TargetTraits = {}
     UpdateTargetTraitInfo()
@@ -1119,9 +1105,9 @@ local presetMythicBtn = Instance.new("TextButton", traitQuickRow)
 presetMythicBtn.Size               = UDim2.new(0.48, 0, 1, 0)
 presetMythicBtn.BackgroundColor3   = D.CardHover; presetMythicBtn.BackgroundTransparency = 0.35
 presetMythicBtn.Text               = "⭐ Mythic+"; presetMythicBtn.TextColor3 = D.Red
-presetMythicBtn.TextSize           = 10; presetMythicBtn.Font = Enum.Font.GothamBold
+presetMythicBtn.TextSize           = 9; presetMythicBtn.Font = Enum.Font.GothamBold
 presetMythicBtn.AutoButtonColor    = false; presetMythicBtn.BorderSizePixel = 0
-Corner(presetMythicBtn, 6); Stroke(presetMythicBtn, D.Red, 1, 0.4)
+Corner(presetMythicBtn, 5); Stroke(presetMythicBtn, D.Red, 1, 0.4)
 presetMythicBtn.MouseButton1Click:Connect(function()
     TR.TargetTraits = {}
     for traitName, data in pairs(AllTraits) do
@@ -1146,7 +1132,7 @@ settingsRow.AutomaticSize = Enum.AutomaticSize.Y
 settingsRow.BackgroundTransparency = 1
 HList(settingsRow, 8)
 
--- REROLL-KARTE - linke Spalte
+-- REROLL-KARTE (links)
 local rerollCard = Card(settingsRow)
 rerollCard.Size = UDim2.new(0.5, -4, 0, 0)
 rerollCard.AutomaticSize = Enum.AutomaticSize.Y
@@ -1203,7 +1189,7 @@ MkLbl(delayRow, "zwischen Rolls", 14, D.TextLow).Size = UDim2.new(0.22, 0, 1, 0)
 
 local singleRollBtn = NeonBtn(rerollCard, "🎲  Einmal Rollen (Main)", D.CyanDim, 30)
 
--- ── Stat-Header ────────────────────────────────────────────────
+-- Stat-Header
 SecLbl(rerollCard, "📈 STAT-ANZEIGE (aktuell)")
 
 TR.UI.Lbl.StatHeader = MkLbl(rerollCard, "Keine Einheit gewählt", 13, D.TextLow, true)
@@ -1218,8 +1204,8 @@ TR.UI.Lbl.StatKeyCount = MkLbl(statKeyRow, "Stats Key: –", 13, D.Gold, true)
 TR.UI.Lbl.StatKeyCount.Size = UDim2.new(0.5, 0, 1, 0)
 
 TR.UI.Lbl.PerfectStatKeyCount = MkLbl(statKeyRow, "Perfect Stats Key: –", 13, D.Cyan, true)
-TR.UI.Lbl.PerfectStatKeyCount.Size            = UDim2.new(0.5, 0, 1, 0)
-TR.UI.Lbl.PerfectStatKeyCount.TextXAlignment  = Enum.TextXAlignment.Right
+TR.UI.Lbl.PerfectStatKeyCount.Size           = UDim2.new(0.5, 0, 1, 0)
+TR.UI.Lbl.PerfectStatKeyCount.TextXAlignment = Enum.TextXAlignment.Right
 
 -- Stat-Werte-Anzeige
 local statList = Instance.new("Frame", rerollCard)
@@ -1260,7 +1246,6 @@ for _, statName in ipairs(STAT_POTENTIAL_NAMES) do
     vL.Font                   = Enum.Font.GothamBold
     vL.TextXAlignment         = Enum.TextXAlignment.Right
 
-    -- Ziel-Anzeige rechts
     local tL = Instance.new("TextLabel", row)
     tL.Position               = UDim2.new(0.83, 0, 0, 0)
     tL.Size                   = UDim2.new(0.17, -4, 1, 0)
@@ -1275,9 +1260,9 @@ for _, statName in ipairs(STAT_POTENTIAL_NAMES) do
 end
 
 -- ╔══════════════════════════════════════════════════════════╗
---  ★ MULTI-STAT ZIEL-RATINGS (v2.6.0)
---    Rechte Spalte: Pro Stat ein eigenes Ziel-Rating wählen
---    AND-Verknüpfung: alle müssen erfüllt sein zum Stoppen
+--  ★ MULTI-STAT ZIEL-RATINGS v2.7.0
+--    >= Stop-Condition: Schleife stoppt wenn aktuell >= Ziel
+--    AND-Verknüpfung: alle gesetzten Stats müssen erfüllt sein
 -- ╚══════════════════════════════════════════════════════════╝
 local statsCard = Card(settingsRow)
 statsCard.Size = UDim2.new(0.5, -4, 0, 0)
@@ -1286,10 +1271,9 @@ Pad(statsCard, 10, 12, 10, 12)
 VList(statsCard, 8)
 SecLbl(statsCard, "🎯 STAT-ZIELE (AND-Verknüpfung)")
 
--- Info-Label
 local multiStatInfoLbl = MkLbl(statsCard,
-    "Alle aktiven Stats müssen ihr Ziel-Rating erreichen (AND).", 10, D.TextLow)
-multiStatInfoLbl.Size = UDim2.new(1, 0, 0, 28)
+    "Stoppt wenn ALLE Stats ihr Ziel erreichen oder übertreffen (≥).", 10, D.TextLow)
+multiStatInfoLbl.Size = UDim2.new(1, 0, 0, 26)
 multiStatInfoLbl.TextWrapped = true
 
 -- Rating-Farbzuordnung
@@ -1314,20 +1298,18 @@ local function GetRatingColor(rating)
     return TIER_COLORS[tier] or D.TextMid
 end
 
--- Pro-Stat Auswahl-Zeile
 TR.UI.Btn.StatTargetRows = {}
 
 local function RebuildMultiStatUI()
-    -- Entferne alte Zeilen
     for _, entry in pairs(TR.UI.Btn.StatTargetRows) do
         if entry.frame and entry.frame.Parent then entry.frame:Destroy() end
     end
     TR.UI.Btn.StatTargetRows = {}
 
     for _, statName in ipairs(STAT_POTENTIAL_NAMES) do
-        local displayName = STAT_DISPLAY_NAMES[statName] or statName
+        local displayName   = STAT_DISPLAY_NAMES[statName] or statName
         local currentTarget = TR.StatTargetRatings[statName]
-        local isActive = currentTarget ~= nil
+        local isActive      = currentTarget ~= nil
 
         local statRowFrame = Instance.new("Frame", statsCard)
         statRowFrame.Size                  = UDim2.new(1, 0, 0, 0)
@@ -1335,7 +1317,6 @@ local function RebuildMultiStatUI()
         statRowFrame.BackgroundTransparency = 1
         VList(statRowFrame, 3)
 
-        -- Stat-Header-Zeile
         local hRow = Instance.new("Frame", statRowFrame)
         hRow.Size                  = UDim2.new(1, 0, 0, 24)
         hRow.BackgroundColor3      = isActive and Color3.fromRGB(14, 42, 28) or D.CardHover
@@ -1378,7 +1359,7 @@ local function RebuildMultiStatUI()
         targetLbl.Font                   = Enum.Font.GothamBold
         targetLbl.TextXAlignment         = Enum.TextXAlignment.Right
 
-        -- Rating-Picker (nur sichtbar wenn aktiv)
+        -- Rating-Picker
         local ratingPickerFrame = Instance.new("Frame", statRowFrame)
         ratingPickerFrame.Size                  = UDim2.new(1, 0, 0, 0)
         ratingPickerFrame.AutomaticSize         = Enum.AutomaticSize.Y
@@ -1398,10 +1379,10 @@ local function RebuildMultiStatUI()
             rBtn.BorderSizePixel       = 0
             Corner(rBtn, 4)
             Stroke(rBtn, isThisTarget and col or D.Border, 1, isThisTarget and 0 or 0.6)
-            rBtn.Text         = rating
-            rBtn.TextColor3   = isThisTarget and col or D.TextMid
-            rBtn.TextSize     = 9
-            rBtn.Font         = Enum.Font.GothamBold
+            rBtn.Text            = rating
+            rBtn.TextColor3      = isThisTarget and col or D.TextMid
+            rBtn.TextSize        = 9
+            rBtn.Font            = Enum.Font.GothamBold
             rBtn.AutoButtonColor = false
 
             local capStatName = statName
@@ -1412,25 +1393,24 @@ local function RebuildMultiStatUI()
             end)
         end
 
-        -- Toggle-Button Logik
         local capStatName = statName
         toggleBtn.MouseButton1Click:Connect(function()
             if TR.StatTargetRatings[capStatName] then
                 TR.StatTargetRatings[capStatName] = nil
             else
-                TR.StatTargetRatings[capStatName] = "S"  -- Standard: S
+                TR.StatTargetRatings[capStatName] = "S"
             end
             RebuildMultiStatUI()
         end)
 
         TR.UI.Btn.StatTargetRows[statName] = {
-            frame       = statRowFrame,
-            targetLbl   = targetLbl,
-            toggleBtn   = toggleBtn,
+            frame     = statRowFrame,
+            targetLbl = targetLbl,
+            toggleBtn = toggleBtn,
         }
     end
 
-    -- Ziel-Zusammenfassung
+    -- Zusammenfassung
     local activeCount = 0
     local parts = {}
     for _, sn in ipairs(STAT_POTENTIAL_NAMES) do
@@ -1450,9 +1430,8 @@ local function RebuildMultiStatUI()
     end
 end
 
--- Zusammenfassungs-Label
 TR.UI.Lbl.MultiStatSummary = MkLbl(statsCard, "Kein Stat-Ziel aktiv → kein Auto-Stop", 10, D.TextLow)
-TR.UI.Lbl.MultiStatSummary.Size = UDim2.new(1, 0, 0, 28)
+TR.UI.Lbl.MultiStatSummary.Size = UDim2.new(1, 0, 0, 26)
 TR.UI.Lbl.MultiStatSummary.TextWrapped = true
 
 -- Preset-Buttons
@@ -1498,10 +1477,10 @@ clearStatsBtn.MouseButton1Click:Connect(function()
 end)
 
 TR.UI.Lbl.StatRollRate = MkLbl(statsCard, "", 12, D.TextLow)
-TR.UI.Lbl.StatRollRate.Size            = UDim2.new(1, 0, 0, 14)
-TR.UI.Lbl.StatRollRate.TextXAlignment  = Enum.TextXAlignment.Right
+TR.UI.Lbl.StatRollRate.Size           = UDim2.new(1, 0, 0, 14)
+TR.UI.Lbl.StatRollRate.TextXAlignment = Enum.TextXAlignment.Right
 
--- Start/Stop Stat-Reroll Buttons
+-- Start/Stop Stat-Reroll
 local statCtrlRow = Instance.new("Frame", statsCard)
 statCtrlRow.Size                  = UDim2.new(1, 0, 0, 34)
 statCtrlRow.BackgroundTransparency = 1
@@ -1531,7 +1510,7 @@ TR.UI.Btn.StopStat.AutoButtonColor       = false
 TR.UI.Btn.StopStat.BorderSizePixel       = 0
 Corner(TR.UI.Btn.StopStat, 8); Stroke(TR.UI.Btn.StopStat, D.Red, 1.5, 0.28)
 
--- ── Reroll-Modus (All vs Einzeln) ─────────────────────────────
+-- Reroll-Modus
 local statModeCard = Instance.new("Frame", statsCard)
 statModeCard.Size                  = UDim2.new(1, 0, 0, 0)
 statModeCard.AutomaticSize         = Enum.AutomaticSize.Y
@@ -1644,24 +1623,27 @@ local function HasAnyStatKeyForMode()
     return GetKeyCountForMode(TR.SelectedStatMode) > 0
 end
 
+-- v2.7.0 FIX: Remote Security – Tag aus Collection
+local function EnsureTagValue()
+    if TR.SelectedUnitTagValue ~= nil then return true end
+    local tagUnitName = TR.SelectedUnitName or (TR.SelectedUnit and TR.SelectedUnit.Name) or nil
+    local tagVal = GetUnitTagValue(tagUnitName)
+    if tagVal == nil then
+        SetStatus("⏳ TagValue wird aktualisiert...", D.Yellow)
+        task.wait(0.5)
+        tagVal = GetUnitTagValue(tagUnitName)
+    end
+    TR.SelectedUnitTagValue = tagVal
+    return tagVal ~= nil
+end
+
 local function DoSingleStatReroll()
     if not TR.SelectedUnit then SetStatus("⚠ Keine Einheit gewählt!", D.Orange); return false end
     local statRemote = ResolveStatRerollRemote()
     if not statRemote then SetStatus("⚠ RerollPotential Remote nicht gefunden!", D.Orange); return false end
     if not HasAnyStatKeyForMode() then SetStatus("⚠ Keine Keys mehr für den ausgewählten Modus.", D.Orange); return false end
-    -- Tag-Fix: Collection[UnitName].Tag.Value als Security-Key
-    if TR.SelectedUnitTagValue == nil then
-        local tagUnitName = TR.SelectedUnitName or (TR.SelectedUnit and TR.SelectedUnit.Name) or nil
-        local tagVal = GetUnitTagValue(tagUnitName)
-        if tagVal == nil then
-            SetStatus("⏳ TagValue wird aktualisiert...", D.Yellow); task.wait(0.5)
-            tagVal = GetUnitTagValue(tagUnitName)
-        end
-        TR.SelectedUnitTagValue = tagVal
-    end
-    if TR.SelectedUnitTagValue == nil then
-        SetStatus("⚠ TagValue nicht gefunden!", D.Orange); return false
-    end
+    if not EnsureTagValue() then SetStatus("⚠ TagValue nicht gefunden!", D.Orange); return false end
+
     local ok = pcall(function()
         if TR.SelectedStatMode == "All" then
             statRemote:FireServer("All", TR.SelectedUnitTagValue, "All")
@@ -1674,27 +1656,31 @@ local function DoSingleStatReroll()
     return ok
 end
 
--- ★ v2.6.0: AND-Verknüpfungs-Prüfung
--- Gibt zurück: allMet (bool), details (table mit Status pro Stat)
+-- ╔══════════════════════════════════════════════════════════╗
+--  ★ v2.7.0: AND + >= Stop-Condition
+--  CheckAllStatGoals gibt zurück:
+--    allMet  – true wenn ALLE aktiven Stats ihr Ziel >= erfüllen
+--    details – table mit { current, target, met } pro Stat
+-- ╚══════════════════════════════════════════════════════════╝
 local function CheckAllStatGoals()
     if not TR.SelectedUnit then return false, {} end
-    -- Kein Ziel gesetzt → nie stoppen
     local hasAnyTarget = false
     for _ in pairs(TR.StatTargetRatings) do hasAnyTarget = true; break end
     if not hasAnyTarget then return false, {} end
 
     local ratings = GetStatRatings(TR.SelectedUnit)
-    local allMet = true
+    local allMet  = true
     local details = {}
 
     for statName, targetRating in pairs(TR.StatTargetRatings) do
-        local current = ratings[statName]
+        local current       = ratings[statName]
         local currentRating = current and current.rating or "C-"
+        -- v2.7.0 FIX: >= Vergleich (besser oder gleich zählt auch als erfüllt)
         local met = RankAtLeast(currentRating, targetRating)
         details[statName] = {
-            current    = currentRating,
-            target     = targetRating,
-            met        = met,
+            current = currentRating,
+            target  = targetRating,
+            met     = met,
         }
         if not met then allMet = false end
     end
@@ -1708,10 +1694,10 @@ function RefreshStatPanel()
         TR.UI.Lbl.StatHeader.Text       = "Keine Einheit gewählt"
         TR.UI.Lbl.StatHeader.TextColor3 = D.TextLow
         for n, r in pairs(TR.UI.Fr.StatRows) do
-            r.nameLbl.Text       = STAT_DISPLAY_NAMES[n] or n
-            r.valLbl.Text        = "–"
-            r.valLbl.TextColor3  = D.TextLow
-            r.targetLbl.Text     = ""
+            r.nameLbl.Text      = STAT_DISPLAY_NAMES[n] or n
+            r.valLbl.Text       = "–"
+            r.valLbl.TextColor3 = D.TextLow
+            r.targetLbl.Text    = ""
         end
         return
     end
@@ -1721,14 +1707,13 @@ function RefreshStatPanel()
     local _, goalDetails = CheckAllStatGoals()
 
     for n, r in pairs(TR.UI.Fr.StatRows) do
-        local d       = ratings[n]
-        local rating  = d and d.rating or "C-"
-        local raw     = d and d.raw    or "-"
-        local gd      = goalDetails[n]
+        local d        = ratings[n]
+        local rating   = d and d.rating or "C-"
+        local raw      = d and d.raw    or "-"
+        local gd       = goalDetails[n]
         local isTarget = gd and gd.met == true
         local hasTarget = TR.StatTargetRatings[n] ~= nil
 
-        -- Farbe: grün wenn Ziel erreicht, Gold für S+, Gelb für A, sonst Standard
         local col = isTarget and D.GreenBright
                   or (RankAtLeast(rating, "S")  and D.Gold
                   or (RankAtLeast(rating, "A")  and D.Yellow
@@ -1738,7 +1723,6 @@ function RefreshStatPanel()
         r.valLbl.Text       = tostring(rating) .. "  (" .. tostring(raw) .. ")"
         r.valLbl.TextColor3 = col
 
-        -- Ziel-Anzeige und Ziel-Status
         if hasTarget then
             local targetRating = TR.StatTargetRatings[n]
             if isTarget then
@@ -1752,7 +1736,6 @@ function RefreshStatPanel()
             r.targetLbl.Text = ""
         end
 
-        -- Rahmen: grün wenn Ziel erreicht
         Stroke(r.row, isTarget and D.GreenBright or D.Border, 1, isTarget and 0 or 0.45)
     end
 end
@@ -1816,16 +1799,21 @@ stopRerollBtn.MouseButton1Click:Connect(function()
     SetStatus("⏹ Auto-Reroll gestoppt.", D.TextMid)
 end)
 
--- ★ v2.6.0: AutoStatRerollLoop mit AND-Verknüpfung + globaler Abbruch-Sicherung
+-- ╔══════════════════════════════════════════════════════════╗
+--  ★ v2.7.0: AutoStatRerollLoop
+--    Anti-Skip: task.wait(0.15) + Double-Check vor Remote-Call
+--    >= Stop-Condition: stoppt auch wenn besser als Ziel
+--    AND-Verknüpfung: alle Stats müssen erfüllt sein
+-- ╚══════════════════════════════════════════════════════════╝
 local function SendStatSuccessWebhook(details)
     local cfg = HS.Config
     local url = cfg and cfg.WebhookURL or nil
     if not url or url == "" or not url:find("discord.com") then return end
     local ava = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. tostring(LP.UserId) .. "&width=150&height=150&format=png"
     local fields = {
-        { name = "Account",   value = "`" .. tostring(LP.Name) .. "`",  inline = true },
-        { name = "Einheit",   value = "`" .. tostring(TR.SelectedUnitName or "?") .. "`", inline = true },
-        { name = "Rolls",     value = "`" .. tostring(TR.StatRollCount) .. "`", inline = true },
+        { name = "Account", value = "`" .. tostring(LP.Name) .. "`",  inline = true },
+        { name = "Einheit", value = "`" .. tostring(TR.SelectedUnitName or "?") .. "`", inline = true },
+        { name = "Rolls",   value = "`" .. tostring(TR.StatRollCount) .. "`", inline = true },
     }
     for statName, gd in pairs(details) do
         table.insert(fields, {
@@ -1835,10 +1823,10 @@ local function SendStatSuccessWebhook(details)
         })
     end
     local embed = {
-        color  = 0x000000,
-        title  = "Stat Reroll · Alle Ziele erreicht!",
+        color  = 0x00FFAA,
+        title  = "Stat Reroll · Alle Ziele erreicht! ✅",
         fields = fields,
-        footer = { text = "Haze Hub · " .. os.date("%Y-%m-%d %H:%M:%S") },
+        footer = { text = "Haze Hub v" .. VERSION .. " · " .. os.date("%Y-%m-%d %H:%M:%S") },
     }
     pcall(function()
         local fn = request or http_request or (syn and syn.request)
@@ -1857,9 +1845,8 @@ local function SendStatSuccessWebhook(details)
 end
 
 local function AutoStatRerollLoop()
-    TR.StatRolling = true
-    TR.StatRollCount = 0
-    -- ★ Globale Abbruch-Sicherung aktivieren
+    TR.StatRolling    = true
+    TR.StatRollCount  = 0
     _G.HazeHUB.StatLoopActive = true
 
     TR.UI.Btn.StartStat.Text       = "⏳ Rollt..."
@@ -1867,7 +1854,6 @@ local function AutoStatRerollLoop()
     Stroke(TR.UI.Btn.StartStat, D.Yellow, 2, 0.15)
     SetStatus("🎯 Auto-Stat-Reroll läuft...", D.Gold)
 
-    -- Ziel-Zusammenfassung für Log
     local targetParts = {}
     for _, sn in ipairs(STAT_POTENTIAL_NAMES) do
         if TR.StatTargetRatings[sn] then
@@ -1881,15 +1867,20 @@ local function AutoStatRerollLoop()
         table.concat(targetParts, ", ")))
 
     local t0 = os.clock()
+
     while TR.StatRolling and _G.HazeHUB.StatLoopActive do
         if not TR.SelectedUnit then
             SetStatus("⚠ Keine Einheit gewählt!", D.Orange); break
         end
 
-        -- ★ AND-Verknüpfungs-Check: alle Ziele müssen erfüllt sein
+        -- ── v2.7.0 Anti-Skip: Double-Check VOR dem Remote-Call ──
+        -- Erst warten, dann Stat-Wert aus GUI lesen, dann entscheiden
+        task.wait(0.15)
+        if not TR.StatRolling or not _G.HazeHUB.StatLoopActive then break end
+
+        -- ★ AND + >= Check
         local allMet, details = CheckAllStatGoals()
         if allMet then
-            -- Erfolgs-Meldung aufbauen
             local successParts = {}
             for statName, gd in pairs(details) do
                 table.insert(successParts, (STAT_DISPLAY_NAMES[statName] or statName) .. "=" .. gd.current)
@@ -1900,7 +1891,7 @@ local function AutoStatRerollLoop()
             break
         end
 
-        -- Fortschritt anzeigen: wie viele Stats sind bereits erfüllt
+        -- Fortschritt anzeigen
         local metCount, totalCount = 0, 0
         for statName in pairs(TR.StatTargetRatings) do
             totalCount = totalCount + 1
@@ -1915,9 +1906,7 @@ local function AutoStatRerollLoop()
             SetStatus("⛔ Keys leer. Stop.", D.Orange); break
         end
 
-        task.wait(0.1)
-
-        -- ★ Abbruch-Check VOR dem Remote-Call
+        -- Abbruch-Check VOR Remote
         if not TR.StatRolling or not _G.HazeHUB.StatLoopActive then break end
 
         local ok = DoSingleStatReroll()
@@ -1928,11 +1917,28 @@ local function AutoStatRerollLoop()
             TR.UI.Lbl.StatRollRate.Text = string.format("%.1f r/min", TR.StatRollCount / dt * 60)
         end
 
+        -- ── v2.7.0 Anti-Skip: Konfigurierbare Verzögerung nach dem Roll ──
+        -- task.wait gibt der Engine Zeit den neuen Stat-Wert zu aktualisieren,
+        -- bevor der nächste Check erfolgt. Mindestens 0.15s für Stabilität.
         local delay = math.max(0.15, tonumber(delayBox.Text) or 0.5)
         task.wait(delay)
 
-        -- ★ Abbruch-Check NACH dem Delay
+        -- Abbruch-Check NACH Delay
         if not TR.StatRolling or not _G.HazeHUB.StatLoopActive then break end
+
+        -- ── v2.7.0 Anti-Skip: Zweiter >= Check nach Delay ──
+        -- Verhindert das Überspringen des Ziels wenn der Wert nach dem Wait gesetzt wurde
+        local allMetPost, detailsPost = CheckAllStatGoals()
+        if allMetPost then
+            local sp = {}
+            for sn, gd in pairs(detailsPost) do
+                table.insert(sp, (STAT_DISPLAY_NAMES[sn] or sn) .. "=" .. gd.current)
+            end
+            SetStatus("✅ Ziel (post-delay) erreicht! " .. table.concat(sp, "  "), D.GreenBright)
+            pcall(RefreshStatPanel)
+            pcall(function() SendStatSuccessWebhook(detailsPost) end)
+            break
+        end
 
         pcall(RefreshStatPanel)
     end
@@ -1950,13 +1956,11 @@ TR.UI.Btn.StartStat.MouseButton1Click:Connect(function()
     if TR.StatRolling then SetStatus("⚠ Stat-Reroll läuft bereits.", D.Yellow); return end
     if not TR.SelectedUnit then SetStatus("⚠ Keine Einheit ausgewählt.", D.Orange); return end
     if not HasAnyStatKeyForMode() then SetStatus("⛔ Keine Keys für diesen Modus.", D.Orange); return end
-    -- Prüfe ob mindestens ein Stat-Ziel gesetzt ist
     local hasTarget = false
     for _ in pairs(TR.StatTargetRatings) do hasTarget = true; break end
     if not hasTarget then
         SetStatus("⚠ Keine Stat-Ziele gesetzt! Wähle mindestens ein Stat-Ziel.", D.Orange); return
     end
-    -- Prüfe ob Ziele bereits erreicht
     local allMet, _ = CheckAllStatGoals()
     if allMet then
         SetStatus("🎯 Alle Stat-Ziele bereits erreicht!", D.GreenBright); return
@@ -1966,12 +1970,11 @@ end)
 
 TR.UI.Btn.StopStat.MouseButton1Click:Connect(function()
     TR.StatRolling = false
-    -- ★ Globale Abbruch-Sicherung
     _G.HazeHUB.StatLoopActive = false
     SetStatus("⏹ Stat-Reroll gestoppt.", D.TextMid)
 end)
 
--- Tab-Wechsel → Abbruch-Sicherung (wenn ActiveTab wechselt)
+-- Tab-Wechsel → Abbruch-Sicherung
 task.spawn(function()
     local lastTab = nil
     while true do
@@ -1980,10 +1983,8 @@ task.spawn(function()
             local currentTab = HS.State and HS.State.ActiveTab
             if currentTab ~= lastTab then
                 if lastTab == "Traits" and currentTab ~= "Traits" then
-                    -- User hat Traits-Tab verlassen → StatLoop stoppen
                     if TR.StatRolling then
                         _G.HazeHUB.StatLoopActive = false
-                        -- TR.StatRolling bleibt true bis die Schleife selbst stoppt
                         SetStatus("⏹ Stat-Reroll: Tab gewechselt, Loop wird beendet.", D.Yellow)
                     end
                 end
@@ -1999,16 +2000,16 @@ task.spawn(function()
         task.wait(1)
         local rr = "–"
         pcall(function()
-            local items    = RS:WaitForChild("Player_Data", 3):WaitForChild(LP.Name, 3):WaitForChild("Items", 3)
-            local traitR   = items:FindFirstChild("Trait Reroll")
+            local items  = RS:WaitForChild("Player_Data", 3):WaitForChild(LP.Name, 3):WaitForChild("Items", 3)
+            local traitR = items:FindFirstChild("Trait Reroll")
             if traitR then
                 local amt = traitR:FindFirstChild("Amount") or traitR:FindFirstChild("Value")
                 if amt then rr = tostring(amt.Value) end
             end
         end)
         pcall(function()
-            TR.UI.Lbl.RollCount.Text         = "Trait Reroll: " .. rr
-            TR.UI.Lbl.StatKeyCount.Text       = "Stats Key: "         .. tostring(GetItemAmount("Stats Key"))
+            TR.UI.Lbl.RollCount.Text          = "Trait Reroll: " .. rr
+            TR.UI.Lbl.StatKeyCount.Text        = "Stats Key: "         .. tostring(GetItemAmount("Stats Key"))
             TR.UI.Lbl.PerfectStatKeyCount.Text = "Perfect Stats Key: " .. tostring(GetItemAmount("Perfect Stats Key"))
             RefreshStatPanel()
         end)
@@ -2016,7 +2017,7 @@ task.spawn(function()
 end)
 
 -- ╔══════════════════════════════════════════════════════════╗
---  TRAIT-ÜBERSICHT (einfache Liste, optional)
+--  TRAIT-ÜBERSICHT
 -- ╚══════════════════════════════════════════════════════════╝
 local overviewCard = Card(TraitPage); Pad(overviewCard, 10, 12, 10, 12); VList(overviewCard, 6)
 SecLbl(overviewCard, "📖 TRAIT ÜBERSICHT (Detail-Ansicht)")
@@ -2037,7 +2038,6 @@ local function BuildTraitOverview(filter)
             table.insert(sorted, { name = name, data = data })
         end
     end
-    -- Nach Rarity und Name sortieren
     table.sort(sorted, function(a, b)
         local ra = RARITY_ORDER[(a.data and a.data.Rarity) or "Common"] or 99
         local rb = RARITY_ORDER[(b.data and b.data.Rarity) or "Common"] or 99
@@ -2058,7 +2058,6 @@ local function BuildTraitOverview(filter)
         local acBar = Instance.new("Frame", row)
         acBar.Name = "AccentBar"
         acBar.Size = UDim2.new(0, 3, 0, 40)
-        acBar.Position = UDim2.new(0, 0, 0, 0)
         acBar.BackgroundColor3 = col
         acBar.BorderSizePixel = 0
         Corner(acBar, 2)
@@ -2140,8 +2139,8 @@ local function BuildTraitOverview(filter)
     end
     if #sorted == 0 then
         local eL = MkLbl(trListFrame, "Keine Traits gefunden.", 11, D.TextLow)
-        eL.Size            = UDim2.new(1, 0, 0, 26)
-        eL.TextXAlignment  = Enum.TextXAlignment.Center
+        eL.Size           = UDim2.new(1, 0, 0, 26)
+        eL.TextXAlignment = Enum.TextXAlignment.Center
     end
 end
 
