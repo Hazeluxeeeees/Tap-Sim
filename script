@@ -63,7 +63,7 @@ if _G.HazHubLoaded then return end
 _G.HazHubLoaded = true
 
 -- ★ Initialer Stabilitäts-Wait (5s für langsame Executoren / Race-Conditions)
-task.wait(5)
+task.wait(10)
 
 -- ★ Account-spezifische Dynamik (für Multi-Account korrekt)
 local LP = game:GetService('Players').LocalPlayer
