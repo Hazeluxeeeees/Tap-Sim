@@ -1426,6 +1426,13 @@ local function SaveConfig()
     H.Config.GuiVisible = S.GuiVisible
     H.Config.SavedGoals={}
     for _,g in ipairs(S.Goals) do table.insert(H.Config.SavedGoals,{item=g.item,amount=g.amount}) end
+    -- Auto-Buy Liste persistieren
+    if _G._AutoBuyList then
+        H.Config.AutoBuyItems = {}
+        for iname,_ in pairs(_G._AutoBuyList) do
+            table.insert(H.Config.AutoBuyItems, iname)
+        end
+    end
     if writefile then pcall(function() writefile(GetAutoSaveFilePath(), Svc.Http:JSONEncode(H.Config)) end) end
 end
 local function LoadConfig()
@@ -1444,6 +1451,15 @@ local function LoadConfig()
         for _,g in ipairs(data.SavedGoals) do
             if g.item and tonumber(g.amount) then
                 table.insert(S.Goals,{item=g.item,amount=tonumber(g.amount),reached=false})
+            end
+        end
+    end
+    -- Auto-Buy Liste wiederherstellen
+    if data.AutoBuyItems and type(data.AutoBuyItems)=="table" then
+        _G._AutoBuyList = _G._AutoBuyList or {}
+        for _, iname in ipairs(data.AutoBuyItems) do
+            if type(iname)=="string" and iname~="" then
+                _G._AutoBuyList[iname] = true
             end
         end
     end
@@ -2231,11 +2247,11 @@ local GamePage  = MakeTab("Game","◈")
 local SessPage  = MakeTab("Session","◎")
 local QuestPage = MakeTab("Quests","≡")
 local ShopPage  = MakeTab("Shops","▤")
-local SummonPage = MakeTab("Summon","🎲")
 local CraftPage = MakeTab("Crafting","⚒")
 local TraitRoot, TraitSticky, TraitPage = MakeTraitsTab("Traits", "✦")
 local TeamsPage = MakeTab("Teams","⚔")
 local InvPage   = MakeTab("Inventory","▣")
+local SummonPage = MakeTab("Summon","🎲")
 local MiscPage  = MakeTab("Misc","◇")
 local SettPage  = MakeTab("Settings","⛭")
 
@@ -2704,119 +2720,84 @@ NeonBtn(SessPage,"🗑  Session zurücksetzen",D.Red,34).MouseButton1Click:Conne
     UpdateSessionUI()
 end)
 
--- ── ★ AUTO-RESTART (10-Minuten-Loop) ──────────────────────────
+-- ╔══════════════════════════════════════════════════════════╗
+--  AUTO-RESTART (10-Minuten Match-Loop)
+-- ╚══════════════════════════════════════════════════════════╝
 do
-    local AR_INTERVAL = 10 * 60  -- 10 Minuten in Sekunden
+    local AR_INTERVAL = 10 * 60
+    local arEnabled   = false
+    local arNextAt    = 0
 
-    -- State
-    local arEnabled    = false
-    local arNextRestart = 0   -- os.time() Ziel
-    local arActive     = false
-
-    -- UI Card
     local arCard = Card(SessPage); Pad(arCard,10,12,10,12); VList(arCard,8)
-    SecLbl(arCard,"🔁  AUTO-RESTART (Match)")
+    SecLbl(arCard,"🔁  AUTO-RESTART")
 
-    -- Status-Zeile: Punkt + Text
     local arTopRow = Instance.new("Frame",arCard)
-    arTopRow.Size = UDim2.new(1,0,0,22); arTopRow.BackgroundTransparency = 1; HList(arTopRow,8)
+    arTopRow.Size=UDim2.new(1,0,0,22); arTopRow.BackgroundTransparency=1; HList(arTopRow,8)
     local arDot = Instance.new("Frame",arTopRow)
-    arDot.Size = UDim2.new(0,10,0,10); arDot.BackgroundColor3 = D.TextLow; arDot.BorderSizePixel=0; Corner(arDot,99)
-    local arStatusLbl = Instance.new("TextLabel",arTopRow)
-    arStatusLbl.Size = UDim2.new(1,-20,1,0); arStatusLbl.BackgroundTransparency=1
-    arStatusLbl.Text="Auto-Restart  —  Inaktiv"; arStatusLbl.TextColor3=D.TextLow
-    arStatusLbl.TextSize=13; arStatusLbl.Font=Enum.Font.GothamBold; arStatusLbl.TextXAlignment=Enum.TextXAlignment.Left
+    arDot.Size=UDim2.new(0,10,0,10); arDot.BackgroundColor3=D.TextLow; arDot.BorderSizePixel=0; Corner(arDot,99)
+    local arStatLbl = Instance.new("TextLabel",arTopRow)
+    arStatLbl.Size=UDim2.new(1,-20,1,0); arStatLbl.BackgroundTransparency=1
+    arStatLbl.Text="Auto-Restart  —  Inaktiv"; arStatLbl.TextColor3=D.TextLow
+    arStatLbl.TextSize=13; arStatLbl.Font=Enum.Font.GothamBold; arStatLbl.TextXAlignment=Enum.TextXAlignment.Left
+    arStatLbl.TextScaled=false; arStatLbl.RichText=true; arStatLbl.TextStrokeTransparency=1
 
-    -- Countdown Label
-    local arCountdownLbl = Instance.new("TextLabel",arCard)
-    arCountdownLbl.Size = UDim2.new(1,0,0,20); arCountdownLbl.BackgroundTransparency=1
-    arCountdownLbl.Text="Nächster Restart in: –"; arCountdownLbl.TextColor3=D.TextMid
-    arCountdownLbl.TextSize=12; arCountdownLbl.Font=Enum.Font.GothamMedium; arCountdownLbl.TextXAlignment=Enum.TextXAlignment.Left
+    local arCdLbl = Instance.new("TextLabel",arCard)
+    arCdLbl.Size=UDim2.new(1,0,0,18); arCdLbl.BackgroundTransparency=1
+    arCdLbl.Text="Nächster Restart: –"; arCdLbl.TextColor3=D.TextMid
+    arCdLbl.TextSize=12; arCdLbl.Font=Enum.Font.GothamMedium; arCdLbl.TextXAlignment=Enum.TextXAlignment.Left
+    arCdLbl.TextScaled=false; arCdLbl.RichText=true; arCdLbl.TextStrokeTransparency=1
 
-    -- Fortschrittsbalken
     local arBarBg = Instance.new("Frame",arCard)
     arBarBg.Size=UDim2.new(1,0,0,6); arBarBg.BackgroundColor3=Color3.fromRGB(20,28,50); arBarBg.BorderSizePixel=0; Corner(arBarBg,4)
-    local arBarFill = Instance.new("Frame",arBarBg)
-    arBarFill.Size=UDim2.new(0,0,1,0); arBarFill.BackgroundColor3=D.CyanDim; arBarFill.BorderSizePixel=0; Corner(arBarFill,4)
+    local arBarF = Instance.new("Frame",arBarBg)
+    arBarF.Size=UDim2.new(0,0,1,0); arBarF.BackgroundColor3=D.CyanDim; arBarF.BorderSizePixel=0; Corner(arBarF,4)
 
-    -- Toggle Button
-    local arToggle = NeonBtn(arCard,"▶  Auto-Restart AN",D.CyanDim,32)
+    local arBtn = NeonBtn(arCard,"▶  Auto-Restart AN",D.CyanDim,32)
 
-    -- Update-Funktion für UI-State
     local function UpdateARUI()
         if arEnabled then
-            arDot.BackgroundColor3  = D.Green
-            arStatusLbl.Text        = "Auto-Restart  —  Aktiv"
-            arStatusLbl.TextColor3  = D.Green
-            arToggle.Text           = "⏹  Auto-Restart AUS"
-            arToggle.TextColor3     = D.Red
-            Stroke(arToggle, D.Red, 1, 0.4)
+            arDot.BackgroundColor3=D.Green; arStatLbl.Text="Auto-Restart  —  Aktiv"; arStatLbl.TextColor3=D.Green
+            arBtn.Text="⏹  Auto-Restart AUS"; arBtn.TextColor3=D.Red; Stroke(arBtn,D.Red,1,0.4)
         else
-            arDot.BackgroundColor3  = D.TextLow
-            arStatusLbl.Text        = "Auto-Restart  —  Inaktiv"
-            arStatusLbl.TextColor3  = D.TextLow
-            arCountdownLbl.Text     = "Nächster Restart in: –"
-            arCountdownLbl.TextColor3 = D.TextMid
-            Tw(arBarFill, {Size=UDim2.new(0,0,1,0)})
-            arToggle.Text           = "▶  Auto-Restart AN"
-            arToggle.TextColor3     = D.CyanDim
-            Stroke(arToggle, D.CyanDim, 1, 0.4)
+            arDot.BackgroundColor3=D.TextLow; arStatLbl.Text="Auto-Restart  —  Inaktiv"; arStatLbl.TextColor3=D.TextLow
+            arCdLbl.Text="Nächster Restart: –"; arCdLbl.TextColor3=D.TextMid
+            Tw(arBarF,{Size=UDim2.new(0,0,1,0)})
+            arBtn.Text="▶  Auto-Restart AN"; arBtn.TextColor3=D.CyanDim; Stroke(arBtn,D.CyanDim,1,0.4)
         end
     end
 
-    -- Toggle-Click
-    arToggle.MouseButton1Click:Connect(function()
+    arBtn.MouseButton1Click:Connect(function()
         arEnabled = not arEnabled
-        if arEnabled then
-            arNextRestart = os.time() + AR_INTERVAL
-        end
+        if arEnabled then arNextAt = os.time() + AR_INTERVAL end
         UpdateARUI()
     end)
 
-    -- Hintergrund-Loop: Countdown + Restart feuern
     task.spawn(function()
-        while S.Running and (ScreenGui and ScreenGui.Parent) do
+        while S.Running and ScreenGui.Parent do
             if arEnabled then
-                local now     = os.time()
-                local remain  = math.max(0, arNextRestart - now)
-                local elapsed = AR_INTERVAL - remain
-                local pct     = math.max(0, math.min(1, elapsed / AR_INTERVAL))
-
-                -- Countdown formatieren
-                local m = math.floor(remain / 60)
-                local s = remain % 60
-                arCountdownLbl.Text = string.format("Nächster Restart in: %d:%02d", m, s)
-                arCountdownLbl.TextColor3 = remain < 30 and D.Red or D.Accent
-
-                -- Progressbar
-                local col = pct > 0.9 and D.Red or (pct > 0.6 and D.Yellow or D.CyanDim)
-                Tw(arBarFill, {Size=UDim2.new(pct,0,1,0), BackgroundColor3=col})
-
-                -- Zeit abgelaufen → Restart
+                local now    = os.time()
+                local remain = math.max(0, arNextAt - now)
+                local pct    = math.max(0, math.min(1, (AR_INTERVAL - remain) / AR_INTERVAL))
+                local m,s    = math.floor(remain/60), remain%60
+                arCdLbl.Text = string.format("Nächster Restart: %d:%02d", m, s)
+                arCdLbl.TextColor3 = remain < 30 and D.Red or D.Accent
+                Tw(arBarF,{Size=UDim2.new(pct,0,1,0), BackgroundColor3=pct>.9 and D.Red or pct>.6 and D.Yellow or D.CyanDim})
                 if remain == 0 then
-                    -- Nur feuern wenn Runde aktiv (nicht in Lobby)
                     if not IsInLobby() then
-                        pcall(function()
-                            Svc.RS.Remote.Server.OnGame.RestartMatch:FireServer()
-                        end)
-                        print("[HazeHUB] Auto-Restart ausgelöst (Match Restart Remote gefeuert)")
+                        pcall(function() Svc.RS.Remote.Server.OnGame.RestartMatch:FireServer() end)
+                        print("[HazeHUB] Auto-Restart: RestartMatch gefeuert")
                     end
-                    arNextRestart = os.time() + AR_INTERVAL
+                    arNextAt = os.time() + AR_INTERVAL
                 end
             end
             task.wait(1)
         end
     end)
 
-    -- Puls-Animation für den Dot
     task.spawn(function()
         while S.Running do
-            if arEnabled then
-                Tw(arDot, {BackgroundTransparency=0.6}); task.wait(0.9)
-                Tw(arDot, {BackgroundTransparency=0});   task.wait(0.9)
-            else
-                task.wait(0.5)
-            end
+            if arEnabled then Tw(arDot,{BackgroundTransparency=0.6}); task.wait(0.9); Tw(arDot,{BackgroundTransparency=0}); task.wait(0.9)
+            else task.wait(0.5) end
         end
     end)
 end
@@ -2916,85 +2897,57 @@ local function RefreshPlayerStats()
 end
 NeonBtn(playerStatsCard,"🔄 Stats aktualisieren",D.CyanDim,28).MouseButton1Click:Connect(function() task.spawn(function() pcall(RefreshPlayerStats) end) end)
 
--- ── ERWEITERTE SPIELER-STATS (Profile-Daten) ────────────────
-do
-    local extCard = Instance.new("Frame",statsAndCurrencyRow)
-    -- Volle Breite unter dem Row → extra Frame darunter
+-- ── PROFIL-STATISTIKEN (volle Breite unter Stats + Currency) ──
+local profCard = Card(InvPage); Pad(profCard,10,12,10,12); VList(profCard,6)
+SecLbl(profCard,"📈  PROFIL STATISTIKEN  (Profile.*)")
+
+local function FmtPlaytime(sec)
+    sec=math.floor(tonumber(sec) or 0)
+    local d=math.floor(sec/86400); local h=math.floor((sec%86400)/3600); local m=math.floor((sec%3600)/60)
+    if d>0 then return string.format("%dd %dh %dm",d,h,m) elseif h>0 then return string.format("%dh %dm",h,m) else return string.format("%dm",m) end
 end
-
--- Erweiterter Stats-Block (volle Breite unter dem Row)
-local extStatsCard = Card(InvPage); Pad(extStatsCard,10,12,10,12); VList(extStatsCard,8)
-SecLbl(extStatsCard,"📈  PROFIL STATISTIKEN")
-
--- Hilfsfunktionen für Formatierung
-local function FmtPlaytime(seconds)
-    seconds = math.floor(tonumber(seconds) or 0)
-    local d = math.floor(seconds / 86400)
-    local h = math.floor((seconds % 86400) / 3600)
-    local m = math.floor((seconds % 3600) / 60)
-    if d > 0 then return string.format("%dd %dh %dm", d, h, m)
-    elseif h > 0 then return string.format("%dh %dm", h, m)
-    else return string.format("%dm", m) end
-end
-
-local function FmtDamageShort(n)
-    n = math.floor(tonumber(n) or 0)
-    if n >= 1e12 then return string.format("%.1fT", n/1e12)
-    elseif n >= 1e9  then return string.format("%.1fB", n/1e9)
-    elseif n >= 1e6  then return string.format("%.1fM", n/1e6)
-    elseif n >= 1e3  then return string.format("%.1fK", n/1e3)
+local function FmtDmg(n)
+    n=math.floor(tonumber(n) or 0)
+    if n>=1e12 then return string.format("%.2fT",n/1e12)
+    elseif n>=1e9 then return string.format("%.2fB",n/1e9)
+    elseif n>=1e6 then return string.format("%.2fM",n/1e6)
+    elseif n>=1e3 then return string.format("%.1fK",n/1e3)
     else return tostring(n) end
 end
 
--- Stat-Rows erstellen
-local PROF_STATS = {
-    { key="TotalPlayTime",  label="⏱ Spielzeit",         fmt=FmtPlaytime,     color=D.Cyan   },
-    { key="TraitReroll",    label="🎲 Trait Rerolls",     fmt=FmtNum,          color=D.Purple },
-    { key="TotalDamage",    label="⚔ Total Damage",       fmt=FmtDamageShort,  color=D.Red    },
-    { key="SummonUnits",    label="🌟 Gesummonted Units",  fmt=FmtNum,          color=D.Gold   },
+local PROF_DEFS = {
+    {key="TotalPlayTime",  label="⏱ Spielzeit",          fmt=FmtPlaytime, color=D.Cyan  },
+    {key="TraitReroll",    label="🎲 Trait Rerolls",      fmt=FmtNum,      color=D.Purple},
+    {key="TotalDamage",    label="⚔ Total Damage",        fmt=FmtDmg,      color=D.Red   },
+    {key="SummonUnits",    label="🌟 Gesummonted Units",   fmt=FmtNum,      color=D.Gold  },
 }
-
 H.UI.Lbl.ProfStats = {}
-for _, ps in ipairs(PROF_STATS) do
-    local row = Instance.new("Frame", extStatsCard)
-    row.Size = UDim2.new(1,0,0,30); row.BackgroundColor3=D.CardHover; row.BorderSizePixel=0; Corner(row,7); Stroke(row,ps.color,1,0.55)
-    local acBar = Instance.new("Frame",row); acBar.Size=UDim2.new(0,3,1,0); acBar.BackgroundColor3=ps.color; acBar.BorderSizePixel=0; Corner(acBar,2)
-    local nameLbl = Instance.new("TextLabel",row); nameLbl.Position=UDim2.new(0,10,0,0); nameLbl.Size=UDim2.new(0.6,-10,1,0)
-    nameLbl.BackgroundTransparency=1; nameLbl.Text=ps.label; nameLbl.TextColor3=ps.color
-    nameLbl.TextSize=11; nameLbl.Font=Enum.Font.GothamBold; nameLbl.TextXAlignment=Enum.TextXAlignment.Left
-    local valLbl = Instance.new("TextLabel",row); valLbl.Position=UDim2.new(0.6,0,0,0); valLbl.Size=UDim2.new(0.4,-8,1,0)
-    valLbl.BackgroundTransparency=1; valLbl.Text="–"; valLbl.TextColor3=D.TextHi
-    valLbl.TextSize=12; valLbl.Font=Enum.Font.GothamBold; valLbl.TextXAlignment=Enum.TextXAlignment.Right
-    H.UI.Lbl.ProfStats[ps.key] = { lbl=valLbl, fmt=ps.fmt }
+for _, ps in ipairs(PROF_DEFS) do
+    local row=Instance.new("Frame",profCard); row.Size=UDim2.new(1,0,0,30)
+    row.BackgroundColor3=D.CardHover; row.BorderSizePixel=0; Corner(row,7); Stroke(row,ps.color,1,0.5)
+    local bar=Instance.new("Frame",row); bar.Size=UDim2.new(0,3,1,0); bar.BackgroundColor3=ps.color; bar.BorderSizePixel=0; Corner(bar,2)
+    local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,10,0,0); nL.Size=UDim2.new(0.6,-10,1,0)
+    nL.BackgroundTransparency=1; nL.Text=ps.label; nL.TextColor3=ps.color
+    nL.TextSize=11; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextScaled=false; nL.RichText=true; nL.TextStrokeTransparency=1
+    local vL=Instance.new("TextLabel",row); vL.Position=UDim2.new(0.6,0,0,0); vL.Size=UDim2.new(0.4,-8,1,0)
+    vL.BackgroundTransparency=1; vL.Text="–"; vL.TextColor3=D.TextHi
+    vL.TextSize=12; vL.Font=Enum.Font.GothamBold; vL.TextXAlignment=Enum.TextXAlignment.Right; vL.TextScaled=false; vL.RichText=true; vL.TextStrokeTransparency=1
+    H.UI.Lbl.ProfStats[ps.key] = {lbl=vL, fmt=ps.fmt}
 end
-
 local function RefreshProfStats()
-    for _, ps in ipairs(PROF_STATS) do
-        local entry = H.UI.Lbl.ProfStats[ps.key]
-        if not entry then continue end
+    for _, ps in ipairs(PROF_DEFS) do
+        local e=H.UI.Lbl.ProfStats[ps.key]; if not e then continue end
         pcall(function()
-            local profileFolder = Svc.RS:WaitForChild("Player_Data",3)
-                :WaitForChild(LP.Name,3)
-                :WaitForChild("Profile",3)
-            local val = profileFolder:FindFirstChild(ps.key)
-            if val then
-                entry.lbl.Text = entry.fmt(val.Value)
-                entry.lbl.TextColor3 = D.TextHi
-            else
-                entry.lbl.Text = "–"; entry.lbl.TextColor3 = D.TextLow
-            end
+            local v=Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Profile",3):FindFirstChild(ps.key)
+            if v then e.lbl.Text=e.fmt(v.Value); e.lbl.TextColor3=D.TextHi
+            else e.lbl.Text="–"; e.lbl.TextColor3=D.TextLow end
         end)
     end
 end
-
-NeonBtn(extStatsCard,"🔄 Profil-Stats laden",D.Purple,28).MouseButton1Click:Connect(function()
+NeonBtn(profCard,"🔄 Profil-Stats laden",D.Purple,28).MouseButton1Click:Connect(function()
     task.spawn(function() pcall(RefreshProfStats) end)
 end)
--- Beim Öffnen des Tabs auto-refresh
-task.spawn(function()
-    task.wait(3) -- Warte auf Initialisierung
-    pcall(RefreshProfStats)
-end)
+task.spawn(function() task.wait(4); pcall(RefreshProfStats) end)
 
 -- Währungen (rechts neben Stats)
 local currencyCard=Instance.new("Frame",statsAndCurrencyRow); currencyCard.Size=UDim2.new(0.5,-3,0,0); currencyCard.AutomaticSize=Enum.AutomaticSize.Y; currencyCard.BackgroundColor3=D.Card; currencyCard.BackgroundTransparency=D.GlassPane; currencyCard.BorderSizePixel=0; Corner(currencyCard,8); Stroke(currencyCard,D.Border,1,D.GlassStroke); Pad(currencyCard,10,10,10,10); VList(currencyCard,6)
@@ -3531,6 +3484,7 @@ _G.HazeShared.CraftPage     = CraftPage
 _G.HazeShared.TraitPage     = TraitPage
 _G.HazeShared.TeamsPage     = TeamsPage
 _G.HazeShared.SummonPage    = SummonPage
+_G.HazeShared.AutoBuyList   = _G._AutoBuyList  -- Referenz für Shop-Modul
 
 _G.HazeShared.OnDBReady=function(chapCount,msg)
     pcall(function() S.DBReady=true end) -- Database confirmation removed - status now in header end)
