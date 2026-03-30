@@ -2818,7 +2818,89 @@ local function RefreshPlayerStats()
 end
 NeonBtn(playerStatsCard,"🔄 Stats aktualisieren",D.CyanDim,28).MouseButton1Click:Connect(function() task.spawn(function() pcall(RefreshPlayerStats) end) end)
 
--- Währungen (rechts neben Stats)
+-- ── ★ PROFIL-STATISTIKEN (Damage · Playtime · Summons · Rerolls) ──
+do
+    -- Format-Helfer
+    local function FmtPlaytime(sec)
+        sec = math.floor(tonumber(sec) or 0)
+        local d = math.floor(sec/86400)
+        local h = math.floor((sec%86400)/3600)
+        local m = math.floor((sec%3600)/60)
+        if d > 0 then return string.format("%dt %dh %dm", d, h, m)
+        elseif h > 0 then return string.format("%dh %dm", h, m)
+        else return string.format("%dm", m) end
+    end
+    local function FmtAbbrv(n)
+        n = math.floor(tonumber(n) or 0)
+        if n >= 1e12 then return string.format("%.2fT", n/1e12)
+        elseif n >= 1e9  then return string.format("%.2fB", n/1e9)
+        elseif n >= 1e6  then return string.format("%.1fM", n/1e6)
+        elseif n >= 1e3  then return string.format("%.1fK", n/1e3)
+        else return tostring(n) end
+    end
+
+    local PROF_DEFS = {
+        -- label, icon, color, reader (returns value)
+        { key="TotalDamage",  label="Total Damage",    icon="⚔",  color=D.Red,    fmt=FmtAbbrv,
+          read=function() local v=0; pcall(function() v=tonumber(Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Stats",3):WaitForChild("TotalDamage",2).Value) or 0 end); return v end },
+        { key="TotalPlayTime",label="Spielzeit",       icon="⏱",  color=D.Cyan,   fmt=FmtPlaytime,
+          read=function() local v=0; pcall(function() v=tonumber(Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("TotalPlayTime",2).Value) or 0 end); return v end },
+        { key="SummonUnits",  label="Summons",          icon="🌟",  color=D.Gold,   fmt=FmtNum,
+          read=function() local v=0; pcall(function() v=tonumber(Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Profile",2):WaitForChild("SummonUnits",2).Value) or 0 end); return v end },
+        { key="TraitReroll",  label="Trait Rerolls",   icon="🎲",  color=D.Purple, fmt=FmtNum,
+          read=function() local v=0; pcall(function() v=tonumber(Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Profile",2):WaitForChild("TraitReroll",2).Value) or 0 end); return v end },
+    }
+
+    SecLbl(playerStatsCard,"📈 PROFIL STATISTIKEN")
+    local profValLabels = {}
+
+    for _, pd in ipairs(PROF_DEFS) do
+        local row = Instance.new("Frame",playerStatsCard)
+        row.Size=UDim2.new(1,0,0,30); row.BackgroundColor3=D.CardHover; row.BorderSizePixel=0
+        Corner(row,7); Stroke(row,pd.color,1,0.55)
+        local acBar=Instance.new("Frame",row); acBar.Size=UDim2.new(0,3,1,0); acBar.BackgroundColor3=pd.color; acBar.BorderSizePixel=0; Corner(acBar,2)
+        local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,10,0,0); nL.Size=UDim2.new(0.6,-10,1,0)
+        nL.BackgroundTransparency=1; nL.Text=pd.icon.."  "..pd.label; nL.TextColor3=pd.color
+        nL.TextSize=11; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left
+        nL.TextScaled=false; nL.RichText=true; nL.TextStrokeTransparency=1
+        local vL=Instance.new("TextLabel",row); vL.Position=UDim2.new(0.6,0,0,0); vL.Size=UDim2.new(0.4,-8,1,0)
+        vL.BackgroundTransparency=1; vL.Text="–"; vL.TextColor3=D.TextHi
+        vL.TextSize=12; vL.Font=Enum.Font.GothamBold; vL.TextXAlignment=Enum.TextXAlignment.Right
+        vL.TextScaled=false; vL.RichText=true; vL.TextStrokeTransparency=1
+        profValLabels[pd.key] = { lbl=vL, pd=pd }
+    end
+
+    local function RefreshProfStats()
+        for key, entry in pairs(profValLabels) do
+            pcall(function()
+                local val = entry.pd.read()
+                if val ~= nil and val ~= 0 then
+                    entry.lbl.Text = entry.pd.fmt(val)
+                    entry.lbl.TextColor3 = D.TextHi
+                else
+                    entry.lbl.Text = "–"
+                    entry.lbl.TextColor3 = D.TextLow
+                end
+            end)
+        end
+    end
+
+    NeonBtn(playerStatsCard,"📊 Profil-Stats laden",D.Purple,26).MouseButton1Click:Connect(function()
+        task.spawn(function() pcall(RefreshProfStats) end)
+    end)
+
+    -- Auto-load beim Tab-Öffnen
+    task.spawn(function()
+        task.wait(3)
+        pcall(RefreshProfStats)
+    end)
+    task.spawn(function()
+        while S.Running do
+            task.wait(30)
+            if S.ActiveTab == "Inventory" then pcall(RefreshProfStats) end
+        end
+    end)
+end
 local currencyCard=Instance.new("Frame",statsAndCurrencyRow); currencyCard.Size=UDim2.new(0.5,-3,0,0); currencyCard.AutomaticSize=Enum.AutomaticSize.Y; currencyCard.BackgroundColor3=D.Card; currencyCard.BackgroundTransparency=D.GlassPane; currencyCard.BorderSizePixel=0; Corner(currencyCard,8); Stroke(currencyCard,D.Border,1,D.GlassStroke); Pad(currencyCard,10,10,10,10); VList(currencyCard,6)
 SecLbl(currencyCard,"💰 SHOP CURRENCY")
 local CURRENCIES={{key="Boss Coins",icon="🏆",color=D.Gold},{key="Esper Token",icon="🔮",color=D.Purple},{key="Cursed Scrolls",icon="📜",color=D.Lavender},{key="Cursed Essence",icon="💜",color=D.Purple},{key="CurseToken",icon="🌀",color=D.Cyan},{key="Gem",icon="💎",color=D.Cyan},{key="Gold",icon="🟡",color=D.Gold},{key="Sol Token",icon="☀️",color=D.Orange},{key="RCCells",icon="🔬",color=D.Teal}}
