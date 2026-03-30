@@ -158,6 +158,7 @@ _G.GlobalSession = GlobalSession
 
 -- === GLOBALE HAZEHUB TABELLE (SYNCHRONISATION) ===
 _G.HazeHUB = {}
+_G.HazeHUB.Modules = {}   -- Modul-Ergebnis-Tabellen landen hier
 _G.HazeHUB_Loaded = false
 _G.HazeHUB_Ready = false
 
@@ -1426,13 +1427,6 @@ local function SaveConfig()
     H.Config.GuiVisible = S.GuiVisible
     H.Config.SavedGoals={}
     for _,g in ipairs(S.Goals) do table.insert(H.Config.SavedGoals,{item=g.item,amount=g.amount}) end
-    -- Auto-Buy Liste persistieren
-    if _G._AutoBuyList then
-        H.Config.AutoBuyItems = {}
-        for iname,_ in pairs(_G._AutoBuyList) do
-            table.insert(H.Config.AutoBuyItems, iname)
-        end
-    end
     if writefile then pcall(function() writefile(GetAutoSaveFilePath(), Svc.Http:JSONEncode(H.Config)) end) end
 end
 local function LoadConfig()
@@ -1451,15 +1445,6 @@ local function LoadConfig()
         for _,g in ipairs(data.SavedGoals) do
             if g.item and tonumber(g.amount) then
                 table.insert(S.Goals,{item=g.item,amount=tonumber(g.amount),reached=false})
-            end
-        end
-    end
-    -- Auto-Buy Liste wiederherstellen
-    if data.AutoBuyItems and type(data.AutoBuyItems)=="table" then
-        _G._AutoBuyList = _G._AutoBuyList or {}
-        for _, iname in ipairs(data.AutoBuyItems) do
-            if type(iname)=="string" and iname~="" then
-                _G._AutoBuyList[iname] = true
             end
         end
     end
@@ -2262,7 +2247,7 @@ _G.HazeShared.TraitPage     = TraitPage
 _G.HazeShared.TraitSticky   = TraitSticky
 _G.HazeShared.TraitPageRoot = TraitRoot
 _G.HazeShared.TeamsPage     = TeamsPage
-_G.HazeShared.SummonPage    = SummonPage
+_G.HazeShared.SummonPage    = SummonPage  -- ← für summon.lua
 
 -- ── Touch / Mobile Layout Sync (Tabs + Trait-Modul) ───────────
 local function UpdateLayoutForMobile()
@@ -2719,89 +2704,6 @@ NeonBtn(SessPage,"🗑  Session zurücksetzen",D.Red,34).MouseButton1Click:Conne
     S.GoalsNotified = {}
     UpdateSessionUI()
 end)
-
--- ╔══════════════════════════════════════════════════════════╗
---  AUTO-RESTART (10-Minuten Match-Loop)
--- ╚══════════════════════════════════════════════════════════╝
-do
-    local AR_INTERVAL = 10 * 60
-    local arEnabled   = false
-    local arNextAt    = 0
-
-    local arCard = Card(SessPage); Pad(arCard,10,12,10,12); VList(arCard,8)
-    SecLbl(arCard,"🔁  AUTO-RESTART")
-
-    local arTopRow = Instance.new("Frame",arCard)
-    arTopRow.Size=UDim2.new(1,0,0,22); arTopRow.BackgroundTransparency=1; HList(arTopRow,8)
-    local arDot = Instance.new("Frame",arTopRow)
-    arDot.Size=UDim2.new(0,10,0,10); arDot.BackgroundColor3=D.TextLow; arDot.BorderSizePixel=0; Corner(arDot,99)
-    local arStatLbl = Instance.new("TextLabel",arTopRow)
-    arStatLbl.Size=UDim2.new(1,-20,1,0); arStatLbl.BackgroundTransparency=1
-    arStatLbl.Text="Auto-Restart  —  Inaktiv"; arStatLbl.TextColor3=D.TextLow
-    arStatLbl.TextSize=13; arStatLbl.Font=Enum.Font.GothamBold; arStatLbl.TextXAlignment=Enum.TextXAlignment.Left
-    arStatLbl.TextScaled=false; arStatLbl.RichText=true; arStatLbl.TextStrokeTransparency=1
-
-    local arCdLbl = Instance.new("TextLabel",arCard)
-    arCdLbl.Size=UDim2.new(1,0,0,18); arCdLbl.BackgroundTransparency=1
-    arCdLbl.Text="Nächster Restart: –"; arCdLbl.TextColor3=D.TextMid
-    arCdLbl.TextSize=12; arCdLbl.Font=Enum.Font.GothamMedium; arCdLbl.TextXAlignment=Enum.TextXAlignment.Left
-    arCdLbl.TextScaled=false; arCdLbl.RichText=true; arCdLbl.TextStrokeTransparency=1
-
-    local arBarBg = Instance.new("Frame",arCard)
-    arBarBg.Size=UDim2.new(1,0,0,6); arBarBg.BackgroundColor3=Color3.fromRGB(20,28,50); arBarBg.BorderSizePixel=0; Corner(arBarBg,4)
-    local arBarF = Instance.new("Frame",arBarBg)
-    arBarF.Size=UDim2.new(0,0,1,0); arBarF.BackgroundColor3=D.CyanDim; arBarF.BorderSizePixel=0; Corner(arBarF,4)
-
-    local arBtn = NeonBtn(arCard,"▶  Auto-Restart AN",D.CyanDim,32)
-
-    local function UpdateARUI()
-        if arEnabled then
-            arDot.BackgroundColor3=D.Green; arStatLbl.Text="Auto-Restart  —  Aktiv"; arStatLbl.TextColor3=D.Green
-            arBtn.Text="⏹  Auto-Restart AUS"; arBtn.TextColor3=D.Red; Stroke(arBtn,D.Red,1,0.4)
-        else
-            arDot.BackgroundColor3=D.TextLow; arStatLbl.Text="Auto-Restart  —  Inaktiv"; arStatLbl.TextColor3=D.TextLow
-            arCdLbl.Text="Nächster Restart: –"; arCdLbl.TextColor3=D.TextMid
-            Tw(arBarF,{Size=UDim2.new(0,0,1,0)})
-            arBtn.Text="▶  Auto-Restart AN"; arBtn.TextColor3=D.CyanDim; Stroke(arBtn,D.CyanDim,1,0.4)
-        end
-    end
-
-    arBtn.MouseButton1Click:Connect(function()
-        arEnabled = not arEnabled
-        if arEnabled then arNextAt = os.time() + AR_INTERVAL end
-        UpdateARUI()
-    end)
-
-    task.spawn(function()
-        while S.Running and ScreenGui.Parent do
-            if arEnabled then
-                local now    = os.time()
-                local remain = math.max(0, arNextAt - now)
-                local pct    = math.max(0, math.min(1, (AR_INTERVAL - remain) / AR_INTERVAL))
-                local m,s    = math.floor(remain/60), remain%60
-                arCdLbl.Text = string.format("Nächster Restart: %d:%02d", m, s)
-                arCdLbl.TextColor3 = remain < 30 and D.Red or D.Accent
-                Tw(arBarF,{Size=UDim2.new(pct,0,1,0), BackgroundColor3=pct>.9 and D.Red or pct>.6 and D.Yellow or D.CyanDim})
-                if remain == 0 then
-                    if not IsInLobby() then
-                        pcall(function() Svc.RS.Remote.Server.OnGame.RestartMatch:FireServer() end)
-                        print("[HazeHUB] Auto-Restart: RestartMatch gefeuert")
-                    end
-                    arNextAt = os.time() + AR_INTERVAL
-                end
-            end
-            task.wait(1)
-        end
-    end)
-
-    task.spawn(function()
-        while S.Running do
-            if arEnabled then Tw(arDot,{BackgroundTransparency=0.6}); task.wait(0.9); Tw(arDot,{BackgroundTransparency=0}); task.wait(0.9)
-            else task.wait(0.5) end
-        end
-    end)
-end
-
 end) -- end pcall Session Tab
 
 -- ╔══════════════════════════════════════════════════════════╗
@@ -2896,58 +2798,6 @@ local function RefreshPlayerStats()
     end
 end
 NeonBtn(playerStatsCard,"🔄 Stats aktualisieren",D.CyanDim,28).MouseButton1Click:Connect(function() task.spawn(function() pcall(RefreshPlayerStats) end) end)
-
--- ── PROFIL-STATISTIKEN (volle Breite unter Stats + Currency) ──
-local profCard = Card(InvPage); Pad(profCard,10,12,10,12); VList(profCard,6)
-SecLbl(profCard,"📈  PROFIL STATISTIKEN  (Profile.*)")
-
-local function FmtPlaytime(sec)
-    sec=math.floor(tonumber(sec) or 0)
-    local d=math.floor(sec/86400); local h=math.floor((sec%86400)/3600); local m=math.floor((sec%3600)/60)
-    if d>0 then return string.format("%dd %dh %dm",d,h,m) elseif h>0 then return string.format("%dh %dm",h,m) else return string.format("%dm",m) end
-end
-local function FmtDmg(n)
-    n=math.floor(tonumber(n) or 0)
-    if n>=1e12 then return string.format("%.2fT",n/1e12)
-    elseif n>=1e9 then return string.format("%.2fB",n/1e9)
-    elseif n>=1e6 then return string.format("%.2fM",n/1e6)
-    elseif n>=1e3 then return string.format("%.1fK",n/1e3)
-    else return tostring(n) end
-end
-
-local PROF_DEFS = {
-    {key="TotalPlayTime",  label="⏱ Spielzeit",          fmt=FmtPlaytime, color=D.Cyan  },
-    {key="TraitReroll",    label="🎲 Trait Rerolls",      fmt=FmtNum,      color=D.Purple},
-    {key="TotalDamage",    label="⚔ Total Damage",        fmt=FmtDmg,      color=D.Red   },
-    {key="SummonUnits",    label="🌟 Gesummonted Units",   fmt=FmtNum,      color=D.Gold  },
-}
-H.UI.Lbl.ProfStats = {}
-for _, ps in ipairs(PROF_DEFS) do
-    local row=Instance.new("Frame",profCard); row.Size=UDim2.new(1,0,0,30)
-    row.BackgroundColor3=D.CardHover; row.BorderSizePixel=0; Corner(row,7); Stroke(row,ps.color,1,0.5)
-    local bar=Instance.new("Frame",row); bar.Size=UDim2.new(0,3,1,0); bar.BackgroundColor3=ps.color; bar.BorderSizePixel=0; Corner(bar,2)
-    local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,10,0,0); nL.Size=UDim2.new(0.6,-10,1,0)
-    nL.BackgroundTransparency=1; nL.Text=ps.label; nL.TextColor3=ps.color
-    nL.TextSize=11; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextScaled=false; nL.RichText=true; nL.TextStrokeTransparency=1
-    local vL=Instance.new("TextLabel",row); vL.Position=UDim2.new(0.6,0,0,0); vL.Size=UDim2.new(0.4,-8,1,0)
-    vL.BackgroundTransparency=1; vL.Text="–"; vL.TextColor3=D.TextHi
-    vL.TextSize=12; vL.Font=Enum.Font.GothamBold; vL.TextXAlignment=Enum.TextXAlignment.Right; vL.TextScaled=false; vL.RichText=true; vL.TextStrokeTransparency=1
-    H.UI.Lbl.ProfStats[ps.key] = {lbl=vL, fmt=ps.fmt}
-end
-local function RefreshProfStats()
-    for _, ps in ipairs(PROF_DEFS) do
-        local e=H.UI.Lbl.ProfStats[ps.key]; if not e then continue end
-        pcall(function()
-            local v=Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Profile",3):FindFirstChild(ps.key)
-            if v then e.lbl.Text=e.fmt(v.Value); e.lbl.TextColor3=D.TextHi
-            else e.lbl.Text="–"; e.lbl.TextColor3=D.TextLow end
-        end)
-    end
-end
-NeonBtn(profCard,"🔄 Profil-Stats laden",D.Purple,28).MouseButton1Click:Connect(function()
-    task.spawn(function() pcall(RefreshProfStats) end)
-end)
-task.spawn(function() task.wait(4); pcall(RefreshProfStats) end)
 
 -- Währungen (rechts neben Stats)
 local currencyCard=Instance.new("Frame",statsAndCurrencyRow); currencyCard.Size=UDim2.new(0.5,-3,0,0); currencyCard.AutomaticSize=Enum.AutomaticSize.Y; currencyCard.BackgroundColor3=D.Card; currencyCard.BackgroundTransparency=D.GlassPane; currencyCard.BorderSizePixel=0; Corner(currencyCard,8); Stroke(currencyCard,D.Border,1,D.GlassStroke); Pad(currencyCard,10,10,10,10); VList(currencyCard,6)
@@ -3483,8 +3333,7 @@ _G.HazeShared.ShopContainer = ShopPage
 _G.HazeShared.CraftPage     = CraftPage
 _G.HazeShared.TraitPage     = TraitPage
 _G.HazeShared.TeamsPage     = TeamsPage
-_G.HazeShared.SummonPage    = SummonPage
-_G.HazeShared.AutoBuyList   = _G._AutoBuyList  -- Referenz für Shop-Modul
+_G.HazeShared.SummonPage    = SummonPage  -- ← final assignment (nach vollst. HazeShared-Init)
 
 _G.HazeShared.OnDBReady=function(chapCount,msg)
     pcall(function() S.DBReady=true end) -- Database confirmation removed - status now in header end)
@@ -3500,6 +3349,16 @@ _G.HazeShared.SetModuleLoaded=function(version)
             H.UI.Lbl.ModulStatus.Text = string.format("🟢  Autofarm-Modul v%s [Datenbank: %s]", _G.HazeShared.Version, hasDb and "GELADEN" or "FEHLT")
             H.UI.Lbl.ModulStatus.TextColor3 = hasDb and D.GreenBright or D.Orange
         end
+    end)
+end
+-- Wird vom Summon-Modul aufgerufen wenn es erfolgreich geladen hat
+_G.HazeShared.SetSummonLoaded = function(version)
+    pcall(function()
+        if H.UI.Lbl.ModulStatus then
+            H.UI.Lbl.ModulStatus.Text = string.format("🟢  HazeHUB bereit  [Summon v%s]", tostring(version or "?"))
+            H.UI.Lbl.ModulStatus.TextColor3 = D.GreenBright
+        end
+        print("[HazeHUB] Summon-Modul bereit – v" .. tostring(version or "?"))
     end)
 end
 
@@ -3583,123 +3442,116 @@ end)
 local function LoadModule(url,name,delay,onErr)
     task.spawn(function()
         task.wait(delay or 1)
-        
-        -- Warte bis das Hauptskript vollständig geladen ist
         repeat task.wait(0.5) until _G.HazeHUB_Ready == true
-        
-        -- Stelle sicher, dass alle globalen Funktionen und Variablen verfügbar sind
-        if not _G.HazeHubFunctions then
-            _G.HazeHubFunctions = {}
-        end
-        
-        -- Fülle ALLE möglichen Funktionen mit _G.HazeHUB Referenzen auf
+
+        if not _G.HazeHubFunctions then _G.HazeHubFunctions = {} end
+
         local fallbackFunctions = {
-            ToggleAntiAFK = _G.HazeHUB.ToggleAntiAFK or function() warn("[HazeHUB] ToggleAntiAFK nicht implementiert") end,
-            StartRaid = _G.HazeHUB.StartRaid or function() warn("[HazeHUB] StartRaid nicht implementiert") end,
-            StopRaid = _G.HazeHUB.StopRaid or function() warn("[HazeHUB] StopRaid nicht implementiert") end,
-            SetGoalFromInventory = _G.HazeHUB.SetGoalFromInventory or function() warn("[HazeHUB] SetGoalFromInventory nicht implementiert") end,
-            SetKeyDisplay = _G.HazeHUB.SetKeyDisplay or function() warn("[HazeHUB] SetKeyDisplay nicht implementiert") end,
-            UpdateAutoRetryUI = _G.HazeHUB.UpdateAutoRetryUI or function() warn("[HazeHUB] UpdateAutoRetryUI nicht implementiert") end,
-            UpdateGoalsUI = _G.HazeHUB.UpdateGoalsUI or function() warn("[HazeHUB] UpdateGoalsUI nicht implementiert") end,
-            UpdateSessionUI = _G.HazeHUB.UpdateSessionUI or function() warn("[HazeHUB] UpdateSessionUI nicht implementiert") end,
-            RebuildWorldList = _G.HazeHUB.RebuildWorldList or function() warn("[HazeHUB] RebuildWorldList nicht implementiert") end,
-            LoadWorldCache = _G.HazeHUB.LoadWorldCache or function() warn("[HazeHUB] LoadWorldCache nicht implementiert") end,
-            SaveWorldData = _G.HazeHUB.SaveWorldData or function() warn("[HazeHUB] SaveWorldData nicht implementiert") end,
-            SendWebhook = _G.HazeHUB.SendWebhook or function() warn("[HazeHUB] SendWebhook nicht implementiert") end,
-            AccumulateRewards = _G.HazeHUB.AccumulateRewards or function() warn("[HazeHUB] AccumulateRewards nicht implementiert") end,
-            RefreshPlayerStats = _G.HazeHUB.RefreshPlayerStats or function() warn("[HazeHUB] RefreshPlayerStats nicht implementiert") end,
-            SelectTab = _G.HazeHUB.SelectTab or function() warn("[HazeHUB] SelectTab nicht implementiert") end,
-            OnMiniBtnClick = _G.HazeHUB.OnMiniBtnClick or function() warn("[HazeHUB] OnMiniBtnClick nicht implementiert") end,
-            ToggleHubGui = _G.HazeHUB.ToggleHubGui or function() warn("[HazeHUB] ToggleHubGui nicht implementiert") end,
-            BuildItemPreview = _G.HazeHUB.BuildItemPreview or function() warn("[HazeHUB] BuildItemPreview nicht implementiert") end,
-            LoadItemViewport = _G.HazeHUB.LoadItemViewport or function() warn("[HazeHUB] LoadItemViewport nicht implementiert") end,
-            GetItemTextureId = _G.HazeHUB.GetItemTextureId or function() warn("[HazeHUB] GetItemTextureId nicht implementiert") end,
-            ApplySharpTypography = _G.HazeHUB.ApplySharpTypography or function() warn("[HazeHUB] ApplySharpTypography nicht implementiert") end,
-            FireCreateAndStart = _G.HazeHUB.FireCreateAndStart or function() warn("[HazeHUB] FireCreateAndStart nicht implementiert") end,
-            FireVoteRetry = _G.HazeHUB.FireVoteRetry or function() warn("[HazeHUB] FireVoteRetry nicht implementiert") end,
-            TeleportToLobby = _G.HazeHUB.TeleportToLobby or function() warn("[HazeHUB] TeleportToLobby nicht implementiert") end,
-            IsInLobby = _G.HazeHUB.IsInLobby or function() warn("[HazeHUB] IsInLobby nicht implementiert") end,
-            SaveConfig = _G.HazeHUB.SaveConfig or function() warn("[HazeHUB] SaveConfig nicht implementiert") end,
-            LoadConfig = _G.HazeHUB.LoadConfig or function() warn("[HazeHUB] LoadConfig nicht implementiert") end,
-            SaveSettings = _G.HazeHUB.SaveSettings or function() warn("[HazeHUB] SaveSettings nicht implementiert") end,
-            LoadSettings = _G.HazeHUB.LoadSettings or function() warn("[HazeHUB] LoadSettings nicht implementiert") end,
-            GetSettingsFilePath = _G.HazeHUB.GetSettingsFilePath or function() warn("[HazeHUB] GetSettingsFilePath nicht implementiert") end,
-            GetAutoSaveFilePath = _G.HazeHUB.GetAutoSaveFilePath or function() warn("[HazeHUB] GetAutoSaveFilePath nicht implementiert") end,
-            GetInvAmt = _G.HazeHUB.GetInvAmt or function() warn("[HazeHUB] GetInvAmt nicht implementiert") end,
-            FmtDur = _G.HazeHUB.FmtDur or function() warn("[HazeHUB] FmtDur nicht implementiert") end,
-            FmtNum = _G.HazeHUB.FmtNum or function() warn("[HazeHUB] FmtNum nicht implementiert") end,
-            formatTime = _G.HazeHUB.formatTime or function() warn("[HazeHUB] formatTime nicht implementiert") end,
-            Tw = _G.HazeHUB.Tw or function() warn("[HazeHUB] Tw nicht implementiert") end,
-            Corner = _G.HazeHUB.Corner or function() warn("[HazeHUB] Corner nicht implementiert") end,
-            Stroke = _G.HazeHUB.Stroke or function() warn("[HazeHUB] Stroke nicht implementiert") end,
-            Pad = _G.HazeHUB.Pad or function() warn("[HazeHUB] Pad nicht implementiert") end,
-            VList = _G.HazeHUB.VList or function() warn("[HazeHUB] VList nicht implementiert") end,
-            HList = _G.HazeHUB.HList or function() warn("[HazeHUB] HList nicht implementiert") end,
-            MkLbl = _G.HazeHUB.MkLbl or function() warn("[HazeHUB] MkLbl nicht implementiert") end,
-            SecLbl = _G.HazeHUB.SecLbl or function() warn("[HazeHUB] SecLbl nicht implementiert") end,
-            MkInput = _G.HazeHUB.MkInput or function() warn("[HazeHUB] MkInput nicht implementiert") end,
-            Card = _G.HazeHUB.Card or function() warn("[HazeHUB] Card nicht implementiert") end,
-            NeonBtn = _G.HazeHUB.NeonBtn or function() warn("[HazeHUB] NeonBtn nicht implementiert") end,
-            StartAutofarm = _G.HazeHUB.StartAutofarm or function() warn("[HazeHUB] StartAutofarm nicht implementiert") end,
-            StopAutofarm = _G.HazeHUB.StopAutofarm or function() warn("[HazeHUB] StopAutofarm nicht implementiert") end,
-            UpdateStatus = _G.HazeHUB.UpdateStatus or function() warn("[HazeHUB] UpdateStatus nicht implementiert") end
+            ToggleAntiAFK = _G.HazeHUB.ToggleAntiAFK or function() end,
+            StartRaid = _G.HazeHUB.StartRaid or function() end,
+            StopRaid = _G.HazeHUB.StopRaid or function() end,
+            SetGoalFromInventory = _G.HazeHUB.SetGoalFromInventory or function() end,
+            SetKeyDisplay = _G.HazeHUB.SetKeyDisplay or function() end,
+            UpdateAutoRetryUI = _G.HazeHUB.UpdateAutoRetryUI or function() end,
+            UpdateGoalsUI = _G.HazeHUB.UpdateGoalsUI or function() end,
+            UpdateSessionUI = _G.HazeHUB.UpdateSessionUI or function() end,
+            RebuildWorldList = _G.HazeHUB.RebuildWorldList or function() end,
+            LoadWorldCache = _G.HazeHUB.LoadWorldCache or function() end,
+            SaveWorldData = _G.HazeHUB.SaveWorldData or function() end,
+            SendWebhook = _G.HazeHUB.SendWebhook or function() end,
+            AccumulateRewards = _G.HazeHUB.AccumulateRewards or function() end,
+            RefreshPlayerStats = _G.HazeHUB.RefreshPlayerStats or function() end,
+            SelectTab = _G.HazeHUB.SelectTab or function() end,
+            OnMiniBtnClick = _G.HazeHUB.OnMiniBtnClick or function() end,
+            ToggleHubGui = _G.HazeHUB.ToggleHubGui or function() end,
+            BuildItemPreview = _G.HazeHUB.BuildItemPreview or function() end,
+            LoadItemViewport = _G.HazeHUB.LoadItemViewport or function() end,
+            GetItemTextureId = _G.HazeHUB.GetItemTextureId or function() end,
+            ApplySharpTypography = _G.HazeHUB.ApplySharpTypography or function() end,
+            FireCreateAndStart = _G.HazeHUB.FireCreateAndStart or function() end,
+            FireVoteRetry = _G.HazeHUB.FireVoteRetry or function() end,
+            TeleportToLobby = _G.HazeHUB.TeleportToLobby or function() end,
+            IsInLobby = _G.HazeHUB.IsInLobby or function() end,
+            SaveConfig = _G.HazeHUB.SaveConfig or function() end,
+            LoadConfig = _G.HazeHUB.LoadConfig or function() end,
+            SaveSettings = _G.HazeHUB.SaveSettings or function() end,
+            LoadSettings = _G.HazeHUB.LoadSettings or function() end,
+            GetSettingsFilePath = _G.HazeHUB.GetSettingsFilePath or function() end,
+            GetAutoSaveFilePath = _G.HazeHUB.GetAutoSaveFilePath or function() end,
+            GetInvAmt = _G.HazeHUB.GetInvAmt or function() end,
+            FmtDur = _G.HazeHUB.FmtDur or function() end,
+            FmtNum = _G.HazeHUB.FmtNum or function() end,
+            formatTime = _G.HazeHUB.formatTime or function() end,
+            Tw = _G.HazeHUB.Tw or function() end,
+            Corner = _G.HazeHUB.Corner or function() end,
+            Stroke = _G.HazeHUB.Stroke or function() end,
+            Pad = _G.HazeHUB.Pad or function() end,
+            VList = _G.HazeHUB.VList or function() end,
+            HList = _G.HazeHUB.HList or function() end,
+            MkLbl = _G.HazeHUB.MkLbl or function() end,
+            SecLbl = _G.HazeHUB.SecLbl or function() end,
+            MkInput = _G.HazeHUB.MkInput or function() end,
+            Card = _G.HazeHUB.Card or function() end,
+            NeonBtn = _G.HazeHUB.NeonBtn or function() end,
+            StartAutofarm = _G.HazeHUB.StartAutofarm or function() end,
+            StopAutofarm = _G.HazeHUB.StopAutofarm or function() end,
+            UpdateStatus = _G.HazeHUB.UpdateStatus or function() end,
         }
-        
-        -- Registriere alle Fallback-Funktionen
-        for funcName, funcImpl in pairs(fallbackFunctions) do
-            if not _G.HazeHubFunctions[funcName] then
-                _G.HazeHubFunctions[funcName] = funcImpl
-            end
+        for fn, fi in pairs(fallbackFunctions) do
+            if not _G.HazeHubFunctions[fn] then _G.HazeHubFunctions[fn] = fi end
         end
-        
-        -- Stelle sicher, dass _G.HazeShared auch verfügbar ist
-        if not _G.HazeShared then
-            _G.HazeShared = {}
-        end
-        
-        -- Fülle kritische _G.HazeShared Funktionen
-        if not _G.HazeShared.SetModuleLoaded then
-            _G.HazeShared.SetModuleLoaded = function(version) 
-                warn("[HazeHUB] SetModuleLoaded nicht implementiert") 
-            end
-        end
-        
-        if not _G.HazeShared.OnDBReady then
-            _G.HazeShared.OnDBReady = function() 
-                warn("[HazeHUB] OnDBReady nicht implementiert") 
-            end
-        end
-        
-        -- Stelle sicher, dass globale UI-Referenzen existieren
+
+        if not _G.HazeShared then _G.HazeShared = {} end
+        if not _G.HazeShared.SetModuleLoaded then _G.HazeShared.SetModuleLoaded = function() end end
+        if not _G.HazeShared.OnDBReady then _G.HazeShared.OnDBReady = function() end end
         if not H then H = {} end
         if not H.UI then H.UI = {} end
         if not H.Config then H.Config = {} end
         if not S then S = {} end
-        
-        local httpOk,raw=pcall(function() return game:HttpGet(url) end)
-        if not httpOk or not raw or #raw<20 then
-            warn("[HazeHUB] "..name..": HttpGet fehlgeschlagen")
-            if onErr then pcall(onErr,"HttpGet fehlgeschlagen") end; return
+        if not _G.HazeHUB.Modules then _G.HazeHUB.Modules = {} end
+
+        -- ── HTTP laden ──────────────────────────────────────────
+        local httpOk, raw = pcall(function() return game:HttpGet(url) end)
+        if not httpOk or not raw or #raw < 20 then
+            warn("[HazeHUB] " .. name .. ": HttpGet fehlgeschlagen – " .. tostring(raw))
+            if onErr then pcall(onErr, "HttpGet fehlgeschlagen") end
+            return
         end
-        
-        -- Fange loadstring Fehler ab und gib detaillierte Informationen
-        local execOk,execErr=pcall(function() 
-            -- Erstelle eine sichere Umgebung für das Modul
-            local success, modResult = pcall(function() 
-                return loadstring(raw)() 
-            end)
-            if not success then
-                error("Modul-Ausführungsfehler: " .. tostring(modResult))
+
+        -- ── Kompilieren (loadstring) ─────────────────────────────
+        -- WICHTIG: loadstring gibt (nil, errMsg) zurück bei Syntaxfehlern.
+        -- Den nil-Check VOR dem Aufruf machen, sonst: "attempt to call a nil value".
+        local compiledFn, compileErr = loadstring(raw)
+        if not compiledFn then
+            local msg = "Kompilierungsfehler: " .. tostring(compileErr)
+            warn("[HazeHUB] " .. name .. " – " .. msg)
+            if onErr then pcall(onErr, msg:sub(1,80)) end
+            return
+        end
+
+        -- ── Ausführen ────────────────────────────────────────────
+        local runOk, runResult = pcall(compiledFn)
+        if not runOk then
+            local msg = "Ausführungsfehler: " .. tostring(runResult)
+            warn("[HazeHUB] " .. name .. " – " .. msg)
+            if onErr then pcall(onErr, msg:sub(1,80)) end
+            return
+        end
+
+        -- ── Ergebnis in Modules-Tabelle speichern ───────────────
+        -- Module die eine Return-Tabelle liefern → _G.HazeHUB.Modules[name]
+        if type(runResult) == "table" then
+            _G.HazeHUB.Modules[name] = runResult
+            -- Init-Funktion aufrufen wenn vorhanden
+            if type(runResult.Init) == "function" then
+                local initOk, initErr = pcall(runResult.Init)
+                if not initOk then
+                    warn("[HazeHUB] " .. name .. ".Init() Fehler: " .. tostring(initErr):sub(1,80))
+                end
             end
-            return modResult
-        end)
-        
-        if not execOk then
-            warn("[HazeHUB] "..name.." Fehler: "..tostring(execErr):sub(1,120))
-            if onErr then pcall(onErr,tostring(execErr):sub(1,60)) end
-        else 
-            print("[HazeHUB] Modul '"..name.."' geladen.") 
         end
+
+        print("[HazeHUB] Modul '" .. name .. "' erfolgreich geladen.")
     end)
 end
 
@@ -3727,13 +3579,76 @@ LoadModule(K.TEAMS_URL, "Teams", 5, function(err)
         end
     end)
 end)
-LoadModule(K.SUMMON_URL, "Summon", 6, function(err)
-    pcall(function()
-        if _G._SummonWaitLbl then
-            _G._SummonWaitLbl.Text = "❌ Summon-Fehler: " .. err
-            _G._SummonWaitLbl.TextColor3 = D.Red
+
+-- Summon-Modul mit Retry-Mechanismus (bis zu 3 Versuche)
+task.spawn(function()
+    local maxTries = 3
+    for attempt = 1, maxTries do
+        task.wait(6 + (attempt - 1) * 5)  -- 6s, 11s, 16s
+        repeat task.wait(0.5) until _G.HazeHUB_Ready == true
+
+        -- Prüfe ob Modul bereits erfolgreich geladen wurde
+        if _G.HazeHUB.Modules and _G.HazeHUB.Modules["Summon"] then break end
+
+        print(string.format("[HazeHUB] Summon-Modul Ladeversuch %d/%d...", attempt, maxTries))
+
+        local httpOk, raw = pcall(function() return game:HttpGet(K.SUMMON_URL) end)
+        if not httpOk or not raw or #raw < 20 then
+            warn("[HazeHUB] Summon HttpGet Versuch " .. attempt .. " fehlgeschlagen")
+            if attempt == maxTries then
+                pcall(function()
+                    if _G._SummonWaitLbl then
+                        _G._SummonWaitLbl.Text = "❌ Summon: Netzwerk-Fehler nach " .. maxTries .. " Versuchen"
+                        _G._SummonWaitLbl.TextColor3 = D.Red
+                    end
+                end)
+            end
+            continue
         end
-    end)
+
+        -- loadstring nil-Check (Kern-Fix für "attempt to call a nil value")
+        local compiledFn, compileErr = loadstring(raw)
+        if not compiledFn then
+            warn("[HazeHUB] Summon Kompilierungsfehler: " .. tostring(compileErr))
+            pcall(function()
+                if _G._SummonWaitLbl then
+                    _G._SummonWaitLbl.Text = "❌ Syntax-Fehler im Summon-Modul"
+                    _G._SummonWaitLbl.TextColor3 = D.Red
+                end
+            end)
+            break  -- Syntaxfehler: Retry bringt nichts
+        end
+
+        -- Ausführen
+        local runOk, runResult = pcall(compiledFn)
+        if not runOk then
+            warn("[HazeHUB] Summon Ausführungsfehler: " .. tostring(runResult):sub(1,120))
+            if attempt < maxTries then
+                pcall(function()
+                    if _G._SummonWaitLbl then
+                        _G._SummonWaitLbl.Text = string.format("⏳ Summon: Versuch %d fehlgeschlagen, retry...", attempt)
+                        _G._SummonWaitLbl.TextColor3 = D.Yellow
+                    end
+                end)
+                continue
+            end
+            pcall(function()
+                if _G._SummonWaitLbl then
+                    _G._SummonWaitLbl.Text = "❌ Summon konnte nicht geladen werden"
+                    _G._SummonWaitLbl.TextColor3 = D.Red
+                end
+            end)
+        else
+            -- Erfolg
+            if type(runResult) == "table" then
+                if not _G.HazeHUB.Modules then _G.HazeHUB.Modules = {} end
+                _G.HazeHUB.Modules["Summon"] = runResult
+                if type(runResult.Init) == "function" then pcall(runResult.Init) end
+            end
+            print("[HazeHUB] Summon-Modul erfolgreich geladen (Versuch " .. attempt .. ")")
+            break
+        end
+    end
 end)
 
 -- === WORLDCACHE BEIM START LADEN ===
