@@ -726,48 +726,174 @@ presetMythicBtn.MouseButton1Click:Connect(function()
 end)
 traitSearchBox:GetPropertyChangedSignal("Text"):Connect(function() pcall(function() RebuildTraitTargetList(traitSearchBox.Text) end) end)
 
--- ╔══════════════════════════════════════════════════════════╗
---  REROLL & STATS CENTER – KOMPAKTES DUAL-LAYOUT
+-- ╔══════════════════════════════════════════════════════════════════╗
+--  REROLL-CENTER: SENKRECHTES SPLIT-LAYOUT  v3.0
 --
---  Aufbau:
---   ┌────────────────────────────────────────────────────────┐
---   │  REROLL EINSTELLUNGEN    │  STAT-ZIELE + INFO-BAR      │
---   │  [Währung/Delay/Modus]   │  Stats Key: X | Perfect: Y │
---   │  [Start/Stop Trait]      │  Live: Cooldown S+ Dmg A   │
---   │                          │  [Grade-Picker je Stat]    │
---   │                          │  [Start/Stop Stat]         │
---   └────────────────────────────────────────────────────────┘
--- ╚══════════════════════════════════════════════════════════╝
+--  OBEN  ──── Live-Header (Trait links | Stats rechts) ────────────
+--  UNTEN ──── Links: Trait-Einstellungen + Ziel-Traits ────────────
+--             Rechts: Stat-Reroll (Start/Stop) + 3x2 Grid + Grades
+-- ╚══════════════════════════════════════════════════════════════════╝
+
+-- ════════════════════════════════════════════════════════════════════
+--  LIVE-HEADER (zweigeteiltes Feld)
+-- ════════════════════════════════════════════════════════════════════
+local liveHeaderCard = Card(TraitPage)
+liveHeaderCard.BackgroundColor3 = Color3.fromRGB(8,12,18)
+liveHeaderCard.BackgroundTransparency = 0.05
+Stroke(liveHeaderCard, D.CyanDim, 1.5, 0.2)
+local lhOuter = Instance.new("Frame", liveHeaderCard)
+lhOuter.Size = UDim2.new(1,0,0,0); lhOuter.AutomaticSize = Enum.AutomaticSize.Y
+lhOuter.BackgroundTransparency = 1; HList(lhOuter, 0)
+
+-- ── Links: Trait-Anzeige ──────────────────────────────────────────
+local lhLeft = Instance.new("Frame", lhOuter)
+lhLeft.Size = UDim2.new(0.5,0,0,0); lhLeft.AutomaticSize = Enum.AutomaticSize.Y
+lhLeft.BackgroundTransparency = 1; Pad(lhLeft,6,8,6,8); VList(lhLeft,4)
+
+local lhUnitLbl = Instance.new("TextLabel",lhLeft)
+lhUnitLbl.Size=UDim2.new(1,0,0,15); lhUnitLbl.BackgroundTransparency=1
+lhUnitLbl.Text="Keine Einheit"; lhUnitLbl.TextColor3=D.TextLow
+lhUnitLbl.TextSize=9; lhUnitLbl.Font=Enum.Font.GothamBold
+lhUnitLbl.TextXAlignment=Enum.TextXAlignment.Left
+lhUnitLbl.TextTruncate=Enum.TextTruncate.AtEnd
+lhUnitLbl.TextScaled=false; lhUnitLbl.RichText=true; lhUnitLbl.TextStrokeTransparency=1
+TR.UI.Lbl.UnitName = lhUnitLbl
+
+local function MkLiveTraitRow(parent, label, accentColor)
+    local row = Instance.new("Frame",parent)
+    row.Size=UDim2.new(1,0,0,23); row.BackgroundColor3=D.Input
+    row.BackgroundTransparency=D.GlassPane or 0.18; row.BorderSizePixel=0
+    Corner(row,6); Stroke(row,accentColor,1,0.35)
+    local ac=Instance.new("Frame",row); ac.Size=UDim2.new(0,3,1,0)
+    ac.BackgroundColor3=accentColor; ac.BorderSizePixel=0; Corner(ac,2)
+    local hL=Instance.new("TextLabel",row); hL.Position=UDim2.new(0,8,0,1); hL.Size=UDim2.new(0.3,0,0,9)
+    hL.BackgroundTransparency=1; hL.Text=label; hL.TextColor3=accentColor
+    hL.TextSize=7; hL.Font=Enum.Font.GothamBold; hL.TextXAlignment=Enum.TextXAlignment.Left
+    hL.TextScaled=false; hL.RichText=true; hL.TextStrokeTransparency=1
+    local vL=Instance.new("TextLabel",row); vL.Position=UDim2.new(0,8,0,10); vL.Size=UDim2.new(0.90,-10,0,12)
+    vL.BackgroundTransparency=1; vL.Text="–"; vL.TextColor3=D.TextHi
+    vL.TextSize=11; vL.Font=Enum.Font.GothamBold; vL.TextXAlignment=Enum.TextXAlignment.Left
+    vL.TextTruncate=Enum.TextTruncate.AtEnd
+    vL.TextScaled=false; vL.RichText=true; vL.TextStrokeTransparency=1
+    local rL=Instance.new("TextLabel",row); rL.Position=UDim2.new(0.68,0,0,1); rL.Size=UDim2.new(0.32,-4,0,9)
+    rL.BackgroundTransparency=1; rL.Text=""; rL.TextColor3=accentColor
+    rL.TextSize=7; rL.Font=Enum.Font.GothamMedium; rL.TextXAlignment=Enum.TextXAlignment.Right
+    rL.TextScaled=false; rL.RichText=true; rL.TextStrokeTransparency=1
+    return vL, rL
+end
+
+local mainTraitVal, mainTraitRar = MkLiveTraitRow(lhLeft,"MAIN",D.Gold)
+TR.UI.Lbl.MainTrait  = mainTraitVal
+TR.UI.Lbl.MainRarity = mainTraitRar
+local subTraitVal, subTraitRar = MkLiveTraitRow(lhLeft,"SUB",D.Purple)
+TR.UI.Lbl.SubTrait  = subTraitVal
+TR.UI.Lbl.SubRarity = subTraitRar
+TR.UI.Lbl.TraitInfo = MkLbl(lhLeft,"",9,D.TextLow); TR.UI.Lbl.TraitInfo.Size=UDim2.new(1,0,0,10)
+
+-- ── Trennlinie ────────────────────────────────────────────────────
+local lhDiv=Instance.new("Frame",lhOuter); lhDiv.Size=UDim2.new(0,1,1,0)
+lhDiv.BackgroundColor3=D.Border; lhDiv.BackgroundTransparency=0.4; lhDiv.BorderSizePixel=0
+
+-- ── Rechts: Live-Stats ───────────────────────────────────────────
+local lhRight = Instance.new("Frame", lhOuter)
+lhRight.Size = UDim2.new(0.5,-1,0,0); lhRight.AutomaticSize = Enum.AutomaticSize.Y
+lhRight.BackgroundTransparency = 1; Pad(lhRight,6,8,6,8); VList(lhRight,3)
+
+local lhStatHdr=Instance.new("TextLabel",lhRight); lhStatHdr.Size=UDim2.new(1,0,0,14); lhStatHdr.BackgroundTransparency=1
+lhStatHdr.Text="📊 LIVE STATS"; lhStatHdr.TextColor3=D.CyanDim
+lhStatHdr.TextSize=9; lhStatHdr.Font=Enum.Font.GothamBold; lhStatHdr.TextXAlignment=Enum.TextXAlignment.Left
+lhStatHdr.TextScaled=false; lhStatHdr.RichText=true; lhStatHdr.TextStrokeTransparency=1
+
+TR.UI.Fr.LiveStatRows = {}
+for _,statName in ipairs(STAT_POTENTIAL_NAMES) do
+    local sr=Instance.new("Frame",lhRight); sr.Size=UDim2.new(1,0,0,16)
+    sr.BackgroundColor3=D.Card; sr.BackgroundTransparency=D.GlassPane or 0.18; sr.BorderSizePixel=0; Corner(sr,4); Stroke(sr,D.Border,1,0.5)
+    local sn=Instance.new("TextLabel",sr); sn.Position=UDim2.new(0,5,0,0); sn.Size=UDim2.new(0.50,-5,1,0); sn.BackgroundTransparency=1
+    sn.Text=STAT_DISPLAY_NAMES[statName] or statName; sn.TextColor3=D.TextLow; sn.TextSize=8; sn.Font=Enum.Font.GothamMedium; sn.TextXAlignment=Enum.TextXAlignment.Left
+    sn.TextScaled=false; sn.RichText=true; sn.TextStrokeTransparency=1
+    local sv=Instance.new("TextLabel",sr); sv.Position=UDim2.new(0.50,0,0,0); sv.Size=UDim2.new(0.50,-4,1,0); sv.BackgroundTransparency=1
+    sv.Text="–"; sv.TextColor3=D.TextMid; sv.TextSize=9; sv.Font=Enum.Font.GothamBold; sv.TextXAlignment=Enum.TextXAlignment.Right
+    sv.TextScaled=false; sv.RichText=true; sv.TextStrokeTransparency=1
+    TR.UI.Fr.LiveStatRows[statName]={row=sr,nameLbl=sn,valLbl=sv}
+end
+
+-- Live-Header Auto-Refresh alle 2s
+task.spawn(function()
+    while true do
+        task.wait(2); pcall(function()
+            if not (HS.State and HS.State.ActiveTab=="Traits") then return end
+            if not TR.SelectedUnit then return end
+            local ratings=GetStatRatings(TR.SelectedUnit)
+            for sn,sr in pairs(TR.UI.Fr.LiveStatRows) do
+                local d=ratings[sn]; local rat=d and d.rating or "–"
+                sr.valLbl.Text=tostring(rat)
+                local ri=GradeIndex(rat)
+                local targetRat=TR.StatTargetRatings and TR.StatTargetRatings[sn]
+                if targetRat then
+                    local ti=GradeIndex(ToRankString(targetRat))
+                    if ri>0 and ti>0 and ri>=ti then
+                        sr.valLbl.TextColor3=D.GreenBright; sr.row.BackgroundColor3=Color3.fromRGB(8,26,14)
+                    else
+                        sr.valLbl.TextColor3=(ri>=GradeIndex("S") and D.Gold or (ri>=GradeIndex("A") and D.Yellow or D.TextMid))
+                        sr.row.BackgroundColor3=D.Card
+                    end
+                else
+                    sr.valLbl.TextColor3=(ri>=GradeIndex("S") and D.Gold or (ri>=GradeIndex("A") and D.Yellow or D.TextMid))
+                    sr.row.BackgroundColor3=D.Card
+                end
+            end
+        end)
+    end
+end)
+
+-- ════════════════════════════════════════════════════════════════════
+--  UNTERER SPLIT: Links Trait-Reroll | Rechts Stat-Reroll
+-- ════════════════════════════════════════════════════════════════════
 local settingsRow=Instance.new("Frame",TraitPage)
 settingsRow.Size=UDim2.new(1,0,0,0); settingsRow.AutomaticSize=Enum.AutomaticSize.Y
-settingsRow.BackgroundTransparency=1; HList(settingsRow,8)
+settingsRow.BackgroundTransparency=1; HList(settingsRow,6)
 
--- ── LINKE SEITE: Reroll-Einstellungen ────────────────────────
+-- ── LINKS: Trait-Reroll-Einstellungen ─────────────────────────────
 local rerollCard=Card(settingsRow)
-rerollCard.Size=UDim2.new(0.5,-4,0,0); rerollCard.AutomaticSize=Enum.AutomaticSize.Y
-Pad(rerollCard,10,12,10,12); VList(rerollCard,8)
-SecLbl(rerollCard,"🎲 REROLL EINSTELLUNGEN")
+rerollCard.Size=UDim2.new(0.5,-3,0,0); rerollCard.AutomaticSize=Enum.AutomaticSize.Y
+Pad(rerollCard,8,10,8,10); VList(rerollCard,6)
 
 local TR_SELECTED_CURRENCY="Shards"
-local currencyCard=Instance.new("Frame",rerollCard); currencyCard.Size=UDim2.new(1,0,0,30); currencyCard.BackgroundTransparency=1; HList(currencyCard,8)
-MkLbl(currencyCard,"Währung:",14,D.TextLow).Size=UDim2.new(0.38,0,1,0)
-local currencyLbl=MkLbl(currencyCard,TR_SELECTED_CURRENCY,14,D.Cyan,true); currencyLbl.Size=UDim2.new(0.38,0,1,0)
+local trHdrRow=Instance.new("Frame",rerollCard); trHdrRow.Size=UDim2.new(1,0,0,18); trHdrRow.BackgroundTransparency=1; HList(trHdrRow,5)
+SecLbl(trHdrRow,"🎲 TRAIT REROLL").Size=UDim2.new(0.55,0,1,0)
+local currencyLbl=MkLbl(trHdrRow,"💎 "..TR_SELECTED_CURRENCY,9,D.Cyan,true); currencyLbl.Size=UDim2.new(0.45,0,1,0); currencyLbl.TextXAlignment=Enum.TextXAlignment.Right
 
-local rerollCtrlRow=Instance.new("Frame",rerollCard); rerollCtrlRow.Size=UDim2.new(1,0,0,36); rerollCtrlRow.BackgroundTransparency=1; HList(rerollCtrlRow,8)
-startRerollBtn=Instance.new("TextButton",rerollCtrlRow); startRerollBtn.Size=UDim2.new(0.58,0,1,0); startRerollBtn.BackgroundColor3=Color3.fromRGB(14,42,28); startRerollBtn.BackgroundTransparency=0.22; startRerollBtn.Text="▶  Start Reroll"; startRerollBtn.TextColor3=D.GreenBright; startRerollBtn.TextSize=14; startRerollBtn.Font=Enum.Font.GothamBold; startRerollBtn.AutoButtonColor=false; startRerollBtn.BorderSizePixel=0; Corner(startRerollBtn,8); Stroke(startRerollBtn,D.Green,1.5,0.3)
-stopRerollBtn=Instance.new("TextButton",rerollCtrlRow); stopRerollBtn.Size=UDim2.new(0.38,0,1,0); stopRerollBtn.BackgroundColor3=Color3.fromRGB(48,16,18); stopRerollBtn.BackgroundTransparency=0.22; stopRerollBtn.Text="■  Stop"; stopRerollBtn.TextColor3=D.Red; stopRerollBtn.TextSize=14; stopRerollBtn.Font=Enum.Font.GothamBold; stopRerollBtn.AutoButtonColor=false; stopRerollBtn.BorderSizePixel=0; Corner(stopRerollBtn,8); Stroke(stopRerollBtn,D.Red,1.5,0.28)
+local rerollCtrlRow=Instance.new("Frame",rerollCard); rerollCtrlRow.Size=UDim2.new(1,0,0,30); rerollCtrlRow.BackgroundTransparency=1; HList(rerollCtrlRow,4)
+startRerollBtn=Instance.new("TextButton",rerollCtrlRow); startRerollBtn.Size=UDim2.new(0.57,0,1,0); startRerollBtn.BackgroundColor3=Color3.fromRGB(14,42,28); startRerollBtn.BackgroundTransparency=0.22; startRerollBtn.Text="▶ Start"; startRerollBtn.TextColor3=D.GreenBright; startRerollBtn.TextSize=12; startRerollBtn.Font=Enum.Font.GothamBold; startRerollBtn.AutoButtonColor=false; startRerollBtn.BorderSizePixel=0; Corner(startRerollBtn,8); Stroke(startRerollBtn,D.Green,1.5,0.3); startRerollBtn.TextScaled=false; startRerollBtn.RichText=true; startRerollBtn.TextStrokeTransparency=1
+stopRerollBtn=Instance.new("TextButton",rerollCtrlRow); stopRerollBtn.Size=UDim2.new(0.40,0,1,0); stopRerollBtn.BackgroundColor3=Color3.fromRGB(48,16,18); stopRerollBtn.BackgroundTransparency=0.22; stopRerollBtn.Text="■ Stop"; stopRerollBtn.TextColor3=D.Red; stopRerollBtn.TextSize=12; stopRerollBtn.Font=Enum.Font.GothamBold; stopRerollBtn.AutoButtonColor=false; stopRerollBtn.BorderSizePixel=0; Corner(stopRerollBtn,8); Stroke(stopRerollBtn,D.Red,1.5,0.28); stopRerollBtn.TextScaled=false; stopRerollBtn.RichText=true; stopRerollBtn.TextStrokeTransparency=1
 
-local delayRow=Instance.new("Frame",rerollCard); delayRow.Size=UDim2.new(1,0,0,28); delayRow.BackgroundTransparency=1; HList(delayRow,6)
-MkLbl(delayRow,"Delay (s):",14,D.TextLow).Size=UDim2.new(0.45,0,1,0)
-local delayOuter,delayBox=MkInput(delayRow,"0.5",28); delayOuter.Size=UDim2.new(0.30,0,0,28); delayBox.Text="0.5"
-MkLbl(delayRow,"zwischen Rolls",14,D.TextLow).Size=UDim2.new(0.22,0,1,0)
+local delayRow=Instance.new("Frame",rerollCard); delayRow.Size=UDim2.new(1,0,0,22); delayRow.BackgroundTransparency=1; HList(delayRow,5)
+MkLbl(delayRow,"Delay (s):",11,D.TextLow).Size=UDim2.new(0.38,0,1,0)
+local delayOuter,delayBox=MkInput(delayRow,"0.5",22); delayOuter.Size=UDim2.new(0.27,0,0,22); delayBox.Text="0.5"
+local singleRollBtn=NeonBtn(delayRow,"🎲 1×",D.CyanDim,22); singleRollBtn.Size=UDim2.new(0.32,0,0,22)
 
-local singleRollBtn=NeonBtn(rerollCard,"🎲  Einmal Rollen (Main)",D.CyanDim,30)
+-- ── RECHTS: Stat-Reroll ───────────────────────────────────────────
+local statsCard=Card(settingsRow)
+statsCard.Size=UDim2.new(0.5,-3,0,0); statsCard.AutomaticSize=Enum.AutomaticSize.Y
+Pad(statsCard,8,10,8,10); VList(statsCard,5)
 
--- Reroll-Modus (welcher Stat)
-SecLbl(rerollCard,"Stat-Reroll Modus")
-local statModeGrid=Instance.new("Frame",rerollCard); statModeGrid.Size=UDim2.new(1,0,0,0); statModeGrid.AutomaticSize=Enum.AutomaticSize.Y; statModeGrid.BackgroundTransparency=1
-local statModeLayout=Instance.new("UIGridLayout",statModeGrid); statModeLayout.CellSize=UDim2.new(0.49,0,0,26); statModeLayout.CellPadding=UDim2.new(0,6,0,6)
+-- Keys-Zeile
+local keyRow=Instance.new("Frame",statsCard); keyRow.Size=UDim2.new(1,0,0,16); keyRow.BackgroundTransparency=1; HList(keyRow,4)
+TR.UI.Lbl.StatKeyCount=MkLbl(keyRow,"Key: –",9,D.Gold,true); TR.UI.Lbl.StatKeyCount.Size=UDim2.new(0.5,0,1,0)
+TR.UI.Lbl.PerfectStatKeyCount=MkLbl(keyRow,"Perf: –",9,D.Cyan,true); TR.UI.Lbl.PerfectStatKeyCount.Size=UDim2.new(0.5,0,1,0); TR.UI.Lbl.PerfectStatKeyCount.TextXAlignment=Enum.TextXAlignment.Right
+
+-- StatHeader (Unit-Name)
+TR.UI.Lbl.StatHeader=MkLbl(statsCard,"Keine Einheit",9,D.TextLow); TR.UI.Lbl.StatHeader.Size=UDim2.new(1,0,0,13)
+
+-- ★ Start/Stop Stat-Reroll (ganz oben, prominent)
+local statCtrlRow=Instance.new("Frame",statsCard); statCtrlRow.Size=UDim2.new(1,0,0,30); statCtrlRow.BackgroundTransparency=1; HList(statCtrlRow,4)
+TR.UI.Btn.StartStat=Instance.new("TextButton",statCtrlRow); TR.UI.Btn.StartStat.Size=UDim2.new(0.57,0,1,0); TR.UI.Btn.StartStat.BackgroundColor3=Color3.fromRGB(14,42,28); TR.UI.Btn.StartStat.BackgroundTransparency=0.22; TR.UI.Btn.StartStat.Text="▶ Stat-Reroll"; TR.UI.Btn.StartStat.TextColor3=D.GreenBright; TR.UI.Btn.StartStat.TextSize=12; TR.UI.Btn.StartStat.Font=Enum.Font.GothamBold; TR.UI.Btn.StartStat.AutoButtonColor=false; TR.UI.Btn.StartStat.BorderSizePixel=0; Corner(TR.UI.Btn.StartStat,8); Stroke(TR.UI.Btn.StartStat,D.Green,1.5,0.3); TR.UI.Btn.StartStat.TextScaled=false; TR.UI.Btn.StartStat.RichText=true; TR.UI.Btn.StartStat.TextStrokeTransparency=1
+TR.UI.Btn.StopStat=Instance.new("TextButton",statCtrlRow); TR.UI.Btn.StopStat.Size=UDim2.new(0.40,0,1,0); TR.UI.Btn.StopStat.BackgroundColor3=Color3.fromRGB(48,16,18); TR.UI.Btn.StopStat.BackgroundTransparency=0.22; TR.UI.Btn.StopStat.Text="■ Stop"; TR.UI.Btn.StopStat.TextColor3=D.Red; TR.UI.Btn.StopStat.TextSize=12; TR.UI.Btn.StopStat.Font=Enum.Font.GothamBold; TR.UI.Btn.StopStat.AutoButtonColor=false; TR.UI.Btn.StopStat.BorderSizePixel=0; Corner(TR.UI.Btn.StopStat,8); Stroke(TR.UI.Btn.StopStat,D.Red,1.5,0.28); TR.UI.Btn.StopStat.TextScaled=false; TR.UI.Btn.StopStat.RichText=true; TR.UI.Btn.StopStat.TextStrokeTransparency=1
+
+-- ★ 3x2 Stat-Modus Grid (welcher Stat gerollt wird)
+SecLbl(statsCard,"MODUS (welcher Stat)")
+local statModeGrid=Instance.new("Frame",statsCard); statModeGrid.Size=UDim2.new(1,0,0,0); statModeGrid.AutomaticSize=Enum.AutomaticSize.Y; statModeGrid.BackgroundTransparency=1
+local statModeLayout=Instance.new("UIGridLayout",statModeGrid); statModeLayout.CellSize=UDim2.new(0.49,0,0,22); statModeLayout.CellPadding=UDim2.new(0,4,0,3)
 TR.UI.Btn.StatMode={}
 local function SetStatMode(mode)
     TR.SelectedStatMode=mode
@@ -776,109 +902,37 @@ local function SetStatMode(mode)
         local s=b:FindFirstChildOfClass("UIStroke"); if s then s.Transparency=active and 0 or 0.4; s.Color=active and D.Cyan or D.Border end
     end
 end
-local allBtn=Instance.new("TextButton",statModeGrid); allBtn.BackgroundColor3=D.CardHover; allBtn.Text="All (Perfect Key)"; allBtn.TextColor3=D.Cyan; allBtn.TextSize=11; allBtn.Font=Enum.Font.GothamBold; allBtn.AutoButtonColor=false; allBtn.BorderSizePixel=0; Corner(allBtn,6); Stroke(allBtn,D.Cyan,1,0.2); TR.UI.Btn.StatMode["All"]=allBtn; allBtn.MouseButton1Click:Connect(function() SetStatMode("All") end)
+local allBtn=Instance.new("TextButton",statModeGrid); allBtn.BackgroundColor3=D.CardHover; allBtn.Text="⭐ All (Perfect)"; allBtn.TextColor3=D.Cyan; allBtn.TextSize=9; allBtn.Font=Enum.Font.GothamBold; allBtn.AutoButtonColor=false; allBtn.BorderSizePixel=0; allBtn.TextTruncate=Enum.TextTruncate.AtEnd; Corner(allBtn,6); Stroke(allBtn,D.Cyan,1,0.2); allBtn.TextScaled=false; allBtn.RichText=true; allBtn.TextStrokeTransparency=1; TR.UI.Btn.StatMode["All"]=allBtn; allBtn.MouseButton1Click:Connect(function() SetStatMode("All") end)
 for _,statName in ipairs(STAT_POTENTIAL_NAMES) do
-    local b=Instance.new("TextButton",statModeGrid); b.BackgroundColor3=D.CardHover; b.Text=STAT_DISPLAY_NAMES[statName] or statName; b.TextColor3=D.TextMid; b.TextSize=11; b.Font=Enum.Font.GothamMedium; b.AutoButtonColor=false; b.BorderSizePixel=0; b.TextTruncate=Enum.TextTruncate.AtEnd; Corner(b,6); Stroke(b,D.Border,1,0.4); TR.UI.Btn.StatMode[statName]=b; b.MouseButton1Click:Connect(function() SetStatMode(statName) end)
+    local b=Instance.new("TextButton",statModeGrid); b.BackgroundColor3=D.CardHover; b.Text=STAT_DISPLAY_NAMES[statName] or statName; b.TextColor3=D.TextMid; b.TextSize=9; b.Font=Enum.Font.GothamMedium; b.AutoButtonColor=false; b.BorderSizePixel=0; b.TextTruncate=Enum.TextTruncate.AtEnd; Corner(b,6); Stroke(b,D.Border,1,0.4); b.TextScaled=false; b.RichText=true; b.TextStrokeTransparency=1; TR.UI.Btn.StatMode[statName]=b; b.MouseButton1Click:Connect(function() SetStatMode(statName) end)
 end
 SetStatMode("All")
 
--- ── RECHTE SEITE: Stat-Ziele + Info-Bar ──────────────────────
-local statsCard=Card(settingsRow)
-statsCard.Size=UDim2.new(0.5,-4,0,0); statsCard.AutomaticSize=Enum.AutomaticSize.Y
-Pad(statsCard,10,12,10,12); VList(statsCard,6)
-
--- ── FIX #4: INFO-BAR (Keys + Live Stats) ──────────────────────
-local infoBarCard=Instance.new("Frame",statsCard)
-infoBarCard.Size=UDim2.new(1,0,0,0); infoBarCard.AutomaticSize=Enum.AutomaticSize.Y
-infoBarCard.BackgroundColor3=Color3.fromRGB(10,24,38); infoBarCard.BackgroundTransparency=0.1
-infoBarCard.BorderSizePixel=0; Corner(infoBarCard,8); Stroke(infoBarCard,D.CyanDim,1,0.3)
-local ibInner=Instance.new("Frame",infoBarCard); ibInner.Size=UDim2.new(1,0,0,0); ibInner.AutomaticSize=Enum.AutomaticSize.Y; ibInner.BackgroundTransparency=1; Pad(ibInner,5,8,5,8); VList(ibInner,4)
-
--- Key-Zeile
-local keyRow=Instance.new("Frame",ibInner); keyRow.Size=UDim2.new(1,0,0,18); keyRow.BackgroundTransparency=1; HList(keyRow,8)
-TR.UI.Lbl.StatKeyCount=Instance.new("TextLabel",keyRow); TR.UI.Lbl.StatKeyCount.Size=UDim2.new(0.5,0,1,0); TR.UI.Lbl.StatKeyCount.BackgroundTransparency=1; TR.UI.Lbl.StatKeyCount.Text="Stats Key: –"; TR.UI.Lbl.StatKeyCount.TextColor3=D.Gold; TR.UI.Lbl.StatKeyCount.TextSize=10; TR.UI.Lbl.StatKeyCount.Font=Enum.Font.GothamBold; TR.UI.Lbl.StatKeyCount.TextXAlignment=Enum.TextXAlignment.Left
-TR.UI.Lbl.PerfectStatKeyCount=Instance.new("TextLabel",keyRow); TR.UI.Lbl.PerfectStatKeyCount.Size=UDim2.new(0.5,0,1,0); TR.UI.Lbl.PerfectStatKeyCount.BackgroundTransparency=1; TR.UI.Lbl.PerfectStatKeyCount.Text="Perfect: –"; TR.UI.Lbl.PerfectStatKeyCount.TextColor3=D.Cyan; TR.UI.Lbl.PerfectStatKeyCount.TextSize=10; TR.UI.Lbl.PerfectStatKeyCount.Font=Enum.Font.GothamBold; TR.UI.Lbl.PerfectStatKeyCount.TextXAlignment=Enum.TextXAlignment.Right
-
--- Einheit-Header
-TR.UI.Lbl.StatHeader=Instance.new("TextLabel",ibInner); TR.UI.Lbl.StatHeader.Size=UDim2.new(1,0,0,16); TR.UI.Lbl.StatHeader.BackgroundTransparency=1; TR.UI.Lbl.StatHeader.Text="Keine Einheit gewählt"; TR.UI.Lbl.StatHeader.TextColor3=D.TextLow; TR.UI.Lbl.StatHeader.TextSize=10; TR.UI.Lbl.StatHeader.Font=Enum.Font.GothamMedium; TR.UI.Lbl.StatHeader.TextXAlignment=Enum.TextXAlignment.Left
-
--- Live-Stats 5 kompakte Zeilen (alle 5 Potentials)
-local statList=Instance.new("Frame",ibInner); statList.Size=UDim2.new(1,0,0,0); statList.AutomaticSize=Enum.AutomaticSize.Y; statList.BackgroundTransparency=1; VList(statList,2)
+-- Live-Stat-Zeilen (kompakt, unter Grid – zeigt aktuellen Stand + Ziel)
+local statList=Instance.new("Frame",statsCard); statList.Size=UDim2.new(1,0,0,0); statList.AutomaticSize=Enum.AutomaticSize.Y; statList.BackgroundTransparency=1; VList(statList,2)
 TR.UI.Fr.StatRows={}
 for _,statName in ipairs(STAT_POTENTIAL_NAMES) do
-    local row=Instance.new("Frame",statList); row.Size=UDim2.new(1,0,0,19); row.BackgroundColor3=D.Card; row.BackgroundTransparency=D.GlassPane or 0.18; row.BorderSizePixel=0; Corner(row,5); Stroke(row,D.Border,1,0.45)
-    local nL=Instance.new("TextLabel",row); nL.Name="StatNameLabel"; nL.Position=UDim2.new(0,5,0,0); nL.Size=UDim2.new(0.46,0,1,0); nL.BackgroundTransparency=1; nL.Text=STAT_DISPLAY_NAMES[statName] or statName; nL.TextColor3=D.TextMid; nL.TextSize=9; nL.Font=Enum.Font.GothamMedium; nL.TextScaled=false; nL.RichText=true; nL.TextXAlignment=Enum.TextXAlignment.Left
-    local vL=Instance.new("TextLabel",row); vL.Name="StatValueLabel"; vL.Position=UDim2.new(0.46,0,0,0); vL.Size=UDim2.new(0.34,-2,1,0); vL.BackgroundTransparency=1; vL.Text="–"; vL.TextColor3=D.TextLow; vL.TextSize=10; vL.Font=Enum.Font.GothamBold; vL.TextXAlignment=Enum.TextXAlignment.Right
-    local tL=Instance.new("TextLabel",row); tL.Position=UDim2.new(0.80,0,0,0); tL.Size=UDim2.new(0.20,-3,1,0); tL.BackgroundTransparency=1; tL.Text=""; tL.TextColor3=D.CyanDim; tL.TextSize=8; tL.Font=Enum.Font.GothamBold; tL.TextXAlignment=Enum.TextXAlignment.Right
+    local row=Instance.new("Frame",statList); row.Size=UDim2.new(1,0,0,17); row.BackgroundColor3=D.Card; row.BackgroundTransparency=D.GlassPane or 0.18; row.BorderSizePixel=0; Corner(row,5); Stroke(row,D.Border,1,0.45)
+    local nL=Instance.new("TextLabel",row); nL.Name="StatNameLabel"; nL.Position=UDim2.new(0,5,0,0); nL.Size=UDim2.new(0.44,0,1,0); nL.BackgroundTransparency=1; nL.Text=STAT_DISPLAY_NAMES[statName] or statName; nL.TextColor3=D.TextMid; nL.TextSize=8; nL.Font=Enum.Font.GothamMedium; nL.TextScaled=false; nL.RichText=true; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextStrokeTransparency=1
+    local vL=Instance.new("TextLabel",row); vL.Name="StatValueLabel"; vL.Position=UDim2.new(0.44,0,0,0); vL.Size=UDim2.new(0.36,-2,1,0); vL.BackgroundTransparency=1; vL.Text="–"; vL.TextColor3=D.TextLow; vL.TextSize=9; vL.Font=Enum.Font.GothamBold; vL.TextXAlignment=Enum.TextXAlignment.Right; vL.TextScaled=false; vL.RichText=true; vL.TextStrokeTransparency=1
+    local tL=Instance.new("TextLabel",row); tL.Position=UDim2.new(0.80,0,0,0); tL.Size=UDim2.new(0.20,-3,1,0); tL.BackgroundTransparency=1; tL.Text=""; tL.TextColor3=D.CyanDim; tL.TextSize=8; tL.Font=Enum.Font.GothamBold; tL.TextXAlignment=Enum.TextXAlignment.Right; tL.TextScaled=false; tL.RichText=true; tL.TextStrokeTransparency=1
     TR.UI.Fr.StatRows[statName]={nameLbl=nL,valLbl=vL,targetLbl=tL,row=row}
 end
 
-SecLbl(statsCard,"🎯 STAT-ZIELE (≥, AND-Verknüpfung)")
+TR.UI.Lbl.StatRollRate=MkLbl(statsCard,"",10,D.TextLow); TR.UI.Lbl.StatRollRate.Size=UDim2.new(1,0,0,12); TR.UI.Lbl.StatRollRate.TextXAlignment=Enum.TextXAlignment.Right
 
-local multiStatInfoLbl=MkLbl(statsCard,"Stoppt wenn ALLE Stats ≥ Ziel (S+ stoppt auch bei Ziel S).",10,D.TextLow)
-multiStatInfoLbl.Size=UDim2.new(1,0,0,22); multiStatInfoLbl.TextWrapped=true
+-- ★ ZIEL-GRADES (ersetzt altes Dropdown-System)
+-- Pro Stat: Toggle (AN/AUS) + kompakter Grade-Picker (C- … O+)
+-- Mehrere Stats gleichzeitig wählbar (AND-Logik)
+SecLbl(statsCard,"🎯 ZIEL-GRADES (≥ Index, AND)")
+local multiStatInfoLbl=MkLbl(statsCard,"Stoppt wenn ALLE gewählten Stats ihren Grade ≥ Ziel erreichen.",8,D.TextLow)
+multiStatInfoLbl.Size=UDim2.new(1,0,0,16); multiStatInfoLbl.TextWrapped=true
 
--- Rating-Farben
 local RATING_TIER_COLORS={["C-"]="C",["C"]="C",["C+"]="C",["B-"]="B",["B"]="B",["B+"]="B",["A-"]="A",["A"]="A",["A+"]="A",["S-"]="S",["S"]="S",["S+"]="S",["SS"]="SS",["SSS"]="SS",["O-"]="O",["O"]="O",["O+"]="O"}
 local TIER_COLORS={C=Color3.fromRGB(160,160,160),B=Color3.fromRGB(50,200,80),A=Color3.fromRGB(50,120,255),S=Color3.fromRGB(200,130,255),SS=Color3.fromRGB(255,180,0),O=Color3.fromRGB(255,60,60)}
 local function GetRatingColor(rating)
     local tier=RATING_TIER_COLORS[rating] or "C"; return TIER_COLORS[tier] or D.TextMid
 end
-
-TR.UI.Btn.StatTargetRows={}
-
-local function RebuildMultiStatUI()
-    for _,entry in pairs(TR.UI.Btn.StatTargetRows) do
-        if entry.frame and entry.frame.Parent then entry.frame:Destroy() end
-    end
-    TR.UI.Btn.StatTargetRows={}
-    for _,statName in ipairs(STAT_POTENTIAL_NAMES) do
-        local displayName=STAT_DISPLAY_NAMES[statName] or statName
-        local currentTarget=TR.StatTargetRatings[statName]; local isActive=currentTarget~=nil
-        local statRowFrame=Instance.new("Frame",statsCard); statRowFrame.Size=UDim2.new(1,0,0,0); statRowFrame.AutomaticSize=Enum.AutomaticSize.Y; statRowFrame.BackgroundTransparency=1; VList(statRowFrame,3)
-        local hRow=Instance.new("Frame",statRowFrame); hRow.Size=UDim2.new(1,0,0,24); hRow.BackgroundColor3=isActive and Color3.fromRGB(14,42,28) or D.CardHover; hRow.BackgroundTransparency=0.2; hRow.BorderSizePixel=0; Corner(hRow,6); Stroke(hRow,isActive and D.Green or D.Border,1,isActive and 0 or 0.5)
-        local toggleBtn=Instance.new("TextButton",hRow); toggleBtn.Size=UDim2.new(0,18,0,18); toggleBtn.Position=UDim2.new(0,3,0.5,-9); toggleBtn.BackgroundColor3=isActive and D.Green or D.CardHover; toggleBtn.BackgroundTransparency=isActive and 0.1 or 0.5; toggleBtn.Text=isActive and "✓" or ""; toggleBtn.TextColor3=Color3.new(1,1,1); toggleBtn.TextSize=10; toggleBtn.Font=Enum.Font.GothamBold; toggleBtn.AutoButtonColor=false; toggleBtn.BorderSizePixel=0; Corner(toggleBtn,4); Stroke(toggleBtn,isActive and D.Green or D.Border,1,isActive and 0 or 0.5)
-        local statNameLbl=Instance.new("TextLabel",hRow); statNameLbl.Position=UDim2.new(0,26,0,0); statNameLbl.Size=UDim2.new(0.45,-26,1,0); statNameLbl.BackgroundTransparency=1; statNameLbl.Text=displayName; statNameLbl.TextColor3=isActive and D.GreenBright or D.TextMid; statNameLbl.TextSize=11; statNameLbl.Font=Enum.Font.GothamBold; statNameLbl.TextXAlignment=Enum.TextXAlignment.Left
-        local targetLbl=Instance.new("TextLabel",hRow); targetLbl.Position=UDim2.new(0.45,0,0,0); targetLbl.Size=UDim2.new(0.55,-4,1,0); targetLbl.BackgroundTransparency=1; targetLbl.Text=currentTarget and ("≥ "..currentTarget) or "kein Ziel"; targetLbl.TextColor3=currentTarget and GetRatingColor(currentTarget) or D.TextLow; targetLbl.TextSize=11; targetLbl.Font=Enum.Font.GothamBold; targetLbl.TextXAlignment=Enum.TextXAlignment.Right
-        local ratingPickerFrame=Instance.new("Frame",statRowFrame); ratingPickerFrame.Size=UDim2.new(1,0,0,0); ratingPickerFrame.AutomaticSize=Enum.AutomaticSize.Y; ratingPickerFrame.BackgroundTransparency=1; ratingPickerFrame.Visible=isActive
-        local ratingGrid=Instance.new("UIGridLayout",ratingPickerFrame); ratingGrid.CellSize=UDim2.new(0.25,-3,0,20); ratingGrid.CellPadding=UDim2.new(0,3,0,3)
-        for _,rating in ipairs(ALL_RATINGS) do
-            local col=GetRatingColor(rating); local isThisTarget=currentTarget==rating
-            local rBtn=Instance.new("TextButton",ratingPickerFrame); rBtn.BackgroundColor3=isThisTarget and col or D.CardHover; rBtn.BackgroundTransparency=isThisTarget and 0.15 or 0.55; rBtn.BorderSizePixel=0; Corner(rBtn,4); Stroke(rBtn,isThisTarget and col or D.Border,1,isThisTarget and 0 or 0.6); rBtn.Text=rating; rBtn.TextColor3=isThisTarget and col or D.TextMid; rBtn.TextSize=9; rBtn.Font=Enum.Font.GothamBold; rBtn.AutoButtonColor=false
-            local capStatName=statName; local capRating=rating
-            rBtn.MouseButton1Click:Connect(function() TR.StatTargetRatings[capStatName]=capRating; RebuildMultiStatUI() end)
-        end
-        local capStatName=statName
-        toggleBtn.MouseButton1Click:Connect(function()
-            if TR.StatTargetRatings[capStatName] then TR.StatTargetRatings[capStatName]=nil else TR.StatTargetRatings[capStatName]="S" end
-            RebuildMultiStatUI()
-        end)
-        TR.UI.Btn.StatTargetRows[statName]={frame=statRowFrame,targetLbl=targetLbl,toggleBtn=toggleBtn}
-    end
-    -- Summary
-    local activeCount=0; local parts={}
-    for _,sn in ipairs(STAT_POTENTIAL_NAMES) do
-        if TR.StatTargetRatings[sn] then activeCount=activeCount+1; table.insert(parts,(STAT_DISPLAY_NAMES[sn] or sn).."≥"..TR.StatTargetRatings[sn]) end
-    end
-    if TR.UI.Lbl.MultiStatSummary then
-        if activeCount==0 then TR.UI.Lbl.MultiStatSummary.Text="Kein Stat-Ziel aktiv → kein Auto-Stop"; TR.UI.Lbl.MultiStatSummary.TextColor3=D.TextLow
-        else TR.UI.Lbl.MultiStatSummary.Text="Ziel (≥): "..table.concat(parts,"  &  "); TR.UI.Lbl.MultiStatSummary.TextColor3=D.Cyan end
-    end
-end
-
-TR.UI.Lbl.MultiStatSummary=MkLbl(statsCard,"Kein Stat-Ziel aktiv → kein Auto-Stop",10,D.TextLow)
-TR.UI.Lbl.MultiStatSummary.Size=UDim2.new(1,0,0,26); TR.UI.Lbl.MultiStatSummary.TextWrapped=true
-
-local presetRow=Instance.new("Frame",statsCard); presetRow.Size=UDim2.new(1,0,0,26); presetRow.BackgroundTransparency=1; HList(presetRow,5)
-local presetSBtn=Instance.new("TextButton",presetRow); presetSBtn.Size=UDim2.new(0.32,0,1,0); presetSBtn.BackgroundColor3=D.CardHover; presetSBtn.BackgroundTransparency=0.35; presetSBtn.Text="⭐ Alle ≥S"; presetSBtn.TextColor3=Color3.fromRGB(200,130,255); presetSBtn.TextSize=10; presetSBtn.Font=Enum.Font.GothamBold; presetSBtn.AutoButtonColor=false; presetSBtn.BorderSizePixel=0; Corner(presetSBtn,6); Stroke(presetSBtn,Color3.fromRGB(200,130,255),1,0.3); presetSBtn.MouseButton1Click:Connect(function() for _,sn in ipairs(STAT_POTENTIAL_NAMES) do TR.StatTargetRatings[sn]="S" end; RebuildMultiStatUI() end)
-local presetSPlusBtn=Instance.new("TextButton",presetRow); presetSPlusBtn.Size=UDim2.new(0.32,0,1,0); presetSPlusBtn.BackgroundColor3=D.CardHover; presetSPlusBtn.BackgroundTransparency=0.35; presetSPlusBtn.Text="✨ Alle ≥S+"; presetSPlusBtn.TextColor3=D.Gold; presetSPlusBtn.TextSize=10; presetSPlusBtn.Font=Enum.Font.GothamBold; presetSPlusBtn.AutoButtonColor=false; presetSPlusBtn.BorderSizePixel=0; Corner(presetSPlusBtn,6); Stroke(presetSPlusBtn,D.Gold,1,0.3); presetSPlusBtn.MouseButton1Click:Connect(function() for _,sn in ipairs(STAT_POTENTIAL_NAMES) do TR.StatTargetRatings[sn]="S+" end; RebuildMultiStatUI() end)
-local clearStatsBtn=Instance.new("TextButton",presetRow); clearStatsBtn.Size=UDim2.new(0.32,0,1,0); clearStatsBtn.BackgroundColor3=D.CardHover; clearStatsBtn.BackgroundTransparency=0.35; clearStatsBtn.Text="✕ Alle aus"; clearStatsBtn.TextColor3=D.Red; clearStatsBtn.TextSize=10; clearStatsBtn.Font=Enum.Font.GothamBold; clearStatsBtn.AutoButtonColor=false; clearStatsBtn.BorderSizePixel=0; Corner(clearStatsBtn,6); Stroke(clearStatsBtn,D.Red,1,0.4); clearStatsBtn.MouseButton1Click:Connect(function() TR.StatTargetRatings={}; RebuildMultiStatUI() end)
-
-TR.UI.Lbl.StatRollRate=MkLbl(statsCard,"",12,D.TextLow); TR.UI.Lbl.StatRollRate.Size=UDim2.new(1,0,0,14); TR.UI.Lbl.StatRollRate.TextXAlignment=Enum.TextXAlignment.Right
-
-local statCtrlRow=Instance.new("Frame",statsCard); statCtrlRow.Size=UDim2.new(1,0,0,34); statCtrlRow.BackgroundTransparency=1; HList(statCtrlRow,8)
-TR.UI.Btn.StartStat=Instance.new("TextButton",statCtrlRow); TR.UI.Btn.StartStat.Size=UDim2.new(0.58,0,1,0); TR.UI.Btn.StartStat.BackgroundColor3=Color3.fromRGB(14,42,28); TR.UI.Btn.StartStat.BackgroundTransparency=0.22; TR.UI.Btn.StartStat.Text="▶  Start Stat-Reroll"; TR.UI.Btn.StartStat.TextColor3=D.GreenBright; TR.UI.Btn.StartStat.TextSize=13; TR.UI.Btn.StartStat.Font=Enum.Font.GothamBold; TR.UI.Btn.StartStat.AutoButtonColor=false; TR.UI.Btn.StartStat.BorderSizePixel=0; Corner(TR.UI.Btn.StartStat,8); Stroke(TR.UI.Btn.StartStat,D.Green,1.5,0.3)
-TR.UI.Btn.StopStat=Instance.new("TextButton",statCtrlRow); TR.UI.Btn.StopStat.Size=UDim2.new(0.38,0,1,0); TR.UI.Btn.StopStat.BackgroundColor3=Color3.fromRGB(48,16,18); TR.UI.Btn.StopStat.BackgroundTransparency=0.22; TR.UI.Btn.StopStat.Text="■  Stop"; TR.UI.Btn.StopStat.TextColor3=D.Red; TR.UI.Btn.StopStat.TextSize=13; TR.UI.Btn.StopStat.Font=Enum.Font.GothamBold; TR.UI.Btn.StopStat.AutoButtonColor=false; TR.UI.Btn.StopStat.BorderSizePixel=0; Corner(TR.UI.Btn.StopStat,8); Stroke(TR.UI.Btn.StopStat,D.Red,1.5,0.28)
 
 -- ╔══════════════════════════════════════════════════════════╗
 --  LOGIK – CheckAllStatGoals
