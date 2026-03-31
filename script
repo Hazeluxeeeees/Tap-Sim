@@ -2826,15 +2826,15 @@ do
         local d = math.floor(sec/86400)
         local h = math.floor((sec%86400)/3600)
         local m = math.floor((sec%3600)/60)
-        if d > 0 then return string.format("%dt %dh %dm", d, h, m)
-        elseif h > 0 then return string.format("%dh %dm", h, m)
-        else return string.format("%dm", m) end
+        if d > 0 then return string.format("%d Tage, %d Std, %d Min", d, h, m)
+        elseif h > 0 then return string.format("%d Std, %d Min", h, m)
+        else return string.format("%d Min", m) end
     end
     local function FmtAbbrv(n)
         n = math.floor(tonumber(n) or 0)
         if n >= 1e12 then return string.format("%.2fT", n/1e12)
         elseif n >= 1e9  then return string.format("%.2fB", n/1e9)
-        elseif n >= 1e6  then return string.format("%.1fM", n/1e6)
+        elseif n >= 1e6  then return string.format("%.2fM", n/1e6)
         elseif n >= 1e3  then return string.format("%.1fK", n/1e3)
         else return tostring(n) end
     end
@@ -2930,25 +2930,40 @@ do
     local profValLabels = {}
 
     for _, pd in ipairs(PROF_DEFS) do
+        -- Zeile: Card mit farbigem Akzentbalken + getöntem Label-Hintergrund
         local row = Instance.new("Frame", profInner)
-        row.Size=UDim2.new(1,0,0,28); row.BackgroundColor3=D.CardHover; row.BorderSizePixel=0
-        Corner(row,7); Stroke(row,pd.color,1,0.55)
-        local acBar=Instance.new("Frame",row); acBar.Size=UDim2.new(0,3,1,0)
+        row.Size=UDim2.new(1,0,0,32); row.BackgroundColor3=D.Card
+        row.BackgroundTransparency=D.GlassPane or 0.18
+        row.BorderSizePixel=0; Corner(row,8); Stroke(row,pd.color,1,0.45)
+
+        -- Farbiger linker Akzentbalken
+        local acBar=Instance.new("Frame",row); acBar.Size=UDim2.new(0,3,0.75,0)
+        acBar.Position=UDim2.new(0,0,0.125,0)
         acBar.BackgroundColor3=pd.color; acBar.BorderSizePixel=0; Corner(acBar,2)
-        local nL=Instance.new("TextLabel",row)
-        nL.Position=UDim2.new(0,10,0,0); nL.Size=UDim2.new(0.62,-10,1,0)
+
+        -- Icon+Label mit getöntem Hintergrund (UI-Theme-konform)
+        local labelBg=Instance.new("Frame",row)
+        labelBg.Position=UDim2.new(0,6,0,0); labelBg.Size=UDim2.new(0.60,-6,1,0)
+        labelBg.BackgroundColor3=pd.color; labelBg.BackgroundTransparency=0.86
+        labelBg.BorderSizePixel=0; Corner(labelBg,6)
+
+        local nL=Instance.new("TextLabel",labelBg)
+        nL.Position=UDim2.new(0,8,0,0); nL.Size=UDim2.new(1,-10,1,0)
         nL.BackgroundTransparency=1; nL.Text=pd.icon.."  "..pd.label; nL.TextColor3=pd.color
         nL.TextSize=10; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left
         nL.TextScaled=false; nL.RichText=true; nL.TextStrokeTransparency=1
+
+        -- Wert (rechts, größer, hell)
         local vL=Instance.new("TextLabel",row)
-        vL.Position=UDim2.new(0.62,0,0,0); vL.Size=UDim2.new(0.38,-6,1,0)
+        vL.Position=UDim2.new(0.60,4,0,0); vL.Size=UDim2.new(0.40,-8,1,0)
         vL.BackgroundTransparency=1; vL.Text="–"; vL.TextColor3=D.TextHi
-        vL.TextSize=11; vL.Font=Enum.Font.GothamBold; vL.TextXAlignment=Enum.TextXAlignment.Right
+        vL.TextSize=12; vL.Font=Enum.Font.GothamBold; vL.TextXAlignment=Enum.TextXAlignment.Right
         vL.TextScaled=false; vL.RichText=true; vL.TextStrokeTransparency=1
         profValLabels[pd.key] = { lbl=vL, pd=pd }
     end
 
-    -- Auto-refresh: lädt nur die Felder die NICHT onButton=true sind
+    -- ★ fullRefresh=false → nur auto-Felder (Damage/Spielzeit)
+    -- ★ fullRefresh=true  → ALLE inkl. Summons + Rerolls (nur im Click-Event)
     local function RefreshProfStats(fullRefresh)
         for _, entry in pairs(profValLabels) do
             if fullRefresh or not entry.pd.onButton then
@@ -2966,12 +2981,16 @@ do
         end
     end
 
-    -- Button: lädt ALLE Stats inkl. Summons + Rerolls (fullRefresh=true)
+    -- ★ Global registrieren – der zusammengeführte "Stats & Profil aktualisieren"-Button
+    --   ruft _G._RefreshProfStatsGlobal() auf (fullRefresh=true für Summons+Rerolls)
+    _G._RefreshProfStatsGlobal = function() RefreshProfStats(true) end
+
+    -- Button: lädt ALLE Stats inkl. Summons + Rerolls
     NeonBtn(profInner,"🔄 Profil-Stats aktualisieren",D.Purple,26).MouseButton1Click:Connect(function()
         task.spawn(function() pcall(function() RefreshProfStats(true) end) end)
     end)
 
-    -- Auto-load beim Tab-Öffnen (nur Damage + Spielzeit)
+    -- Auto-load 3s nach Init (nur Damage + Spielzeit)
     task.spawn(function() task.wait(3); pcall(function() RefreshProfStats(false) end) end)
     task.spawn(function()
         while S.Running do
