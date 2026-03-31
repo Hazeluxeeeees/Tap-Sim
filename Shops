@@ -151,45 +151,95 @@ verLbl.TextScaled = false; verLbl.RichText = true; verLbl.TextStrokeTransparency
 verLbl.TextXAlignment = Enum.TextXAlignment.Left
 
 -- ============================================================
---  ★ AUTOBUY PERSISTENCE  (eigene JSON-Datei pro UserId)
---  Datei: HazeHUB/HazeHUB_Shop_Config_<UserId>.json
+--  ★ AUTOBUY PERSISTENCE  (HazeHUB/Config/Shop_Settings.json)
+--
+--  Schema gespeichert:
+--    AutoBuyState      : bool   – war Auto-Buy aktiv?
+--    AutoBuyItems      : table  – { "ItemName" = true, … }
+--    TargetTraits      : table  – für zukünftige Trait-Persistenz (Platzhalter)
+--    StatRequirements  : table  – { Damage="S-", Range="A", … }
+--    timestamp         : number – os.time() beim Speichern
 -- ============================================================
-local _shopConfigFile = "HazeHUB/HazeHUB_Shop_Config_" .. tostring(LP.UserId) .. ".json"
-_G._AutoBuyList = _G._AutoBuyList or {}
-_G._ShopRegistry = _G._ShopRegistry or {}
+local _shopConfigDir  = "HazeHUB/Config"
+local _shopConfigFile = _shopConfigDir .. "/Shop_Settings.json"
+
+-- Ordner anlegen falls nicht vorhanden
+if makefolder then
+    pcall(function() makefolder("HazeHUB") end)
+    pcall(function() makefolder(_shopConfigDir) end)
+end
+
+_G._AutoBuyList    = _G._AutoBuyList    or {}
+_G._ShopRegistry   = _G._ShopRegistry   or {}
+_G._ShopSavedState = _G._ShopSavedState or {
+    AutoBuyState     = false,
+    StatRequirements = {},
+    TargetTraits     = {},
+}
 
 local function ShopSaveConfig()
     if not writefile then return end
     local items = {}
     for name,_ in pairs(_G._AutoBuyList) do table.insert(items, name) end
-    local data = { items = items, userId = LP.UserId, ts = os.time() }
+    local data = {
+        AutoBuyState     = _G._ShopSavedState.AutoBuyState,
+        AutoBuyItems     = items,
+        TargetTraits     = _G._ShopSavedState.TargetTraits     or {},
+        StatRequirements = _G._ShopSavedState.StatRequirements or {},
+        userId           = LP.UserId,
+        timestamp        = os.time(),
+    }
     pcall(function()
         writefile(_shopConfigFile, game:GetService("HttpService"):JSONEncode(data))
     end)
-    print(string.format("[HazeHub-Shops] AutoBuy gespeichert: %d Items", #items))
+    print(string.format("[HazeHub-Shops] Config gespeichert: %d AutoBuy-Items", #items))
 end
 
+-- Restores _G._AutoBuyList + _G._ShopSavedState from file
+-- Returns loaded data table for callers to restore UI checkboxes
 local function ShopLoadConfig()
-    if not (isfile and isfile(_shopConfigFile)) then return end
+    if not (isfile and isfile(_shopConfigFile)) then return nil end
     local ok, data = pcall(function()
         return game:GetService("HttpService"):JSONDecode(readfile(_shopConfigFile))
     end)
-    if not ok or not data or not data.items then return end
-    for _, name in ipairs(data.items) do
-        if type(name) == "string" and name ~= "" then
-            _G._AutoBuyList[name] = true
+    if not ok or not data then return nil end
+
+    -- AutoBuy-Liste wiederherstellen
+    _G._AutoBuyList = {}
+    if type(data.AutoBuyItems) == "table" then
+        for _, name in ipairs(data.AutoBuyItems) do
+            if type(name) == "string" and name ~= "" then
+                _G._AutoBuyList[name] = true
+            end
         end
     end
-    print(string.format("[HazeHub-Shops] AutoBuy geladen: %d Items (UserId: %d)", #data.items, LP.UserId))
+
+    -- Saved-State wiederherstellen (für UI-Checkboxen)
+    _G._ShopSavedState.AutoBuyState     = data.AutoBuyState     == true
+    _G._ShopSavedState.StatRequirements = type(data.StatRequirements) == "table" and data.StatRequirements or {}
+    _G._ShopSavedState.TargetTraits     = type(data.TargetTraits)     == "table" and data.TargetTraits     or {}
+
+    local itemCount = 0
+    for _ in pairs(_G._AutoBuyList) do itemCount = itemCount + 1 end
+    print(string.format("[HazeHub-Shops] Config geladen: %d AutoBuy-Items (UserId: %d)", itemCount, LP.UserId))
+    return data
 end
 
--- Beim Start laden
-pcall(ShopLoadConfig)
+-- Beim Start laden (gibt geladene Daten zurück für spätere UI-Anwendung)
+local _loadedShopConfig = pcall(ShopLoadConfig) and ShopLoadConfig() or nil
 
 -- Für Hauptskript zugänglich
 if _G.HazeShared then
     _G.HazeShared.ShopSaveConfig = ShopSaveConfig
     _G.HazeShared.ShopLoadConfig = ShopLoadConfig
+    -- StatRequirements für Trait-Modul zugänglich machen
+    _G.HazeShared.ShopGetStatReq = function(statName)
+        return _G._ShopSavedState.StatRequirements[statName]
+    end
+    _G.HazeShared.ShopSetStatReq = function(statName, grade)
+        _G._ShopSavedState.StatRequirements[statName] = grade
+        ShopSaveConfig()
+    end
 end
 -- ============================================================
 --  ★ MULTI-ITEM AUTO-BUY UI  (15-Min Loop, persistent)
@@ -277,7 +327,13 @@ do
         if _abEnabled then abDot.BackgroundColor3=D.Gold; abTLbl.Text="🛒  Auto-Buy  —  Aktiv"; abTLbl.TextColor3=D.Gold; abToggle.Text="⏹  Auto-Buy AUS"; abToggle.TextColor3=D.Red; Stroke(abToggle,D.Red,1,0.4)
         else abDot.BackgroundColor3=D.TextLow; abTLbl.Text="🛒  Auto-Buy  —  Inaktiv"; abTLbl.TextColor3=D.TextLow; abCdLbl.Text="Nächster Kauf in: –"; abCdLbl.TextColor3=D.TextMid; abToggle.Text="▶  Auto-Buy AN"; abToggle.TextColor3=D.Gold; Stroke(abToggle,D.Gold,1,0.4) end
     end
-    abToggle.MouseButton1Click:Connect(function() _abEnabled=not _abEnabled; if _abEnabled then _abDeadline=os.time()+AB_INTERVAL end; UpdateAbUI() end)
+    abToggle.MouseButton1Click:Connect(function()
+        _abEnabled=not _abEnabled
+        _G._ShopSavedState.AutoBuyState = _abEnabled   -- ★ persist state
+        if _abEnabled then _abDeadline=os.time()+AB_INTERVAL end
+        UpdateAbUI()
+        ShopSaveConfig()   -- ★ auto-save on toggle
+    end)
 
     task.spawn(function()
         while ShopPage.Parent do
@@ -294,6 +350,14 @@ do
         end
     end)
     RebuildABList()
+
+    -- ★ Auto-Buy Status aus gespeichertem Config wiederherstellen
+    if _G._ShopSavedState.AutoBuyState == true then
+        _abEnabled = true
+        _abDeadline = os.time() + AB_INTERVAL
+        UpdateAbUI()
+        print("[HazeHub-Shops] Auto-Buy wiederhergestellt (war aktiv)")
+    end
 end  -- end Auto-Buy
 
 -- ============================================================
