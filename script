@@ -2839,65 +2839,144 @@ do
         else return tostring(n) end
     end
 
+    -- ══════════════════════════════════════════════════════
+    --  PROFIL STATISTIKEN (hervorgehobene eigene Karte)
+    --  Pfade korrigiert:
+    --    TotalDamage  → RS.Player_Data[LP.Name].Profile.TotalDamage
+    --    TotalPlayTime→ RS.Player_Data[LP.Name].Profile.TotalPlayTime
+    --    SummonUnits  → RS.Player_Data[LP.Name].Profile.SummonUnits
+    --    TraitReroll  → RS.Player_Data[LP.Name].Profile.TraitReroll
+    --  Summons + Rerolls: Refresh im MouseButton1Click des Buttons
+    -- ══════════════════════════════════════════════════════
+    local profCard = Instance.new("Frame", playerStatsCard)
+    profCard.Size = UDim2.new(1,0,0,0); profCard.AutomaticSize = Enum.AutomaticSize.Y
+    profCard.BackgroundColor3 = Color3.fromRGB(18,14,32)
+    profCard.BackgroundTransparency = 0.12; profCard.BorderSizePixel = 0
+    Corner(profCard, 9); Stroke(profCard, D.Purple, 1.5, 0.1)
+    local profInner = Instance.new("Frame", profCard)
+    profInner.Size = UDim2.new(1,0,0,0); profInner.AutomaticSize = Enum.AutomaticSize.Y
+    profInner.BackgroundTransparency = 1; Pad(profInner, 8, 10, 8, 10); VList(profInner, 5)
+
+    local profHdr = Instance.new("TextLabel", profInner)
+    profHdr.Size = UDim2.new(1,0,0,18); profHdr.BackgroundTransparency = 1
+    profHdr.Text = "📈  PROFIL STATISTIKEN"
+    profHdr.TextColor3 = D.Purple; profHdr.TextSize = 11; profHdr.Font = Enum.Font.GothamBold
+    profHdr.TextXAlignment = Enum.TextXAlignment.Left
+
+    -- Stat-Definitionen mit korrekten Pfaden
     local PROF_DEFS = {
-        -- label, icon, color, reader (returns value)
-        { key="TotalDamage",  label="Total Damage",    icon="⚔",  color=D.Red,    fmt=FmtAbbrv,
-          read=function() local v=0; pcall(function() v=tonumber(Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Stats",3):WaitForChild("TotalDamage",2).Value) or 0 end); return v end },
-        { key="TotalPlayTime",label="Spielzeit",       icon="⏱",  color=D.Cyan,   fmt=FmtPlaytime,
-          read=function() local v=0; pcall(function() v=tonumber(Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("TotalPlayTime",2).Value) or 0 end); return v end },
-        { key="SummonUnits",  label="Summons",          icon="🌟",  color=D.Gold,   fmt=FmtNum,
-          read=function() local v=0; pcall(function() v=tonumber(Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Profile",2):WaitForChild("SummonUnits",2).Value) or 0 end); return v end },
-        { key="TraitReroll",  label="Trait Rerolls",   icon="🎲",  color=D.Purple, fmt=FmtNum,
-          read=function() local v=0; pcall(function() v=tonumber(Svc.RS:WaitForChild("Player_Data",3):WaitForChild(LP.Name,3):WaitForChild("Profile",2):WaitForChild("TraitReroll",2).Value) or 0 end); return v end },
+        -- TotalDamage liegt unter Profile (nicht Stats)
+        { key="TotalDamage",  label="Total Damage",  icon="⚔",  color=D.Red,
+          fmt=FmtAbbrv,
+          read=function()
+              local v=0
+              pcall(function()
+                  v = tonumber(Svc.RS:WaitForChild("Player_Data",3)
+                                    :WaitForChild(LP.Name,3)
+                                    :WaitForChild("Profile",2)
+                                    :WaitForChild("TotalDamage",2).Value) or 0
+              end)
+              return v
+          end,
+          onButton = false,    -- lädt beim Klick UND auto
+        },
+        -- TotalPlayTime liegt unter Profile (nicht root-level)
+        { key="TotalPlayTime",label="Spielzeit",     icon="⏱",  color=D.Cyan,
+          fmt=FmtPlaytime,
+          read=function()
+              local v=0
+              pcall(function()
+                  v = tonumber(Svc.RS:WaitForChild("Player_Data",3)
+                                    :WaitForChild(LP.Name,3)
+                                    :WaitForChild("Profile",2)
+                                    :WaitForChild("TotalPlayTime",2).Value) or 0
+              end)
+              return v
+          end,
+          onButton = false,
+        },
+        -- SummonUnits: NUR beim Button-Klick aktualisieren (teure Operation)
+        { key="SummonUnits",  label="Summons",       icon="🌟",  color=D.Gold,
+          fmt=FmtNum,
+          read=function()
+              local v=0
+              pcall(function()
+                  v = tonumber(Svc.RS:WaitForChild("Player_Data",3)
+                                    :WaitForChild(LP.Name,3)
+                                    :WaitForChild("Profile",2)
+                                    :WaitForChild("SummonUnits",2).Value) or 0
+              end)
+              return v
+          end,
+          onButton = true,    -- NUR beim Button-Klick refreshen
+        },
+        -- TraitReroll: NUR beim Button-Klick aktualisieren
+        { key="TraitReroll",  label="Trait Rerolls", icon="🎲",  color=D.Purple,
+          fmt=FmtNum,
+          read=function()
+              local v=0
+              pcall(function()
+                  v = tonumber(Svc.RS:WaitForChild("Player_Data",3)
+                                    :WaitForChild(LP.Name,3)
+                                    :WaitForChild("Profile",2)
+                                    :WaitForChild("TraitReroll",2).Value) or 0
+              end)
+              return v
+          end,
+          onButton = true,
+        },
     }
 
-    SecLbl(playerStatsCard,"📈 PROFIL STATISTIKEN")
     local profValLabels = {}
 
     for _, pd in ipairs(PROF_DEFS) do
-        local row = Instance.new("Frame",playerStatsCard)
-        row.Size=UDim2.new(1,0,0,30); row.BackgroundColor3=D.CardHover; row.BorderSizePixel=0
+        local row = Instance.new("Frame", profInner)
+        row.Size=UDim2.new(1,0,0,28); row.BackgroundColor3=D.CardHover; row.BorderSizePixel=0
         Corner(row,7); Stroke(row,pd.color,1,0.55)
-        local acBar=Instance.new("Frame",row); acBar.Size=UDim2.new(0,3,1,0); acBar.BackgroundColor3=pd.color; acBar.BorderSizePixel=0; Corner(acBar,2)
-        local nL=Instance.new("TextLabel",row); nL.Position=UDim2.new(0,10,0,0); nL.Size=UDim2.new(0.6,-10,1,0)
+        local acBar=Instance.new("Frame",row); acBar.Size=UDim2.new(0,3,1,0)
+        acBar.BackgroundColor3=pd.color; acBar.BorderSizePixel=0; Corner(acBar,2)
+        local nL=Instance.new("TextLabel",row)
+        nL.Position=UDim2.new(0,10,0,0); nL.Size=UDim2.new(0.62,-10,1,0)
         nL.BackgroundTransparency=1; nL.Text=pd.icon.."  "..pd.label; nL.TextColor3=pd.color
-        nL.TextSize=11; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left
+        nL.TextSize=10; nL.Font=Enum.Font.GothamBold; nL.TextXAlignment=Enum.TextXAlignment.Left
         nL.TextScaled=false; nL.RichText=true; nL.TextStrokeTransparency=1
-        local vL=Instance.new("TextLabel",row); vL.Position=UDim2.new(0.6,0,0,0); vL.Size=UDim2.new(0.4,-8,1,0)
+        local vL=Instance.new("TextLabel",row)
+        vL.Position=UDim2.new(0.62,0,0,0); vL.Size=UDim2.new(0.38,-6,1,0)
         vL.BackgroundTransparency=1; vL.Text="–"; vL.TextColor3=D.TextHi
-        vL.TextSize=12; vL.Font=Enum.Font.GothamBold; vL.TextXAlignment=Enum.TextXAlignment.Right
+        vL.TextSize=11; vL.Font=Enum.Font.GothamBold; vL.TextXAlignment=Enum.TextXAlignment.Right
         vL.TextScaled=false; vL.RichText=true; vL.TextStrokeTransparency=1
         profValLabels[pd.key] = { lbl=vL, pd=pd }
     end
 
-    local function RefreshProfStats()
-        for key, entry in pairs(profValLabels) do
-            pcall(function()
-                local val = entry.pd.read()
-                if val ~= nil and val ~= 0 then
-                    entry.lbl.Text = entry.pd.fmt(val)
-                    entry.lbl.TextColor3 = D.TextHi
-                else
-                    entry.lbl.Text = "–"
-                    entry.lbl.TextColor3 = D.TextLow
-                end
-            end)
+    -- Auto-refresh: lädt nur die Felder die NICHT onButton=true sind
+    local function RefreshProfStats(fullRefresh)
+        for _, entry in pairs(profValLabels) do
+            if fullRefresh or not entry.pd.onButton then
+                pcall(function()
+                    local val = entry.pd.read()
+                    if val ~= nil and val ~= 0 then
+                        entry.lbl.Text = entry.pd.fmt(val)
+                        entry.lbl.TextColor3 = D.TextHi
+                    else
+                        entry.lbl.Text = "–"
+                        entry.lbl.TextColor3 = D.TextLow
+                    end
+                end)
+            end
         end
     end
 
-    NeonBtn(playerStatsCard,"📊 Profil-Stats laden",D.Purple,26).MouseButton1Click:Connect(function()
-        task.spawn(function() pcall(RefreshProfStats) end)
+    -- Button: lädt ALLE Stats inkl. Summons + Rerolls (fullRefresh=true)
+    NeonBtn(profInner,"🔄 Profil-Stats aktualisieren",D.Purple,26).MouseButton1Click:Connect(function()
+        task.spawn(function() pcall(function() RefreshProfStats(true) end) end)
     end)
 
-    -- Auto-load beim Tab-Öffnen
-    task.spawn(function()
-        task.wait(3)
-        pcall(RefreshProfStats)
-    end)
+    -- Auto-load beim Tab-Öffnen (nur Damage + Spielzeit)
+    task.spawn(function() task.wait(3); pcall(function() RefreshProfStats(false) end) end)
     task.spawn(function()
         while S.Running do
             task.wait(30)
-            if S.ActiveTab == "Inventory" then pcall(RefreshProfStats) end
+            if S.ActiveTab == "Inventory" then pcall(function() RefreshProfStats(false) end) end
         end
     end)
 end
