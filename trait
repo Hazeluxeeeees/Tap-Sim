@@ -871,35 +871,27 @@ TR.UI.Lbl.RollCount.TextSize=10; TR.UI.Lbl.RollCount.Font=Enum.Font.GothamMedium
 TR.UI.Lbl.RollCount.TextXAlignment=Enum.TextXAlignment.Right
 TR.UI.Lbl.RollCount.TextScaled=false; TR.UI.Lbl.RollCount.RichText=true; TR.UI.Lbl.RollCount.TextStrokeTransparency=1
 
--- Zeile 2: Währung-Auswahl
-local currRow=Instance.new("Frame",actionCard)
-currRow.Size=UDim2.new(1,0,0,26); currRow.BackgroundTransparency=1; HList(currRow,6)
-MkLbl(currRow,"💎 Währung:",11,D.TextLow).Size=UDim2.new(0.22,0,1,0)
-local TR_SELECTED_CURRENCY="Shards"
-local CURRENCIES_TR={"Shards","Gems","Coins"}
-local currBtns={}
-for _,cur in ipairs(CURRENCIES_TR) do
-    local cb=Instance.new("TextButton",currRow)
-    cb.Size=UDim2.new(0.24,0,1,0); cb.BackgroundColor3=D.CardHover; cb.BackgroundTransparency=0.35
-    cb.Text=cur; cb.TextColor3=D.TextMid; cb.TextSize=10; cb.Font=Enum.Font.GothamBold
-    cb.AutoButtonColor=false; cb.BorderSizePixel=0; Corner(cb,6); Stroke(cb,D.Border,1,0.5)
-    cb.TextScaled=false; cb.RichText=true; cb.TextStrokeTransparency=1
-    table.insert(currBtns,{btn=cb,cur=cur})
-end
-local function SelectCurrency(chosen)
-    TR_SELECTED_CURRENCY=chosen
-    for _,entry in ipairs(currBtns) do
-        local active=(entry.cur==chosen)
-        Tw(entry.btn,{BackgroundColor3=active and D.Gold or D.CardHover, BackgroundTransparency=active and 0.2 or 0.35})
-        entry.btn.TextColor3=active and D.Gold or D.TextMid
-        local s=entry.btn:FindFirstChildOfClass("UIStroke"); if s then s.Color=active and D.Gold or D.Border; s.Transparency=active and 0.1 or 0.5 end
-    end
-end
-for _,entry in ipairs(currBtns) do
-    local capCur=entry.cur
-    entry.btn.MouseButton1Click:Connect(function() SelectCurrency(capCur) end)
-end
-SelectCurrency("Shards")
+-- ★ Währung: nur Trait Rerolls (Shards) – kein Gems/Coins
+-- TR_SELECTED_CURRENCY ist immer "Shards" (fest verdrahtet)
+local TR_SELECTED_CURRENCY = "Shards"
+local currRow = Instance.new("Frame", actionCard)
+currRow.Size = UDim2.new(1,0,0,28); currRow.BackgroundTransparency=1; HList(currRow,6)
+MkLbl(currRow,"🎲 Währung:",11,D.TextLow).Size=UDim2.new(0.30,0,1,0)
+local trBtn = Instance.new("TextButton", currRow)
+trBtn.Size               = UDim2.new(0.68,0,1,0)
+trBtn.BackgroundColor3   = Color3.fromRGB(22,10,42)
+trBtn.BackgroundTransparency = 0.15
+trBtn.Text               = "✅  Trait Rerolls"
+trBtn.TextColor3         = D.Purple
+trBtn.TextSize           = 11
+trBtn.Font               = Enum.Font.GothamBold
+trBtn.AutoButtonColor    = false
+trBtn.BorderSizePixel    = 0
+trBtn.TextScaled         = false
+trBtn.RichText           = true
+trBtn.TextStrokeTransparency = 1
+Corner(trBtn, 6); Stroke(trBtn, D.Purple, 1.5, 0.1)
+-- Kein Click-Handler nötig – einzige und feste Währung
 
 -- Zeile 3: Start / Stop – volle Breite, große Buttons
 local startRerollBtn, stopRerollBtn
