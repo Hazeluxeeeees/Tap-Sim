@@ -1,14 +1,14 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB – teams.lua  v1.3.0
+--  HazeHUB – teams.lua  v1.4.0
 --  ÄNDERUNGEN v1.3.0:
 --    ✓ PlayerCollection dynamisch über LocalPlayer (kein Hazeluxes1)
---    ✓ findUnitByTag = EINZIGE Suchmethode für Units (kein Name-Lookup)
+--    ✓ getUnitByTag = EINZIGE Suchmethode für Units (kein Name-Lookup)
 --    ✓ Save speichert Tag pro Slot (primärer Key für alle späteren Loads)
 --    ✓ Load-Workflow strikt: Snapshot → Strip → UnEquip → Equip → Gear
 --    ✓ FindUnitInCollection komplett entfernt
 -- ╚══════════════════════════════════════════════════════════╝
 
-local VERSION = "1.3.0"
+local VERSION = "1.4.0"
 
 local waited = 0
 while not (_G.HazeShared and _G.HazeShared.TeamsPage and _G.HazeShared.SetModuleLoaded) do
@@ -58,17 +58,19 @@ local GEAR_SLOTS = {
 }
 
 -- ════════════════════════════════════════════════════════════
---  ★ findUnitByTag — EINZIGE Methode um Units zu finden
+--  ★ getUnitByTag — EINZIGE Methode um Units zu finden
 --
---  Loopt durch PlayerCollection:GetChildren() und vergleicht
---  unit.Tag.Value mit dem gesuchten Tag.
---  Gibt die Unit-Instance zurück oder nil.
+--  Greift direkt auf Player_Data[LocalPlayer.Name].Collection zu.
+--  Vergleicht folder.Tag.Value mit targetTag.
+--  Gibt den Ordner zurück oder nil.
 -- ════════════════════════════════════════════════════════════
-local function findUnitByTag(savedTag)
-    if not savedTag or savedTag == "" then return nil end
-    for _, unit in pairs(PlayerCollection:GetChildren()) do
-        if unit:FindFirstChild("Tag") and unit.Tag.Value == savedTag then
-            return unit
+local function getUnitByTag(targetTag)
+    if not targetTag or targetTag == "" then return nil end
+    local collection = game:GetService("ReplicatedStorage")
+        .Player_Data[game.Players.LocalPlayer.Name].Collection
+    for _, folder in pairs(collection:GetChildren()) do
+        if folder:FindFirstChild("Tag") and folder.Tag.Value == targetTag then
+            return folder
         end
     end
     return nil
@@ -113,7 +115,7 @@ end
 
 -- Equip: findet Unit ausschließlich über Tag, übergibt Instance an Server
 local function fireEquip(tag)
-    local unit = findUnitByTag(tag)
+    local unit = getUnitByTag(tag)
     if not unit then
         warn("[HazeHub/Teams] fireEquip: kein Unit für Tag='" .. tostring(tag) .. "' gefunden")
         return false
@@ -140,7 +142,7 @@ end
 -- EquipGear: findet Unit per Tag, stattet Gear-Slot aus
 local function fireEquipGear(tag, gearSlotName, gearValue)
     if not gearValue then return end
-    local unit = findUnitByTag(tag)
+    local unit = getUnitByTag(tag)
     if not unit then
         warn("[HazeHub/Teams] fireEquipGear: kein Unit für Tag='" .. tostring(tag) .. "'")
         return
@@ -157,26 +159,24 @@ local function fireAutoUpgrade(slot, value)
 end
 
 -- ════════════════════════════════════════════════════════════
---  SNAPSHOT — scannt Collection VOR jedem Remote-Call
---
---  Gibt zurück: { [tag] = { name, tag, gears={}, instance } }
+--  SNAPSHOT — liest Gear aller aktuell geladenen Units
+--  via getUnitByTag aus der Collection (pre-UnEquipAll).
+--  Gibt zurück: { [tag] = { name, gears={}, instance } }
 -- ════════════════════════════════════════════════════════════
-local function buildSnapshot()
+local function buildSnapshot(tagList)
     local snap = {}
-    for _, unit in pairs(PlayerCollection:GetChildren()) do
-        if unit:IsA("Folder") then
-            local tagObj = unit:FindFirstChild("Tag")
-            local tag    = tagObj and tostring(tagObj.Value) or ""
-            if tag ~= "" then
+    for _, tag in pairs(tagList) do
+        if tag and tag ~= "" then
+            local unitFolder = getUnitByTag(tag)
+            if unitFolder then
                 local gears = {}
                 for _, slot in ipairs(GEAR_SLOTS) do
-                    gears[slot] = readGearValue(unit, slot)
+                    gears[slot] = readGearValue(unitFolder, slot)
                 end
                 snap[tag] = {
-                    name     = unit.Name,
-                    tag      = tag,
+                    name     = unitFolder.Name,
                     gears    = gears,
-                    instance = unit,
+                    instance = unitFolder,
                 }
             end
         end
@@ -189,26 +189,51 @@ end
 -- ════════════════════════════════════════════════════════════
 --  LOADOUT SCANNER (für Save)
 --
---  Liest UnitLoadout1–6 aus Player_Data.Data,
---  sucht in Collection nach übereinstimmendem Namen → holt Tag.
---  Gibt: slots[i]=name, autoUp[i]=bool, tags[i]=tag
+--  UnitLoadout1–6 in Player_Data.Data enthalten den TAG der Einheit
+--  (nicht den Namen). Dieser Tag wird direkt gespeichert.
+--  Gear wird via getUnitByTag aus der Collection gelesen.
+--
+--  Gibt zurück:
+--    tags[i]   = Tag-String (Primary Key — UnitLoadoutX.Value)
+--    names[i]  = Anzeigename (unit.Name aus Collection, für UI)
+--    gears[i]  = { HeadGear=..., BodyGear=..., ... }
+--    autoUp[i] = AutoUpgrade-Value
 -- ════════════════════════════════════════════════════════════
 local function scanLoadout()
-    local slots  = {}
-    local autoUp = {}
     local tags   = {}
+    local names  = {}
+    local gears  = {}
+    local autoUp = {}
 
-    pcall(function()
+    local ok, err = pcall(function()
         local data  = PlayerData:WaitForChild("Data", 5)
         local auCfg = PlayerData:FindFirstChild("AutoUpgradeConfig")
 
         for i = 1, 6 do
-            -- Slot-Name
+            -- UnitLoadoutX.Value ist der Tag (nicht der Name)
             local lv = data:FindFirstChild("UnitLoadout" .. i)
             if lv then
-                local v = tostring(lv.Value)
-                if v ~= "" and v ~= "nil" then
-                    slots[i] = v
+                local tag = tostring(lv.Value)
+                if tag ~= "" and tag ~= "nil" then
+                    tags[i] = tag
+
+                    -- Collection-Ordner per Tag suchen → Name + Gear lesen
+                    local unitFolder = getUnitByTag(tag)
+                    if unitFolder then
+                        names[i] = unitFolder.Name
+
+                        -- Gear-Values aus Collection-Ordner lesen
+                        local unitGears = {}
+                        for _, slot in ipairs(GEAR_SLOTS) do
+                            unitGears[slot] = readGearValue(unitFolder, slot)
+                        end
+                        gears[i] = unitGears
+                    else
+                        -- Unit existiert, Tag ist valide, aber kein Collection-Eintrag
+                        names[i] = "Tag:" .. tag
+                        gears[i] = {}
+                        warn("[HazeHub/Teams] scanLoadout: kein Collection-Ordner für Tag='" .. tag .. "'")
+                    end
                 end
             end
 
@@ -220,28 +245,20 @@ local function scanLoadout()
         end
     end)
 
-    -- Tag per Name in Collection nachschlagen
-    for i, unitName in pairs(slots) do
-        for _, unit in pairs(PlayerCollection:GetChildren()) do
-            if unit.Name == unitName then
-                local tagObj = unit:FindFirstChild("Tag")
-                if tagObj then
-                    tags[i] = tostring(tagObj.Value)
-                end
-                break
-            end
-        end
+    if not ok then
+        warn("[HazeHub/Teams] scanLoadout Fehler: " .. tostring(err))
     end
 
-    return slots, autoUp, tags
+    return tags, names, gears, autoUp
 end
 
 -- ════════════════════════════════════════════════════════════
---  ★ LOAD TEAM — Dreiphasen-Sequenz
+--  ★ LOAD TEAM — Strikte Sequenz (4 Schritte)
 --
---  Phase 1: Snapshot (Collection lesen, Gear sichern)
---  Phase 2: Gear-Strip der aktuellen Units → UnEquipAll
---  Phase 3: findUnitByTag → Equip → task.wait(0.1) → Gear-Restore
+--  1. Snapshot : Gear der aktuellen Units via getUnitByTag sichern
+--  2. Clean    : Gear strippen → UnEquipAll
+--  3. Equip    : getUnitByTag(tag) → fireEquip
+--  4. Restore  : task.wait(0.1) → Gear aus Snapshot wieder ausrüsten
 -- ════════════════════════════════════════════════════════════
 local function loadTeam(team, onPhase, onDone, onError)
     onPhase = onPhase or function() end
@@ -249,46 +266,43 @@ local function loadTeam(team, onPhase, onDone, onError)
     onError = onError or function(e) warn("[HazeHub/Teams] " .. tostring(e)) end
 
     if not team or not team.tags then
-        onError("Team hat kein 'tags'-Feld. Bitte neu speichern.")
+        onError("Team hat kein 'tags'-Feld.\nBitte neu speichern (einmalig).")
         return
     end
 
-    -- ── PHASE 1: SNAPSHOT ──────────────────────────────────
-    onPhase(1, "🔍 Phase 1/3: Collection scannen...")
-    print("[HazeHub/Teams] ══ PHASE 1: SNAPSHOT ══")
+    -- ── SCHRITT 1: SNAPSHOT ────────────────────────────────
+    -- Gear der AKTUELL geladenen Units sichern, bevor irgendetwas verändert wird.
+    onPhase(1, "🔍 1/3: Snapshot aktueller Units...")
+    print("[HazeHub/Teams] ══ SCHRITT 1: SNAPSHOT ══")
 
-    -- Snapshot JETZT, bevor irgendein Remote feuert
-    local snap = buildSnapshot()
+    -- Aktuelle Tags aus Loadout lesen (UnitLoadoutX.Value = Tag)
+    local currentTags, _, _, _ = scanLoadout()
+    -- Snapshot der aktuellen Units für Gear-Strip
+    local currentSnap = buildSnapshot(currentTags)
 
-    -- Equip-Queue aufbauen: nur Slots die einen gültigen Tag haben
-    local queue = {}   -- { slotIdx, tag, savedGears }
+    -- Equip-Queue aus gespeichertem Team aufbauen
+    local queue = {}
     for i = 1, 6 do
-        local savedTag = team.tags[tostring(i)] or team.tags[i]
-        if savedTag and savedTag ~= "" then
-            -- Gear: aus dem gespeicherten Save (nicht aus dem Live-Snapshot)
-            local savedGears = {}
-            if team.gears then
-                savedGears = team.gears[tostring(i)] or team.gears[i] or {}
-            end
-            -- Validierung: existiert diese Unit noch in der Collection?
-            local liveEntry = snap[savedTag]
-            if liveEntry then
+        local tag = team.tags[tostring(i)] or team.tags[i]
+        if tag and tag ~= "" then
+            local unitFolder = getUnitByTag(tag)
+            if unitFolder then
+                local savedGears = {}
+                if team.gears then
+                    savedGears = team.gears[tostring(i)] or team.gears[i] or {}
+                end
                 table.insert(queue, {
                     slotIdx    = i,
-                    tag        = savedTag,
+                    tag        = tag,
+                    name       = unitFolder.Name,
                     savedGears = savedGears,
                 })
-                local gearCount = 0
-                for _, v in pairs(savedGears) do if v then gearCount = gearCount + 1 end end
-                print(string.format(
-                    "[HazeHub/Teams]   Queue Slot %d → Tag='%s' (%s)  Gear: %d",
-                    i, savedTag, liveEntry.name, gearCount
-                ))
+                local gc = 0
+                for _, v in pairs(savedGears) do if v then gc = gc + 1 end end
+                print(string.format("  Queue Slot %d → Tag='%s' (%s)  Gear:%d",
+                    i, tag, unitFolder.Name, gc))
             else
-                warn(string.format(
-                    "[HazeHub/Teams]   ⚠ Slot %d: Tag='%s' nicht in Collection. Übersprungen.",
-                    i, savedTag
-                ))
+                warn(string.format("  ⚠ Slot %d: Tag='%s' nicht in Collection. Übersprungen.", i, tag))
             end
         end
     end
@@ -298,46 +312,36 @@ local function loadTeam(team, onPhase, onDone, onError)
         return
     end
 
-    -- Aktuell ausgerüstete Units für Gear-Strip ermitteln (aus Snapshot)
-    local _, _, currentTags = scanLoadout()
-    local stripList = {}   -- { tag, instance }
-    for _, tag in pairs(currentTags) do
-        if snap[tag] then
-            table.insert(stripList, { tag = tag, instance = snap[tag].instance })
-        end
-    end
+    -- ── SCHRITT 2: CLEAN — Gear-Strip + UnEquipAll ─────────
+    local stripCount = 0
+    for _ in pairs(currentSnap) do stripCount = stripCount + 1 end
+    onPhase(2, string.format("⚡ 2/3: Strip %d Units → UnEquipAll...", stripCount))
+    print(string.format("[HazeHub/Teams] ══ SCHRITT 2: CLEAN (%d aktuelle Units) ══", stripCount))
 
-    -- ── PHASE 2: GEAR-STRIP + UNEQUIP-ALL ─────────────────
-    onPhase(2, string.format("⚡ Phase 2/3: Strip %d Units → UnEquipAll...", #stripList))
-    print(string.format("[HazeHub/Teams] ══ PHASE 2: STRIP (%d Units) + UNEQUIP ══", #stripList))
-
-    -- 2a. Gear von aktuell ausgerüsteten Units entfernen
-    for _, target in ipairs(stripList) do
+    for _, entry in pairs(currentSnap) do
         for _, gearSlot in ipairs(GEAR_SLOTS) do
-            if readGearValue(target.instance, gearSlot) then
-                fireUnequipGear(target.instance, gearSlot)
+            if entry.gears[gearSlot] then
+                fireUnequipGear(entry.instance, gearSlot)
                 task.wait(0.04)
             end
         end
     end
-    if #stripList > 0 then task.wait(0.25) end
+    if stripCount > 0 then task.wait(0.2) end
 
-    -- 2b. Alle Units aus Loadout entfernen
-    fireUnEquipAll()   -- inkl. task.wait(0.6) intern
+    fireUnEquipAll()  -- enthält intern task.wait(0.6)
 
-    -- ── PHASE 3: EQUIP + GEAR-RESTORE ─────────────────────
-    onPhase(3, string.format("🎯 Phase 3/3: Equip %d Units + Gear...", #queue))
-    print("[HazeHub/Teams] ══ PHASE 3: EQUIP + GEAR-RESTORE ══")
+    -- ── SCHRITT 3 + 4: EQUIP + GEAR-RESTORE ────────────────
+    onPhase(3, string.format("🎯 3/3: Equip %d Units + Gear...", #queue))
+    print("[HazeHub/Teams] ══ SCHRITT 3+4: EQUIP + GEAR-RESTORE ══")
 
     local successCount = 0
     for _, entry in ipairs(queue) do
-        -- 3a. Unit equippen — findUnitByTag liefert frische Instance
-        local ok = fireEquip(entry.tag)
-        if ok then
+        -- Schritt 3: Equip (getUnitByTag → frische Instance)
+        local equipped = fireEquip(entry.tag)
+        if equipped then
             successCount = successCount + 1
-            task.wait(0.1)   -- wie vom User spezifiziert
-
-            -- 3b. Gear aus Snapshot-Speicher wiederherstellen
+            -- Schritt 4: 0.1s warten, dann Gear wiederherstellen
+            task.wait(0.1)
             for _, gearSlot in ipairs(GEAR_SLOTS) do
                 local gearVal = entry.savedGears[gearSlot]
                 if gearVal then
@@ -350,7 +354,7 @@ local function loadTeam(team, onPhase, onDone, onError)
         end
     end
 
-    -- 3c. AutoUpgrade wiederherstellen
+    -- AutoUpgrade wiederherstellen
     if team.autoUpgrade then
         for i = 1, 6 do
             local v = team.autoUpgrade[tostring(i)] or team.autoUpgrade[i]
@@ -361,12 +365,12 @@ local function loadTeam(team, onPhase, onDone, onError)
         end
     end
 
-    print(string.format("[HazeHub/Teams] ══ FERTIG: %d/%d (%s) ══",
+    print(string.format("[HazeHub/Teams] ══ FERTIG: %d/%d ('%s') ══",
         successCount, #queue, team.name or "?"))
     onDone(successCount, #queue)
 end
 
--- ════════════════════════════════════════════════════════════
+
 --  STATE + PERSISTENZ
 -- ════════════════════════════════════════════════════════════
 local TM_State = { Teams = {}, SelIdx = nil }
@@ -476,24 +480,21 @@ end
 local scanBtn = NeonBtn(saveCard, "🔍  Loadout scannen", D.CyanDim, 30)
 
 local function refreshPreview()
-    local slots, _, tags = scanLoadout()
-    local snap = buildSnapshot()
+    -- scanLoadout gibt jetzt (tags, names, gears, autoUp) zurück
+    local tags, names, gears, autoUp = scanLoadout()
     for i = 1, 6 do
         local lbl  = slotPreviews[i]
-        local name = slots[i]
-        if name then
-            local tag      = tags[i] or ""
-            local entry    = tag ~= "" and snap[tag] or nil
-            local gearCnt  = 0
-            if entry then
-                for _, s in ipairs(GEAR_SLOTS) do
-                    if readGearValue(entry.instance, s) then gearCnt = gearCnt + 1 end
-                end
+        local tag  = tags[i]
+        local name = names[i]
+        if tag and tag ~= "" then
+            local gearCnt = 0
+            if gears[i] then
+                for _, v in pairs(gears[i]) do if v then gearCnt = gearCnt + 1 end end
             end
-            local tagTxt  = tag ~= "" and ("  [" .. tag .. "]") or "  [⚠ kein Tag]"
+            local auTxt   = autoUp[i] ~= nil and ("  AU:" .. tostring(autoUp[i])) or ""
             local gearTxt = gearCnt > 0 and ("  🗡" .. gearCnt) or ""
-            lbl.Text       = name .. tagTxt .. gearTxt
-            lbl.TextColor3 = tag ~= "" and D.TextHi or D.Orange
+            lbl.Text       = (name or "?") .. "  [" .. tag .. "]" .. gearTxt .. auTxt
+            lbl.TextColor3 = D.TextHi
         else
             lbl.Text = "—  (leer)"; lbl.TextColor3 = D.TextLow
         end
@@ -534,35 +535,34 @@ saveBtn.MouseButton1Click:Connect(function()
         saveFeedback.TextColor3 = D.Orange; return
     end
 
-    local slots, autoUp, tags = scanLoadout()
-    local snap = buildSnapshot()
+    -- scanLoadout gibt (tags, names, gears, autoUp) zurück
+    -- tags[i] = UnitLoadoutX.Value (der Tag direkt)
+    -- gears[i] = Gear aus Collection-Ordner (via getUnitByTag)
+    local tags, names, gears, autoUp = scanLoadout()
 
     local unitCount = 0
-    for i = 1, 6 do if slots[i] then unitCount = unitCount + 1 end end
+    for i = 1, 6 do if tags[i] and tags[i] ~= "" then unitCount = unitCount + 1 end end
 
     if unitCount == 0 then
-        saveFeedback.Text = "⚠ Kein Loadout. Erst scannen."
+        saveFeedback.Text = "⚠ Kein Loadout mit Tags. Erst scannen."
         saveFeedback.TextColor3 = D.Orange; return
     end
 
-    -- Tags und Gear pro Slot sichern
-    local tagsForSave  = {}   -- { ["1"]=tag, ["2"]=tag, ... }
-    local gearsForSave = {}   -- { ["1"]={HeadGear=..., ...}, ... }
+    -- Tags, Namen und Gear mit String-Keys für JSON speichern
+    local tagsForSave  = {}
+    local namesForSave = {}
+    local gearsForSave = {}
+    local auForSave    = {}
+    local slotsForDisplay = {}  -- name pro Slot (nur für UI-Anzeige)
 
     for i = 1, 6 do
         local tag = tags[i]
         if tag and tag ~= "" then
-            tagsForSave[tostring(i)] = tag
-            local entry = snap[tag]
-            if entry then
-                gearsForSave[tostring(i)] = entry.gears
-            end
+            tagsForSave[tostring(i)]  = tag
+            namesForSave[tostring(i)] = names[i] or ("Tag:" .. tag)
+            gearsForSave[tostring(i)] = gears[i] or {}
+            slotsForDisplay[i]        = names[i] or ("Tag:" .. tag)
         end
-    end
-
-    -- AutoUpgrade mit String-Keys
-    local auForSave = {}
-    for i = 1, 6 do
         if autoUp[i] ~= nil then auForSave[tostring(i)] = autoUp[i] end
     end
 
@@ -573,9 +573,9 @@ saveBtn.MouseButton1Click:Connect(function()
 
     local entry = {
         name        = teamName,
-        slots       = slots,       -- name pro Slot (für Anzeige)
-        tags        = tagsForSave, -- Tag pro Slot (primärer Key für Load)
-        gears       = gearsForSave,
+        slots       = slotsForDisplay,  -- Anzeigename (für UI)
+        tags        = tagsForSave,       -- Tag = Primary Key für Load
+        gears       = gearsForSave,      -- Gear direkt aus Collection
         autoUpgrade = auForSave,
         savedAt     = os.time(),
         unitCount   = unitCount,
