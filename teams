@@ -68,8 +68,8 @@ local function GetCollection()
     return col
 end
 
--- ★ PRÄZISE TAG-SUCHE (exakt wie vom User spezifiziert, erweitert)
--- Sucht ausschließlich über Tag.Value — kein Name-Fallback, kein staler Ref
+-- ★ PRÄZISE TAG-SUCHE — NUR für Gear-Operationen (UnequipGear / EquipGear)
+-- Gibt die Unit-Instance zurück deren Tag.Value exakt übereinstimmt
 local function findUnitByTag(tag)
     local col = GetCollection()
     if not col then return nil end
@@ -77,6 +77,29 @@ local function findUnitByTag(tag)
         if unit:FindFirstChild("Tag") and tostring(unit.Tag.Value) == tostring(tag) then
             return unit
         end
+    end
+    return nil
+end
+
+-- ORIGINAL Name-Suche — für Equip-Remote (wie v1.1.1, funktioniert zuverlässig)
+-- Sucht: 1. Exakter Name  2. Exakter Tag  3. Case-insensitiv
+local function FindUnitInCollection(nameOrTag)
+    local col = GetCollection()
+    if not col then return nil end
+    local units = col:GetChildren()
+    -- 1. Exakter Name
+    for _, u in ipairs(units) do
+        if u.Name == nameOrTag then return u end
+    end
+    -- 2. Exakter Tag
+    for _, u in ipairs(units) do
+        local t = u:FindFirstChild("Tag")
+        if t and tostring(t.Value) == nameOrTag then return u end
+    end
+    -- 3. Case-insensitiv
+    local low = nameOrTag:lower()
+    for _, u in ipairs(units) do
+        if u.Name:lower() == low then return u end
     end
     return nil
 end
@@ -164,24 +187,20 @@ local function FireUnEquipAll()
     return true
 end
 
--- Equip: nutzt frische Instance aus Collection (KEIN staler Ref)
--- Sucht zwingend per Tag — wenn tag="" dann Fallback auf name
-local function FireEquip(tag, nameHint)
-    local inst = findUnitByTag(tag)
-    if not inst and nameHint and nameHint ~= "" then
-        -- Letzter Fallback: Name-Suche (nur wenn kein Tag verfügbar)
-        local col = GetCollection()
-        if col then inst = col:FindFirstChild(nameHint) end
-    end
+-- Equip: originale Name-Suche via FindUnitInCollection (wie v1.1.1)
+-- findUnitByTag wird hier NICHT verwendet — nur für Gear-Ops
+local function FireEquip(unitName)
+    if not unitName or unitName == "" then return false end
+    local inst = FindUnitInCollection(unitName)
     if not inst then
-        warn(string.format("[HazeHub/Teams] Equip: Unit mit Tag='%s' nicht gefunden.", tostring(tag)))
+        warn("[HazeHub/Teams] Equip: '" .. unitName .. "' nicht in Collection gefunden.")
         return false
     end
     local r = GetRemote("Remote","Server","Units","Equip")
     if not r then return false end
     local ok, err = pcall(function() r:FireServer(inst) end)
     if not ok then
-        warn("[HazeHub/Teams] Equip Fehler: " .. tostring(err))
+        warn("[HazeHub/Teams] Equip Fehler für '" .. unitName .. "': " .. tostring(err))
         return false
     end
     return true
@@ -429,8 +448,8 @@ local function LoadTeam(team, onPhase, onDone, onError)
 
     local successCount = 0
     for _, entry in ipairs(equipQueue) do
-        -- 3a. Unit equippen (Tag-basiert, frische Instance)
-        local equipped = FireEquip(entry.tag, entry.name)
+        -- 3a. Unit equippen (originale Name-Suche, wie v1.1.1)
+        local equipped = FireEquip(entry.name)
         if equipped then
             successCount = successCount + 1
             print(string.format(
