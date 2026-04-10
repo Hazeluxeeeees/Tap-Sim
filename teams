@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB – teams.lua  v1.4.0
+--  HazeHUB – teams.lua  v1.5.0
 --  ÄNDERUNGEN v1.3.0:
 --    ✓ PlayerCollection dynamisch über LocalPlayer (kein Hazeluxes1)
 --    ✓ getUnitByTag = EINZIGE Suchmethode für Units (kein Name-Lookup)
@@ -8,7 +8,7 @@
 --    ✓ FindUnitInCollection komplett entfernt
 -- ╚══════════════════════════════════════════════════════════╝
 
-local VERSION = "1.4.0"
+local VERSION = "1.5.0"
 
 local waited = 0
 while not (_G.HazeShared and _G.HazeShared.TeamsPage and _G.HazeShared.SetModuleLoaded) do
@@ -26,6 +26,14 @@ local MkInput = HS.MkInput; local VList   = HS.VList
 local HList   = HS.HList;   local Pad     = HS.Pad
 local Corner  = HS.Corner;  local Stroke  = HS.Stroke
 local FmtNum  = HS.FmtNum
+
+-- DisplayName-Helper (via HazeShared, lazy geladen)
+local function getDisplayName(folderName)
+    if _G.HazeShared and type(_G.HazeShared.getDisplayName) == "function" then
+        return _G.HazeShared.getDisplayName(folderName)
+    end
+    return folderName or "?"
+end
 
 local TeamsPage = HS.TeamsPage
 
@@ -562,13 +570,14 @@ local function refreshPreview()
         local tag  = tags[i]
         local name = names[i]
         if tag and tag ~= "" then
-            local gearCnt = 0
+            local display  = getDisplayName(name or "")   -- ★ DisplayName
+            local gearCnt  = 0
             if gears[i] then
                 for _, v in pairs(gears[i]) do if v then gearCnt = gearCnt + 1 end end
             end
             local auTxt   = autoUp[i] ~= nil and ("  AU:" .. tostring(autoUp[i])) or ""
             local gearTxt = gearCnt > 0 and ("  🗡" .. gearCnt) or ""
-            lbl.Text       = (name or "?") .. "  [" .. tag .. "]" .. gearTxt .. auTxt
+            lbl.Text       = display .. "  [#" .. tag .. "]" .. gearTxt .. auTxt
             lbl.TextColor3 = D.TextHi
         else
             lbl.Text = "—  (leer)"; lbl.TextColor3 = D.TextLow
@@ -778,14 +787,15 @@ local function rebuildList()
                     local name = t.slots and t.slots[i]
                     local tag  = t.tags  and (t.tags[tostring(i)] or t.tags[i])
                     if name then
-                        local tagStr  = tag and ("  [" .. tag .. "]") or "  [kein Tag]"
+                        local display = getDisplayName(name)  -- ★ DisplayName
+                        local tagStr  = tag and ("  [#" .. tag .. "]") or "  [kein Tag]"
                         local gearCnt = 0
                         if t.gears then
                             local g = t.gears[tostring(i)] or t.gears[i]
                             if g then for _, v in pairs(g) do if v then gearCnt=gearCnt+1 end end end
                         end
                         local gearStr = gearCnt > 0 and ("  🗡" .. gearCnt) or ""
-                        dl.Text       = name .. tagStr .. gearStr
+                        dl.Text       = display .. tagStr .. gearStr
                         dl.TextColor3 = tag and D.TextHi or D.Orange
                     else
                         dl.Text = "—  (leer)"; dl.TextColor3 = D.TextLow
