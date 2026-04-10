@@ -2527,62 +2527,155 @@ local function ToggleAntiAFKUI()
 end
 _G.HazeHubFunctions.ToggleAntiAFK = ToggleAntiAFKUI
 
--- Anti-AFK (neu implementiert: Mouse-Simulation + VirtualUser Kombination)
-local afkCard=Card(MiscPage); Pad(afkCard,10,12,10,12); VList(afkCard,8); SecLbl(afkCard,"ANTI-AFK")
-local afkTopRow=Instance.new("Frame",afkCard); afkTopRow.Size=UDim2.new(1,0,0,28); afkTopRow.BackgroundTransparency=1; HList(afkTopRow,10)
-local afkDot=Instance.new("Frame",afkTopRow); afkDot.Size=UDim2.new(0,10,0,10); afkDot.AnchorPoint=Vector2.new(0,0.5); afkDot.BackgroundColor3=D.Green; afkDot.BorderSizePixel=0; Corner(afkDot,99)
-local afkTxt=Instance.new("TextLabel",afkTopRow); afkTxt.Size=UDim2.new(1,-20,1,0); afkTxt.BackgroundTransparency=1
-afkTxt.Text="Anti-AFK  —  Aktiv"; afkTxt.TextColor3=D.Green; afkTxt.TextSize=13; afkTxt.Font=Enum.Font.GothamBold; afkTxt.TextXAlignment=Enum.TextXAlignment.Left
-local afkInfoLbl=MkLbl(afkCard,"Verhindert AFK-Kicks durch zyklische Eingaben (Kamera-Ping alle 55s).",10,D.TextLow)
-afkInfoLbl.Size=UDim2.new(1,0,0,28); afkInfoLbl.TextWrapped=true
+-- ════════════════════════════════════════════════════════════
+--  ★ SMART ANTI-AFK  v2.0  (Invis-Movement)
+--  Ziel: tick() - u6 im Spiel-Script niemals 900 erreichen lassen.
+--  Intervall: 120s (2 Minuten) → weit unter der 900s-Grenze.
+--  Methoden (mehrschichtig, eine davon reicht):
+--    1. VirtualUser: CaptureController + ClickButton2 (unsichtbar)
+--    2. VirtualUser: Winzige Stick-Bewegung (simuliert Input)
+--    3. Kamera-Micro-Shift (Fallback, keine sichtbare Bewegung)
+-- ════════════════════════════════════════════════════════════
+local afkCard=Card(MiscPage); Pad(afkCard,10,12,10,12); VList(afkCard,8)
+SecLbl(afkCard,"⚡  SMART ANTI-AFK")
 
--- Anti-AFK Toggle Button
-local afkToggleBtn=Instance.new("TextButton",afkCard); afkToggleBtn.Size=UDim2.new(1,0,0,32); afkToggleBtn.BackgroundColor3=D.Green; afkToggleBtn.Text="🔄 Anti-AFK Umschalten"; afkToggleBtn.TextColor3=Color3.new(1,1,1); afkToggleBtn.TextSize=12; afkToggleBtn.Font=Enum.Font.GothamBold; afkToggleBtn.AutoButtonColor=false; afkToggleBtn.BorderSizePixel=0; Corner(afkToggleBtn,8); Stroke(afkToggleBtn,D.Green,1,0.2)
-afkToggleBtn.MouseButton1Click:Connect(function()
-    if _G.HazeHubFunctions.ToggleAntiAFK and type(_G.HazeHubFunctions.ToggleAntiAFK) == "function" then
-        _G.HazeHubFunctions.ToggleAntiAFK()
+local afkTopRow=Instance.new("Frame",afkCard)
+afkTopRow.Size=UDim2.new(1,0,0,28); afkTopRow.BackgroundTransparency=1; HList(afkTopRow,10)
+
+local afkDot=Instance.new("Frame",afkTopRow)
+afkDot.Size=UDim2.new(0,10,0,10); afkDot.AnchorPoint=Vector2.new(0,0.5)
+afkDot.BackgroundColor3=D.Green; afkDot.BorderSizePixel=0; Corner(afkDot,99)
+
+local afkTxt=Instance.new("TextLabel",afkTopRow)
+afkTxt.Size=UDim2.new(1,-20,1,0); afkTxt.BackgroundTransparency=1
+afkTxt.Text="Smart Anti-AFK  —  Aktiv"; afkTxt.TextColor3=D.Green
+afkTxt.TextSize=13; afkTxt.Font=Enum.Font.GothamBold
+afkTxt.TextXAlignment=Enum.TextXAlignment.Left
+afkTxt.TextScaled=false; afkTxt.RichText=true; afkTxt.TextStrokeTransparency=1
+
+-- Timer-Label: zeigt Zeit bis zum nächsten Ping
+local afkTimerLbl=MkLbl(afkCard,"Nächster Ping: –",10,D.TextMid)
+afkTimerLbl.Size=UDim2.new(1,0,0,16)
+
+local afkInfoLbl=MkLbl(afkCard,
+    "Sendet alle 120s ein unsichtbares Input-Signal (VirtualUser).\n" ..
+    "Verhindert den AFK-Teleport (Spiel-Limit: 900s).",
+    10,D.TextLow)
+afkInfoLbl.Size=UDim2.new(1,0,0,0); afkInfoLbl.AutomaticSize=Enum.AutomaticSize.Y
+afkInfoLbl.TextWrapped=true
+
+-- Ping-Zähler
+local _afkPingCount = 0
+local afkPingLbl=MkLbl(afkCard,"Pings: 0",10,D.TextLow)
+afkPingLbl.Size=UDim2.new(1,0,0,14)
+
+-- Toggle-Button
+local afkToggleBtn=Instance.new("TextButton",afkCard)
+afkToggleBtn.Size=UDim2.new(1,0,0,32); afkToggleBtn.BackgroundColor3=D.Green
+afkToggleBtn.Text="✅ AN — Anti-AFK aktiv"; afkToggleBtn.TextColor3=Color3.new(1,1,1)
+afkToggleBtn.TextSize=12; afkToggleBtn.Font=Enum.Font.GothamBold
+afkToggleBtn.AutoButtonColor=false; afkToggleBtn.BorderSizePixel=0
+Corner(afkToggleBtn,8); Stroke(afkToggleBtn,D.Green,1,0.2)
+
+-- ── Sync-Helper ─────────────────────────────────────────────
+local function SyncAfkBtn()
+    if AntiAFKEnabled then
+        afkToggleBtn.Text="✅ AN — Anti-AFK aktiv"; afkToggleBtn.BackgroundColor3=D.Green
+        Stroke(afkToggleBtn,D.Green,1,0.2); afkDot.BackgroundColor3=D.Green
+        afkTxt.Text="Smart Anti-AFK  —  Aktiv"; afkTxt.TextColor3=D.Green
     else
-        warn("[HazeHUB] ToggleAntiAFK Funktion nicht gefunden!")
+        afkToggleBtn.Text="⬜ AUS — Anti-AFK inaktiv"; afkToggleBtn.BackgroundColor3=D.Red
+        Stroke(afkToggleBtn,D.Red,1,0.2); afkDot.BackgroundColor3=D.Red
+        afkTxt.Text="Smart Anti-AFK  —  Inaktiv"; afkTxt.TextColor3=D.Red
+        afkTimerLbl.Text="Nächster Ping: pausiert"; afkTimerLbl.TextColor3=D.TextLow
     end
-end)
-afkToggleBtn.MouseEnter:Connect(function() Tw(afkToggleBtn,{BackgroundColor3=Color3.fromRGB(0,160,80)}) end)
-afkToggleBtn.MouseLeave:Connect(function() Tw(afkToggleBtn,{BackgroundColor3=AntiAFKEnabled and D.Green or D.Red}) end)
+end
 
--- Puls-Animation für den grünen Dot
-task.spawn(function()
-    while S.Running and ScreenGui.Parent do
-        Tw(afkDot,{BackgroundTransparency=0.65},TM); task.wait(1.1)
-        Tw(afkDot,{BackgroundTransparency=0},TM); task.wait(1.1)
-    end
-end)
+local function ToggleAntiAFKUI()
+    AntiAFKEnabled = not AntiAFKEnabled
+    SyncAfkBtn()
+end
+_G.HazeHubFunctions.ToggleAntiAFK = ToggleAntiAFKUI
 
--- Neuer Anti-AFK: Simuliert Mausbewegung + CameraHeartbeat (kein VirtualUser Spacebar-Spam)
-local _afkLastPing = 0
+afkToggleBtn.MouseButton1Click:Connect(ToggleAntiAFKUI)
+afkToggleBtn.MouseEnter:Connect(function()
+    Tw(afkToggleBtn,{BackgroundColor3=AntiAFKEnabled and Color3.fromRGB(0,160,80) or D.RedDark})
+end)
+afkToggleBtn.MouseLeave:Connect(function() SyncAfkBtn() end)
+
+-- ── Puls-Animation ───────────────────────────────────────────
 task.spawn(function()
     while S.Running and ScreenGui.Parent do
         if AntiAFKEnabled then
-            local now = tick()
-            if now - _afkLastPing >= 55 then
-                _afkLastPing = now
+            Tw(afkDot,{BackgroundTransparency=0.7},TM); task.wait(0.6)
+            Tw(afkDot,{BackgroundTransparency=0},TM); task.wait(0.6)
+        else
+            task.wait(0.5)
+        end
+    end
+end)
+
+-- ── Smart Anti-AFK Loop ──────────────────────────────────────
+-- Intervall: 120s (Spiel-Limit 900s → wir sind bei max. 13% davon)
+local AFK_INTERVAL = 120
+task.spawn(function()
+    local _nextPing = tick() + AFK_INTERVAL
+    while S.Running and ScreenGui.Parent do
+        local remaining = math.ceil(_nextPing - tick())
+        if AntiAFKEnabled and afkTimerLbl and afkTimerLbl.Parent then
+            pcall(function()
+                afkTimerLbl.Text = "Nächster Ping in: " .. remaining .. "s"
+                afkTimerLbl.TextColor3 = remaining < 20 and D.Orange or D.TextMid
+            end)
+        end
+
+        if AntiAFKEnabled and tick() >= _nextPing then
+            _nextPing = tick() + AFK_INTERVAL
+            _afkPingCount = _afkPingCount + 1
+
+            -- Methode 1: VirtualUser CaptureController (primär, unsichtbar)
+            local m1ok = pcall(function()
+                Svc.Vuser:CaptureController()
+                -- Winzige, nicht sichtbare Thumbstick-Bewegung (kein Spacebar)
+                Svc.Vuser:SetAnalogStick(Enum.VirtualInputMode.InGame,Vector2.new(0.001,0))
+                task.wait(0.05)
+                Svc.Vuser:SetAnalogStick(Enum.VirtualInputMode.InGame,Vector2.new(0,0))
+            end)
+
+            -- Methode 2: ClickButton2 (sekundär, unsichtbar)
+            if not m1ok then
                 pcall(function()
-                    -- Kamera-Ping (minimal, aber effektiv)
-                    local cam = workspace.CurrentCamera
-                    if cam and cam.CFrame then
-                        local cf = cam.CFrame
-                        local newPos = cf.Position + Vector3.new(0, 0.1, 0)
-                        cam.CFrame = CFrame.new(newPos, cf.LookVector)
-                        task.wait(0.05)
-                        cam.CFrame = cf
-                    end
-                end)
-                pcall(function()
-                    -- Fallback: VirtualUser Ping ohne Spacebar
                     Svc.Vuser:CaptureController()
                     Svc.Vuser:ClickButton2(Vector2.new(0,0))
                 end)
             end
+
+            -- Methode 3: Kamera-Micro-Shift (Fallback, ±0.001 studs, nicht sichtbar)
+            pcall(function()
+                local cam = workspace.CurrentCamera
+                if cam then
+                    local cf = cam.CFrame
+                    cam.CFrame = cf * CFrame.new(0.001,0,0)
+                    task.wait(0.02)
+                    cam.CFrame = cf
+                end
+            end)
+
+            pcall(function()
+                afkPingLbl.Text = string.format(
+                    "Pings: %d  |  Letzter: %s",
+                    _afkPingCount,
+                    os.date("%H:%M:%S")
+                )
+                afkPingLbl.TextColor3 = D.GreenBright
+                task.delay(2, function()
+                    pcall(function() afkPingLbl.TextColor3 = D.TextLow end)
+                end)
+            end)
+
+            print(string.format("[HazeHUB] Smart Anti-AFK Ping #%d", _afkPingCount))
         end
-        task.wait(2)
+        task.wait(1)
     end
 end)
 
@@ -4623,6 +4716,66 @@ _G.HazeShared.HList=HList; _G.HazeShared.Pad=Pad
 _G.HazeShared.Corner=Corner; _G.HazeShared.Stroke=Stroke
 _G.HazeShared.FmtNum=FmtNum
 _G.HazeShared.ApplySharpTypography=ApplySharpTypography
+
+-- ════════════════════════════════════════════════════════════
+--  ★ getDisplayName — Globaler Unit-Name-Helper
+--
+--  Pfad: RS.Shared.Info.Units[internalName].DisplayName
+--  Suffix ":Shiny" im Ordnernamen → " (✨Shiny)" anhängen.
+--  Fallback: internalName direkt zurückgeben.
+-- ════════════════════════════════════════════════════════════
+do
+    local _unitsIndex = nil
+    local _unitsIndexLoaded = false
+
+    local function _loadUnitsIndex()
+        if _unitsIndexLoaded then return end
+        _unitsIndexLoaded = true
+        pcall(function()
+            local shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared", 5)
+            local info   = shared:WaitForChild("Info", 5)
+            local uMod   = info:WaitForChild("Units", 5)
+            _unitsIndex  = require(uMod)
+        end)
+        if not _unitsIndex then
+            warn("[HazeHUB] getDisplayName: RS.Shared.Info.Units nicht gefunden – Fallback aktiv")
+        end
+    end
+
+    -- Öffentliche Funktion
+    -- folderName = unitFolder.Name  (z. B. "Esdeath:Shiny" oder "Owl")
+    _G.HazeShared.getDisplayName = function(folderName)
+        if not folderName or folderName == "" then return folderName or "?" end
+
+        -- Einmalig laden
+        if not _unitsIndexLoaded then _loadUnitsIndex() end
+
+        -- Shiny-Suffix erkennen
+        local baseName, isShiny = folderName, false
+        if folderName:sub(-6) == ":Shiny" then
+            baseName = folderName:sub(1, -7)   -- ":Shiny" (6 Zeichen) abschneiden
+            isShiny  = true
+        end
+
+        -- DisplayName aus Index holen
+        local displayName = baseName   -- Fallback = interner Name
+        if _unitsIndex and type(_unitsIndex) == "table" then
+            local entry = _unitsIndex[baseName]
+            if entry and type(entry) == "table" and entry.DisplayName then
+                displayName = tostring(entry.DisplayName)
+            elseif type(entry) == "string" then
+                displayName = entry
+            end
+        end
+
+        -- Shiny-Suffix anhängen
+        if isShiny then
+            displayName = displayName .. " ✨"
+        end
+
+        return displayName
+    end
+end
 _G.HazeShared.StopFarm=nil; _G.HazeShared.StartFarmFromMain=nil; _G.HazeShared.TriggerResetRescan=nil
 _G.HazeShared.ShopContainer = ShopPage
 _G.HazeShared.CraftPage     = CraftPage
