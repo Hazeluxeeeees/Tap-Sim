@@ -1,1 +1,643 @@
-Equip
+-- ╔══════════════════════════════════════════════════════════╗
+--  HazeHUB – Equip.lua  v1.0.0
+--  Equipment-Sets pro Einheit (unabhängig vom Team-Modul)
+--
+--  Features:
+--    ✓ Unit-Auswahl via Tag aus Collection (Name + [#Tag])
+--    ✓ Live-Gear-Anzeige der gewählten Einheit
+--    ✓ Sets speichern: Config.EquipmentSets[tag][setName]
+--    ✓ Laden: Unequip → Equip (exakt gleiche Remotes wie Teams)
+--    ✓ Pfade: dynamisch via LocalPlayer
+-- ╚══════════════════════════════════════════════════════════╝
+
+local VERSION = "1.0.0"
+
+-- Auf HazeShared warten
+local waited = 0
+while not (_G.HazeShared and _G.HazeShared.EquipPage and _G.HazeShared.SetModuleLoaded) do
+    task.wait(0.3); waited = waited + 0.3
+    if waited >= 15 then
+        warn("[HazeHub/Equip] HazeShared.EquipPage nicht bereit.")
+        return
+    end
+end
+
+local HS       = _G.HazeShared
+local D        = HS.D
+local TF       = HS.TF;  local TM = HS.TM;  local Tw = HS.Tw
+local Svc      = HS.Svc
+local Card     = HS.Card;    local NeonBtn = HS.NeonBtn
+local MkLbl    = HS.MkLbl;  local SecLbl  = HS.SecLbl
+local MkInput  = HS.MkInput
+local VList    = HS.VList;   local HList   = HS.HList
+local Pad      = HS.Pad;     local Corner  = HS.Corner
+local Stroke   = HS.Stroke
+local SaveConfig = HS.SaveConfig
+local Config   = HS.Config   -- direkte Referenz auf H.Config
+
+local EquipPage = HS.EquipPage
+local Player    = game:GetService("Players").LocalPlayer
+local RS        = game:GetService("ReplicatedStorage")
+
+-- ════════════════════════════════════════════════════════════
+--  PERSISTENZ — Equipment-Sets in Config einbetten
+--  Pfad: Config.EquipmentSets[unitTag][setName]
+--    = { HeadGear, BodyGear, LegsGear, ArmsGear, Soul, UnitName }
+-- ════════════════════════════════════════════════════════════
+if not Config.EquipmentSets then Config.EquipmentSets = {} end
+
+local function saveEquipConfig()
+    pcall(SaveConfig)
+end
+
+-- ════════════════════════════════════════════════════════════
+--  GEAR-SLOT DEFINITIONEN (identisch zu teams.lua)
+-- ════════════════════════════════════════════════════════════
+local GEAR_SLOTS = {
+    { key = "HeadGear", remoteType = "Gears", unequipKey = "HeadGear", label = "Head" },
+    { key = "BodyGear",  remoteType = "Gears", unequipKey = "BodyGear",  label = "Body"  },
+    { key = "LegsGear",  remoteType = "Gears", unequipKey = "LegsGear",  label = "Legs"  },
+    { key = "ArmsGear",  remoteType = "Gears", unequipKey = "ArmsGear",  label = "Arms"  },
+    { key = "Soul",      remoteType = "Soul",  unequipKey = "Soul",       label = "Soul"  },
+}
+
+-- ════════════════════════════════════════════════════════════
+--  COLLECTION HELPER
+-- ════════════════════════════════════════════════════════════
+local function getCollection()
+    return RS.Player_Data[Player.Name].Collection
+end
+
+-- Einzige Suchmethode: Tag-basiert
+local function getUnitByTag(targetTag)
+    if not targetTag or targetTag == "" then return nil end
+    for _, folder in pairs(getCollection():GetChildren()) do
+        if folder:FindFirstChild("Tag") and folder.Tag.Value == targetTag then
+            return folder
+        end
+    end
+    return nil
+end
+
+local function readGearValue(unitFolder, gearKey)
+    local obj = unitFolder:FindFirstChild(gearKey)
+    if not obj then return nil end
+    local v = tostring(obj.Value)
+    return (v ~= "" and v ~= "nil" and v ~= "0") and v or nil
+end
+
+-- Alle Units aus Collection holen: { name, tag, instance }
+local function getAllUnits()
+    local result = {}
+    local ok, col = pcall(getCollection)
+    if not ok or not col then return result end
+    for _, folder in pairs(col:GetChildren()) do
+        if folder:IsA("Folder") then
+            local tagObj = folder:FindFirstChild("Tag")
+            local tag    = tagObj and tostring(tagObj.Value) or ""
+            table.insert(result, {
+                name     = folder.Name,
+                tag      = tag,
+                instance = folder,
+            })
+        end
+    end
+    -- Alphabetisch sortieren
+    table.sort(result, function(a, b) return a.name < b.name end)
+    return result
+end
+
+-- Live-Gear der Unit lesen
+local function readAllGear(unitFolder)
+    local gear = {}
+    for _, slotDef in ipairs(GEAR_SLOTS) do
+        gear[slotDef.key] = readGearValue(unitFolder, slotDef.key)
+    end
+    return gear
+end
+
+-- ════════════════════════════════════════════════════════════
+--  REMOTE-HELPER (exakt wie teams.lua)
+-- ════════════════════════════════════════════════════════════
+local _remoteCache = {}
+local function getRemote(...)
+    local key = table.concat({...}, "/")
+    if _remoteCache[key] then return _remoteCache[key] end
+    local node = RS
+    for _, seg in ipairs({...}) do
+        local ok, child = pcall(function() return node:WaitForChild(seg, 8) end)
+        if not ok or not child then
+            warn("[HazeHub/Equip] Remote nicht gefunden: " .. key)
+            return nil
+        end
+        node = child
+    end
+    _remoteCache[key] = node
+    return node
+end
+
+local function fireUnequipGear(unitFolder, slotDef)
+    if not unitFolder or not slotDef then return end
+    if slotDef.remoteType == "Soul" then
+        local r = getRemote("Remote","Server","Units","Soul")
+        if not r then return end
+        pcall(function()
+            r:FireServer(table.unpack({
+                [1] = "Unequip",
+                [2] = { ["UnitFolder"] = unitFolder, ["SoulName"] = "Soul" },
+            }))
+        end)
+    else
+        local r = getRemote("Remote","Server","Units","Gears")
+        if not r then return end
+        pcall(function()
+            r:FireServer(table.unpack({
+                [1] = "Unequip",
+                [2] = { ["UnitFolder"] = unitFolder, ["GearName"] = slotDef.unequipKey },
+            }))
+        end)
+    end
+end
+
+local function fireEquipGear(unitFolder, slotDef, itemName)
+    if not itemName or itemName == "" or not unitFolder then return end
+    if slotDef.remoteType == "Soul" then
+        local r = getRemote("Remote","Server","Units","Soul")
+        if not r then return end
+        pcall(function()
+            r:FireServer(table.unpack({
+                [1] = "Equip",
+                [2] = { ["UnitFolder"] = unitFolder, ["SoulName"] = itemName },
+            }))
+        end)
+    else
+        local r = getRemote("Remote","Server","Units","Gears")
+        if not r then return end
+        pcall(function()
+            r:FireServer(table.unpack({
+                [1] = "Equip",
+                [2] = { ["UnitFolder"] = unitFolder, ["GearName"] = itemName },
+            }))
+        end)
+    end
+end
+
+-- ════════════════════════════════════════════════════════════
+--  EQUIP-SET LADEN
+--  1. Unit per Tag suchen
+--  2. Alle Gear-Slots leeren (Unequip)
+--  3. Items aus Set equippen
+-- ════════════════════════════════════════════════════════════
+local function applyEquipSet(unitTag, setData, onStatus)
+    onStatus = onStatus or function() end
+
+    local unitFolder = getUnitByTag(unitTag)
+    if not unitFolder then
+        onStatus("❌ Unit nicht in Collection (Tag: " .. tostring(unitTag) .. ")", D.Red)
+        return
+    end
+
+    -- Schritt 1: Sicherheits-Check — alle Slots leeren
+    onStatus("⚡ Entferne altes Gear...", D.Yellow)
+    for _, slotDef in ipairs(GEAR_SLOTS) do
+        if readGearValue(unitFolder, slotDef.key) then
+            fireUnequipGear(unitFolder, slotDef)
+            task.wait(0.05)
+        end
+    end
+    task.wait(0.25)
+
+    -- Schritt 2: Gear aus Set ausrüsten
+    onStatus("🎯 Rüste Set aus...", D.Yellow)
+    local equipped = 0
+    for _, slotDef in ipairs(GEAR_SLOTS) do
+        local itemName = setData[slotDef.key]
+        if itemName and itemName ~= "" then
+            -- Frische Instance nach Unequip
+            local freshFolder = getUnitByTag(unitTag)
+            if freshFolder then
+                fireEquipGear(freshFolder, slotDef, itemName)
+                equipped = equipped + 1
+                task.wait(0.08)
+            end
+        end
+    end
+
+    onStatus(string.format("✅ Set geladen! (%d Slots)", equipped), D.GreenBright)
+    print(string.format("[HazeHub/Equip] Set angewandt: %d Slots  (Unit: %s)",
+        equipped, unitFolder.Name))
+end
+
+-- ════════════════════════════════════════════════════════════
+--  GUI
+-- ════════════════════════════════════════════════════════════
+VList(EquipPage, 8)
+MkLbl(EquipPage, "⚙  Equipment Manager", 18, D.Cyan, true)
+MkLbl(EquipPage, "Equip v" .. VERSION .. " | " .. Player.Name, 12, D.TextLow).Size = UDim2.new(1,0,0,16)
+
+-- Status-Leiste
+local eqStatusCard = Card(EquipPage, 26); Pad(eqStatusCard, 4, 10, 4, 10)
+local eqStatusLbl  = Instance.new("TextLabel", eqStatusCard)
+eqStatusLbl.Size = UDim2.new(1,0,1,0); eqStatusLbl.BackgroundTransparency = 1
+eqStatusLbl.Text = "Einheit auswählen..."; eqStatusLbl.TextColor3 = D.TextMid
+eqStatusLbl.TextSize = 12; eqStatusLbl.Font = Enum.Font.GothamMedium
+eqStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
+eqStatusLbl.TextScaled = false; eqStatusLbl.RichText = true; eqStatusLbl.TextStrokeTransparency = 1
+
+local function setStatus(txt, col)
+    pcall(function() eqStatusLbl.Text = txt; eqStatusLbl.TextColor3 = col or D.TextMid end)
+end
+
+-- ── SEKTION: EINHEITEN-AUSWAHL ────────────────────────────────
+local unitSelectCard = Card(EquipPage); Pad(unitSelectCard,10,12,10,12); VList(unitSelectCard,7)
+SecLbl(unitSelectCard, "👤  EINHEIT WÄHLEN")
+
+-- Scan-Button
+local scanUnitBtn = NeonBtn(unitSelectCard, "🔍  Einheiten scannen", D.CyanDim, 30)
+
+-- Scrollbare Unit-Liste
+local unitListFrame = Instance.new("ScrollingFrame", unitSelectCard)
+unitListFrame.Size = UDim2.new(1,0,0,180)
+unitListFrame.CanvasSize = UDim2.new(0,0,0,0)
+unitListFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+unitListFrame.ScrollBarThickness = 3
+unitListFrame.ScrollBarImageColor3 = D.CyanDim
+unitListFrame.BackgroundTransparency = 1
+unitListFrame.BorderSizePixel = 0
+unitListFrame.ScrollingEnabled = true
+unitListFrame.ScrollingDirection = Enum.ScrollingDirection.Y
+VList(unitListFrame, 3)
+
+local unitListEmptyLbl = MkLbl(unitListFrame, "Noch nicht gescannt.", 11, D.TextLow)
+unitListEmptyLbl.Size = UDim2.new(1,0,0,24)
+
+-- Ausgewählte Einheit
+local _selectedTag  = nil
+local _selectedName = nil
+
+-- ── SEKTION: AKTUELLES GEAR (Live-Scan) ──────────────────────
+local gearViewCard = Card(EquipPage); Pad(gearViewCard,10,12,10,12); VList(gearViewCard,5)
+gearViewCard.Visible = false
+SecLbl(gearViewCard, "🗡  AKTUELLES GEAR")
+
+local gearSlotLabels = {}
+for _, slotDef in ipairs(GEAR_SLOTS) do
+    local row = Instance.new("Frame", gearViewCard)
+    row.Size = UDim2.new(1,0,0,22); row.BackgroundColor3 = D.CardHover
+    row.BackgroundTransparency = 0.5; row.BorderSizePixel = 0
+    Corner(row,5); Stroke(row,D.Border,1,0.5)
+
+    local badge = Instance.new("TextLabel", row)
+    badge.Size = UDim2.new(0,44,1,0); badge.BackgroundColor3 = D.TabActive
+    badge.BackgroundTransparency = 0.3; badge.Text = slotDef.label
+    badge.TextColor3 = D.CyanDim; badge.TextSize = 10; badge.Font = Enum.Font.GothamBold
+    badge.TextXAlignment = Enum.TextXAlignment.Center; badge.BorderSizePixel = 0; Corner(badge,5)
+
+    local val = Instance.new("TextLabel", row)
+    val.Position = UDim2.new(0,50,0,0); val.Size = UDim2.new(1,-54,1,0)
+    val.BackgroundTransparency = 1; val.Text = "—"
+    val.TextColor3 = D.TextLow; val.TextSize = 11; val.Font = Enum.Font.GothamMedium
+    val.TextXAlignment = Enum.TextXAlignment.Left; val.TextTruncate = Enum.TextTruncate.AtEnd
+    val.TextScaled = false; val.RichText = true; val.TextStrokeTransparency = 1
+    gearSlotLabels[slotDef.key] = val
+end
+
+local refreshGearBtn = NeonBtn(gearViewCard, "🔄  Gear aktualisieren", D.CyanDim, 28)
+
+local function refreshGearView()
+    if not _selectedTag then return end
+    local folder = getUnitByTag(_selectedTag)
+    if not folder then
+        for _, slotDef in ipairs(GEAR_SLOTS) do
+            gearSlotLabels[slotDef.key].Text = "⚠ nicht in Collection"
+            gearSlotLabels[slotDef.key].TextColor3 = D.Orange
+        end
+        return
+    end
+    for _, slotDef in ipairs(GEAR_SLOTS) do
+        local v = readGearValue(folder, slotDef.key)
+        gearSlotLabels[slotDef.key].Text = v or "—"
+        gearSlotLabels[slotDef.key].TextColor3 = v and D.TextHi or D.TextLow
+    end
+end
+
+refreshGearBtn.MouseButton1Click:Connect(function()
+    refreshGearBtn.Text = "⏳ ..."; task.spawn(function()
+        pcall(refreshGearView)
+        refreshGearBtn.Text = "🔄  Gear aktualisieren"
+    end)
+end)
+
+-- ── SEKTION: SET SPEICHERN ────────────────────────────────────
+local saveSetCard = Card(EquipPage); Pad(saveSetCard,10,12,10,12); VList(saveSetCard,7)
+saveSetCard.Visible = false
+SecLbl(saveSetCard, "💾  SET SPEICHERN")
+
+local setNameRow = Instance.new("Frame", saveSetCard)
+setNameRow.Size = UDim2.new(1,0,0,32); setNameRow.BackgroundTransparency = 1; HList(setNameRow,6)
+local setNameOuter, setNameBox = MkInput(setNameRow, "Set-Name (z.B. Raid-Build)")
+setNameOuter.Size = UDim2.new(0.65,0,0,32)
+
+local saveSetBtn = Instance.new("TextButton", setNameRow)
+saveSetBtn.Size = UDim2.new(0.32,0,0,32); saveSetBtn.BackgroundColor3 = D.Green
+saveSetBtn.Text = "💾 Speichern"; saveSetBtn.TextColor3 = Color3.new(1,1,1)
+saveSetBtn.TextSize = 11; saveSetBtn.Font = Enum.Font.GothamBold
+saveSetBtn.AutoButtonColor = false; saveSetBtn.BorderSizePixel = 0
+Corner(saveSetBtn,7); Stroke(saveSetBtn,D.Green,1,0.2)
+saveSetBtn.MouseEnter:Connect(function() Tw(saveSetBtn,{BackgroundColor3=Color3.fromRGB(0,160,80)}) end)
+saveSetBtn.MouseLeave:Connect(function() Tw(saveSetBtn,{BackgroundColor3=D.Green}) end)
+
+local saveFeedback = MkLbl(saveSetCard,"",10,D.TextLow); saveFeedback.Size=UDim2.new(1,0,0,16)
+
+saveSetBtn.MouseButton1Click:Connect(function()
+    if not _selectedTag then
+        saveFeedback.Text = "⚠ Erst eine Einheit wählen!"; saveFeedback.TextColor3 = D.Orange; return
+    end
+    local setName = (setNameBox.Text or ""):match("^%s*(.-)%s*$")
+    if setName == "" then
+        saveFeedback.Text = "⚠ Set-Name eingeben!"; saveFeedback.TextColor3 = D.Orange; return
+    end
+
+    -- Gear live scannen
+    local folder = getUnitByTag(_selectedTag)
+    if not folder then
+        saveFeedback.Text = "⚠ Unit nicht in Collection!"; saveFeedback.TextColor3 = D.Red; return
+    end
+
+    local gear = readAllGear(folder)
+    gear.UnitName = _selectedName   -- Namen für Anzeige mitspeichern
+
+    -- Config.EquipmentSets[tag][setName] = gear
+    if not Config.EquipmentSets[_selectedTag] then
+        Config.EquipmentSets[_selectedTag] = {}
+    end
+    Config.EquipmentSets[_selectedTag][setName] = gear
+
+    saveEquipConfig()
+
+    local gearCount = 0
+    for _, slotDef in ipairs(GEAR_SLOTS) do
+        if gear[slotDef.key] then gearCount = gearCount + 1 end
+    end
+
+    saveFeedback.Text = string.format("✅ Set '%s' gespeichert! (%d Gear-Slots)",
+        setName, gearCount)
+    saveFeedback.TextColor3 = D.GreenBright
+    setNameBox.Text = ""
+
+    pcall(_G._RebuildEquipSetList)
+
+    task.delay(5, function()
+        pcall(function() saveFeedback.Text = "" end)
+    end)
+end)
+
+-- ── SEKTION: GESPEICHERTE SETS ────────────────────────────────
+local setsCard = Card(EquipPage); Pad(setsCard,10,12,10,12); VList(setsCard,7)
+setsCard.Visible = false
+SecLbl(setsCard, "📋  GESPEICHERTE SETS")
+
+local setListFrame = Instance.new("ScrollingFrame", setsCard)
+setListFrame.Size = UDim2.new(1,0,0,200)
+setListFrame.CanvasSize = UDim2.new(0,0,0,0)
+setListFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+setListFrame.ScrollBarThickness = 3
+setListFrame.ScrollBarImageColor3 = D.CyanDim
+setListFrame.BackgroundTransparency = 1
+setListFrame.BorderSizePixel = 0
+setListFrame.ScrollingEnabled = true
+setListFrame.ScrollingDirection = Enum.ScrollingDirection.Y
+VList(setListFrame, 4)
+
+local setListEmptyLbl = MkLbl(setListFrame, "Noch keine Sets gespeichert.", 11, D.TextLow)
+setListEmptyLbl.Size = UDim2.new(1,0,0,24)
+
+-- Feedback-Label für Load-Aktionen
+local loadFeedback = MkLbl(setsCard,"",10,D.TextLow); loadFeedback.Size=UDim2.new(1,0,0,16)
+
+-- ── RebuildEquipSetList ───────────────────────────────────────
+local function rebuildSetList()
+    for _, v in pairs(setListFrame:GetChildren()) do
+        if v:IsA("Frame") then v:Destroy() end
+    end
+
+    local unitSets = _selectedTag and Config.EquipmentSets[_selectedTag]
+    local hasAny = unitSets and next(unitSets) ~= nil
+
+    setListEmptyLbl.Visible = not hasAny
+    if not hasAny then return end
+
+    for setName, setData in pairs(unitSets) do
+        local gearCount = 0
+        for _, slotDef in ipairs(GEAR_SLOTS) do
+            if setData[slotDef.key] then gearCount = gearCount + 1 end
+        end
+
+        local row = Instance.new("Frame", setListFrame)
+        row.Size = UDim2.new(1,0,0,50); row.BackgroundColor3 = D.CardHover
+        row.BackgroundTransparency = 0.3; row.BorderSizePixel = 0
+        Corner(row,8); Stroke(row,D.Border,1,0.4)
+
+        -- Grüner Streifen links
+        local stripe = Instance.new("Frame", row)
+        stripe.Size = UDim2.new(0,4,1,0); stripe.BackgroundColor3 = D.Green
+        stripe.BackgroundTransparency = 0.3; stripe.BorderSizePixel = 0; Corner(stripe,3)
+
+        local nameLbl = Instance.new("TextLabel", row)
+        nameLbl.Position = UDim2.new(0,12,0,4); nameLbl.Size = UDim2.new(1,-90,0,20)
+        nameLbl.BackgroundTransparency = 1; nameLbl.Text = "🗡  " .. setName
+        nameLbl.TextColor3 = D.TextHi; nameLbl.TextSize = 12; nameLbl.Font = Enum.Font.GothamBold
+        nameLbl.TextXAlignment = Enum.TextXAlignment.Left; nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+        local subLbl = Instance.new("TextLabel", row)
+        subLbl.Position = UDim2.new(0,12,0,26); subLbl.Size = UDim2.new(1,-90,0,14)
+        subLbl.BackgroundTransparency = 1
+        subLbl.Text = gearCount .. "/5 Slots  ·  " .. (setData.UnitName or _selectedName or "?")
+        subLbl.TextColor3 = D.TextMid; subLbl.TextSize = 10; subLbl.Font = Enum.Font.GothamMedium
+        subLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+        -- Löschen-Button
+        local delBtn = Instance.new("TextButton", row)
+        delBtn.Size = UDim2.new(0,30,0,30); delBtn.Position = UDim2.new(1,-36,0.5,-15)
+        delBtn.BackgroundColor3 = Color3.fromRGB(50,12,12); delBtn.Text = "✕"
+        delBtn.TextColor3 = D.Red; delBtn.TextSize = 12; delBtn.Font = Enum.Font.GothamBold
+        delBtn.AutoButtonColor = false; delBtn.BorderSizePixel = 0
+        Corner(delBtn,6); Stroke(delBtn,D.Red,1,0.4)
+        delBtn.MouseEnter:Connect(function() Tw(delBtn,{BackgroundColor3=Color3.fromRGB(80,20,20)}) end)
+        delBtn.MouseLeave:Connect(function() Tw(delBtn,{BackgroundColor3=Color3.fromRGB(50,12,12)}) end)
+
+        -- Load-Button (gesamte Zeile klickbar)
+        local loadBtn = Instance.new("TextButton", row)
+        loadBtn.Size = UDim2.new(1,-38,1,0); loadBtn.BackgroundTransparency = 1
+        loadBtn.Text = ""; loadBtn.BorderSizePixel = 0
+        loadBtn.MouseEnter:Connect(function()
+            Tw(row,{BackgroundColor3=D.TabActive,BackgroundTransparency=0.2})
+        end)
+        loadBtn.MouseLeave:Connect(function()
+            Tw(row,{BackgroundColor3=D.CardHover,BackgroundTransparency=0.3})
+        end)
+
+        -- Capture für Closures
+        local capName    = setName
+        local capSetData = setData
+        local capTag     = _selectedTag
+
+        loadBtn.MouseButton1Click:Connect(function()
+            loadBtn.Active = false
+            loadFeedback.Text = "⏳ Lade Set '" .. capName .. "'..."
+            loadFeedback.TextColor3 = D.Yellow
+            setStatus("⏳ Lade '" .. capName .. "'...", D.Yellow)
+
+            task.spawn(function()
+                applyEquipSet(capTag, capSetData, function(txt, col)
+                    pcall(function()
+                        loadFeedback.Text = txt
+                        loadFeedback.TextColor3 = col or D.TextMid
+                        setStatus(txt, col)
+                    end)
+                end)
+                -- Gear-Anzeige danach aktualisieren
+                task.wait(0.5)
+                pcall(refreshGearView)
+                loadBtn.Active = true
+                task.delay(6, function()
+                    pcall(function() loadFeedback.Text = "" end)
+                end)
+            end)
+        end)
+
+        delBtn.MouseButton1Click:Connect(function()
+            if Config.EquipmentSets[capTag] then
+                Config.EquipmentSets[capTag][capName] = nil
+                -- Leeren Eintrag bereinigen
+                if next(Config.EquipmentSets[capTag]) == nil then
+                    Config.EquipmentSets[capTag] = nil
+                end
+                saveEquipConfig()
+                rebuildSetList()
+                setStatus("🗑 Set '" .. capName .. "' gelöscht.", D.TextMid)
+            end
+        end)
+    end
+end
+_G._RebuildEquipSetList = rebuildSetList
+
+-- ════════════════════════════════════════════════════════════
+--  UNIT-LISTE AUFBAUEN
+-- ════════════════════════════════════════════════════════════
+local function onUnitSelected(unitEntry)
+    _selectedTag  = unitEntry.tag
+    _selectedName = unitEntry.name
+
+    -- Sektionen einblenden
+    gearViewCard.Visible  = true
+    saveSetCard.Visible   = true
+    setsCard.Visible      = true
+
+    setStatus(string.format("Ausgewählt: %s  [#%s]", unitEntry.name, unitEntry.tag ~= "" and unitEntry.tag or "?"),
+        D.Cyan)
+
+    pcall(refreshGearView)
+    pcall(rebuildSetList)
+end
+
+local function buildUnitList()
+    -- Alte Einträge löschen
+    for _, v in pairs(unitListFrame:GetChildren()) do
+        if v:IsA("Frame") then v:Destroy() end
+    end
+
+    local units = getAllUnits()
+    unitListEmptyLbl.Visible = (#units == 0)
+
+    for _, unitEntry in ipairs(units) do
+        local isSelected = (_selectedTag ~= nil and unitEntry.tag == _selectedTag)
+        local hasTag     = unitEntry.tag ~= ""
+
+        local row = Instance.new("Frame", unitListFrame)
+        row.Size = UDim2.new(1,0,0,36)
+        row.BackgroundColor3 = isSelected and D.TabActive or D.CardHover
+        row.BackgroundTransparency = isSelected and 0.2 or 0.5
+        row.BorderSizePixel = 0
+        Corner(row,6)
+        Stroke(row, isSelected and D.Cyan or D.Border, isSelected and 1.5 or 1, isSelected and 0 or 0.5)
+
+        -- Tag-Farbstreifen
+        local stripe = Instance.new("Frame", row)
+        stripe.Size = UDim2.new(0,4,1,0)
+        stripe.BackgroundColor3 = hasTag and D.Green or D.Orange
+        stripe.BackgroundTransparency = 0.3; stripe.BorderSizePixel = 0; Corner(stripe,3)
+
+        -- Name + [#Tag]
+        local nameLbl = Instance.new("TextLabel", row)
+        nameLbl.Position = UDim2.new(0,10,0,3); nameLbl.Size = UDim2.new(1,-14,0,16)
+        nameLbl.BackgroundTransparency = 1
+        nameLbl.Text = unitEntry.name
+        nameLbl.TextColor3 = isSelected and D.Cyan or D.TextHi
+        nameLbl.TextSize = 12; nameLbl.Font = Enum.Font.GothamBold
+        nameLbl.TextXAlignment = Enum.TextXAlignment.Left; nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+        nameLbl.TextScaled = false; nameLbl.RichText = true; nameLbl.TextStrokeTransparency = 1
+
+        local tagLbl = Instance.new("TextLabel", row)
+        tagLbl.Position = UDim2.new(0,10,0,20); tagLbl.Size = UDim2.new(1,-14,0,13)
+        tagLbl.BackgroundTransparency = 1
+        tagLbl.Text = hasTag and ("[#" .. unitEntry.tag .. "]") or "[⚠ kein Tag]"
+        tagLbl.TextColor3 = hasTag and D.TextMid or D.Orange
+        tagLbl.TextSize = 10; tagLbl.Font = Enum.Font.GothamMedium
+        tagLbl.TextXAlignment = Enum.TextXAlignment.Left; tagLbl.TextTruncate = Enum.TextTruncate.AtEnd
+        tagLbl.TextScaled = false; tagLbl.RichText = true; tagLbl.TextStrokeTransparency = 1
+
+        -- Klick-Fläche
+        local btn = Instance.new("TextButton", row)
+        btn.Size = UDim2.new(1,0,1,0); btn.BackgroundTransparency = 1
+        btn.Text = ""; btn.BorderSizePixel = 0
+
+        local capEntry = unitEntry
+        btn.MouseEnter:Connect(function()
+            if not (_selectedTag and capEntry.tag == _selectedTag) then
+                Tw(row,{BackgroundColor3=D.TabActive,BackgroundTransparency=0.35})
+            end
+        end)
+        btn.MouseLeave:Connect(function()
+            if not (_selectedTag and capEntry.tag == _selectedTag) then
+                Tw(row,{BackgroundColor3=D.CardHover,BackgroundTransparency=0.5})
+            end
+        end)
+        btn.MouseButton1Click:Connect(function()
+            onUnitSelected(capEntry)
+            buildUnitList()  -- Liste neu bauen damit Selektion sichtbar
+        end)
+    end
+end
+
+scanUnitBtn.MouseButton1Click:Connect(function()
+    scanUnitBtn.Text = "⏳ Scanne..."; scanUnitBtn.TextColor3 = D.Yellow
+    task.spawn(function()
+        pcall(buildUnitList)
+        local units = getAllUnits()
+        setStatus(string.format("✅ %d Einheiten gefunden.", #units), D.Green)
+        scanUnitBtn.Text = "🔍  Einheiten scannen"; scanUnitBtn.TextColor3 = D.CyanDim
+    end)
+end)
+
+-- ── STARTUP ───────────────────────────────────────────────────
+-- Direkt beim Laden einmal scannen
+task.spawn(function()
+    task.wait(0.5)  -- kurz warten bis Collection geladen
+    pcall(buildUnitList)
+    local units = getAllUnits()
+    setStatus(string.format("✅ %d Einheiten  |  Equip v%s", #units, VERSION), D.Green)
+end)
+
+-- Wait-Label entfernen
+pcall(function()
+    if _G._EquipWaitLbl then _G._EquipWaitLbl:Destroy(); _G._EquipWaitLbl = nil end
+end)
+
+pcall(function()
+    if _G.HazeShared and _G.HazeShared.SetModuleLoaded then
+        _G.HazeShared.SetModuleLoaded(VERSION)
+    end
+end)
+
+print(string.format("[HazeHub] Equip.lua v%s geladen | %s", VERSION, Player.Name))
