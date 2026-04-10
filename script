@@ -117,6 +117,7 @@ local Haze = {
         TRAIT_URL     = "https://raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/trait",
         TEAMS_URL     = "https://raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/teams",
         SUMMON_URL    = "https://raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/summon",
+        EQUIP_URL     = "https://raw.githubusercontent.com/Hazeluxeeeees/HazeHub-Modules/refs/heads/main/Equip",
     },
 }
 
@@ -2254,6 +2255,7 @@ local ShopPage  = MakeTab("Shops","▤")
 local CraftPage = MakeTab("Crafting","⚒")
 local TraitRoot, TraitSticky, TraitPage = MakeTraitsTab("Traits", "✦")
 local TeamsPage = MakeTab("Teams","⚔")
+local EquipPage  = MakeTab("Equipment","⚙")
 local InvPage   = MakeTab("Inventory","▣")
 local SummonPage = MakeTab("Summon","🎲")   -- ★ Summon-Tab
 local MiscPage  = MakeTab("Misc","◇")
@@ -2266,6 +2268,7 @@ _G.HazeShared.TraitPage     = TraitPage
 _G.HazeShared.TraitSticky   = TraitSticky
 _G.HazeShared.TraitPageRoot = TraitRoot
 _G.HazeShared.TeamsPage     = TeamsPage
+_G.HazeShared.EquipPage     = EquipPage
 _G.HazeShared.SummonPage    = SummonPage   -- ★ früh registrieren
 
 -- ── Touch / Mobile Layout Sync (Tabs + Trait-Modul) ───────────
@@ -4304,6 +4307,11 @@ do
     sumWaitLbl.Size=UDim2.new(1,0,0,20)
     _G._SummonWaitLbl=sumWaitLbl
 end
+do
+    local equipWaitLbl=MkLbl(EquipPage,"⏳ Equipment-Modul wird geladen...",11,D.Yellow)
+    equipWaitLbl.Size=UDim2.new(1,0,0,20)
+    _G._EquipWaitLbl=equipWaitLbl
+end
 
 -- ╔══════════════════════════════════════════════════════════╗
 --  SETTINGS TAB
@@ -4461,11 +4469,20 @@ do
 end
 end) -- end pcall Settings Tab
 
--- ── Mobile Button (rund, links mittig, Haze-Logo PNG zentriert) ──────────────
+-- ── Mobile Button (rund, links oben-mittig, Haze-Logo PNG zentriert) ──────────────
 H.UI.Fr.MiniBtn=Instance.new("TextButton",ScreenGui)
--- Groesser fuer Mobile: 6.5% Breite, quadratisch via AspectRatio
+-- Größer für Mobile: 6.5% Breite, quadratisch via AspectRatio
 H.UI.Fr.MiniBtn.Name="MiniBtn"; H.UI.Fr.MiniBtn.Size=UDim2.new(0.065,0,0.10,0)
-H.UI.Fr.MiniBtn.AnchorPoint=Vector2.new(0,0.5); H.UI.Fr.MiniBtn.Position=UDim2.new(0.008,0,0.5,0)
+-- Startposition etwas höher (0.30 statt 0.5) um Kollisionen zu vermeiden
+-- Beim Start: gespeicherte Position aus Config laden, sonst Default
+local _miniBtnDefaultPos = UDim2.new(0.008,0,0.30,0)
+local function _loadMiniBtnPos()
+    if H.Config.MiniBtnPosX ~= nil and H.Config.MiniBtnPosY ~= nil then
+        return UDim2.new(H.Config.MiniBtnPosX, 0, H.Config.MiniBtnPosY, 0)
+    end
+    return _miniBtnDefaultPos
+end
+H.UI.Fr.MiniBtn.AnchorPoint=Vector2.new(0,0.5); H.UI.Fr.MiniBtn.Position=_loadMiniBtnPos()
 local MiniAsp = Instance.new("UIAspectRatioConstraint", H.UI.Fr.MiniBtn); MiniAsp.AspectRatio = 1
 H.UI.Fr.MiniBtn.BackgroundColor3=D.BG; H.UI.Fr.MiniBtn.BackgroundTransparency=0.2
 H.UI.Fr.MiniBtn.Text=""; H.UI.Fr.MiniBtn.AutoButtonColor=false; H.UI.Fr.MiniBtn.BorderSizePixel=0; Corner(H.UI.Fr.MiniBtn,99)
@@ -4502,6 +4519,13 @@ H.UI.Fr.MiniBtn.MouseButton1Up:Connect(function() Tw(H.UI.Fr.MiniBtn,{Size=UDim2
 H.UI.Fr.MiniBtn.MouseButton1Click:Connect(OnMiniBtnClick)
 MakeDraggable(H.UI.Fr.Main,MainFrame)
 MakeDraggable(H.UI.Fr.MiniBtn,H.UI.Fr.MiniBtn)
+-- ★ Position des Mobile-Buttons nach Drag speichern
+H.UI.Fr.MiniBtn:GetPropertyChangedSignal("Position"):Connect(function()
+    local pos = H.UI.Fr.MiniBtn.Position
+    H.Config.MiniBtnPosX = pos.X.Scale
+    H.Config.MiniBtnPosY = pos.Y.Scale
+    pcall(SaveConfig)
+end)
 Svc.Input.InputBegan:Connect(function(inp,processed)
     if processed then return end; if S.KeyListening then return end
     if inp.UserInputType==Enum.UserInputType.Keyboard and inp.KeyCode.Name==H.Config.ToggleKey then
@@ -4604,6 +4628,7 @@ _G.HazeShared.ShopContainer = ShopPage
 _G.HazeShared.CraftPage     = CraftPage
 _G.HazeShared.TraitPage     = TraitPage
 _G.HazeShared.TeamsPage     = TeamsPage
+_G.HazeShared.EquipPage     = EquipPage
 _G.HazeShared.SummonPage    = SummonPage   -- ★ final assignment
 
 _G.HazeShared.OnDBReady=function(chapCount,msg)
@@ -5084,6 +5109,14 @@ task.spawn(function()
     if summonLoaded then SetProgress(0.90, "✓ Summon-Modul geladen")
     else SetProgress(0.90, "⚠ Summon nicht geladen") end
     task.wait(0.15)
+
+    -- ────────────────────────────────────────────────────────
+    --  PHASE 5: Equipment-Modul  (95%)
+    -- ────────────────────────────────────────────────────────
+    SetProgress(0.92, "Lade Equipment-Modul...")
+    LoadSeq(K.EQUIP_URL, "Equipment", 20)
+    SetProgress(0.95, "✓ Equipment-Modul bereit")
+    task.wait(0.1)
 
     -- ────────────────────────────────────────────────────────
     --  PHASE 5: Fertig  (100%)
