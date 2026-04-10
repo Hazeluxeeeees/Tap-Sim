@@ -1,14 +1,16 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB – teams.lua  v1.5.0
---  ÄNDERUNGEN v1.3.0:
---    ✓ PlayerCollection dynamisch über LocalPlayer (kein Hazeluxes1)
---    ✓ getUnitByTag = EINZIGE Suchmethode für Units (kein Name-Lookup)
---    ✓ Save speichert Tag pro Slot (primärer Key für alle späteren Loads)
---    ✓ Load-Workflow strikt: Snapshot → Strip → UnEquip → Equip → Gear
---    ✓ FindUnitInCollection komplett entfernt
+--  HazeHUB – teams.lua  v2.0.0
+--
+--  NEU v2.0.0:
+--    ✓ Stage Auto-Config: optionales Tagging beim Speichern
+--    ✓ Stage-Filter: nur getaggte Teams anzeigen
+--    ✓ Suchfeld in der Team-Liste
+--    ✓ Export: Team als kopierbaren Code (JSON+Base64)
+--    ✓ Import: Code → Team direkt laden & speichern
+--    ✓ Copy-Button pro Team-Eintrag (setclipboard)
 -- ╚══════════════════════════════════════════════════════════╝
 
-local VERSION = "1.5.0"
+local VERSION = "2.0.0"
 
 local waited = 0
 while not (_G.HazeShared and _G.HazeShared.TeamsPage and _G.HazeShared.SetModuleLoaded) do
@@ -56,7 +58,83 @@ local TEAMS_FILE = FOLDER .. "/" .. Player.Name .. "_teams.json"
 if makefolder then pcall(function() makefolder(FOLDER) end) end
 
 -- ════════════════════════════════════════════════════════════
---  GEAR-SLOT DEFINITIONEN
+--  STAGE-DEFINITIONEN (identisch zu Equip.lua)
+-- ════════════════════════════════════════════════════════════
+local STAGES = {
+    { id = "",               label = "Alle anzeigen",      color = Color3.fromRGB(100,100,108) },
+    { id = "Great Cataclysm",label = "Great Cataclysm",    color = Color3.fromRGB(210,80,80)   },
+    { id = "Fire Force Raid",label = "Fire Force Raid",    color = Color3.fromRGB(220,140,50)  },
+    { id = "Story Farm",     label = "Story Farm",         color = Color3.fromRGB(80,160,230)  },
+    { id = "Raid General",   label = "Raid General",       color = Color3.fromRGB(175,120,220) },
+    { id = "Event",          label = "Event",              color = Color3.fromRGB(220,190,60)  },
+    { id = "PvP",            label = "PvP",                color = Color3.fromRGB(215,75,75)   },
+    { id = "Fire",           label = "🔥 Fire",            color = Color3.fromRGB(220,100,50)  },
+    { id = "Water",          label = "💧 Water",           color = Color3.fromRGB(80,140,220)  },
+    { id = "Lightning",      label = "⚡ Lightning",       color = Color3.fromRGB(230,220,60)  },
+    { id = "Wind",           label = "🌿 Wind",            color = Color3.fromRGB(90,200,110)  },
+    { id = "Dark",           label = "🌑 Dark",            color = Color3.fromRGB(130,80,200)  },
+    { id = "Light",          label = "✨ Light",           color = Color3.fromRGB(235,230,180) },
+}
+
+local _activeStage = ""  -- Aktiv gesetzter Filter ("" = alle)
+local _saveStage   = ""  -- Ausgewählter Stage-Tag beim Speichern
+
+-- ════════════════════════════════════════════════════════════
+--  BASE64  (keine externe Abhängigkeit)
+-- ════════════════════════════════════════════════════════════
+local B64C = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local function b64Encode(data)
+    local r, bytes = {}, {data:byte(1,#data)}
+    for i = 1,#bytes,3 do
+        local b1,b2,b3 = bytes[i], bytes[i+1] or 0, bytes[i+2] or 0
+        local n = b1*65536+b2*256+b3
+        r[#r+1]=B64C:sub(math.floor(n/262144)%64+1,math.floor(n/262144)%64+1)
+        r[#r+1]=B64C:sub(math.floor(n/4096)%64+1,  math.floor(n/4096)%64+1)
+        r[#r+1]=bytes[i+1] and B64C:sub(math.floor(n/64)%64+1,math.floor(n/64)%64+1) or "="
+        r[#r+1]=bytes[i+2] and B64C:sub(n%64+1,n%64+1) or "="
+    end
+    return table.concat(r)
+end
+local function b64Decode(s)
+    s=s:gsub("[^A-Za-z0-9+/=]","")
+    local r,lk={},{}
+    for i=1,#B64C do lk[B64C:sub(i,i)]=i-1 end
+    for i=1,#s,4 do
+        local c1=lk[s:sub(i,i)] or 0
+        local c2=lk[s:sub(i+1,i+1)] or 0
+        local c3=lk[s:sub(i+2,i+2)]
+        local c4=lk[s:sub(i+3,i+3)]
+        local n=c1*262144+c2*4096
+        r[#r+1]=string.char(math.floor(n/65536)%256)
+        if c3 then n=n+(c3 or 0)*64; r[#r+1]=string.char(math.floor(n/256)%256) end
+        if c4 then n=n+(c4 or 0);    r[#r+1]=string.char(n%256) end
+    end
+    return table.concat(r)
+end
+
+-- Export: Team-Eintrag → Base64-Code
+local function exportTeamCode(teamEntry)
+    local ok, json = pcall(function()
+        return Svc.Http:JSONEncode({ v=1, team=teamEntry })
+    end)
+    if not ok then return nil, "JSON-Fehler: "..tostring(json) end
+    return b64Encode(json)
+end
+
+-- Import: Base64-Code → Team-Eintrag (validiert)
+local function importTeamCode(code)
+    code = (code or ""):match("^%s*(.-)%s*$")
+    if code == "" then return nil, "Leerer Code." end
+    local json = b64Decode(code)
+    if json == "" then return nil, "Ungültiger Code (Base64)." end
+    local ok, payload = pcall(function() return Svc.Http:JSONDecode(json) end)
+    if not ok or type(payload) ~= "table" then return nil, "Ungültiges Format (JSON)." end
+    local t = payload.team
+    if type(t) ~= "table"          then return nil, "Kein 'team'-Feld im Code." end
+    if type(t.name) ~= "string" or t.name == "" then return nil, "Kein Team-Name." end
+    if type(t.tags) ~= "table"     then return nil, "Keine Tags im Code." end
+    return t, nil
+end
 --  key         = Feldname im Collection-Ordner (.Value = Item-Name)
 --  remoteType  = "Gears" oder "Soul" (unterschiedliche Remotes)
 --  unequipKey  = Was als GearName/SoulName beim Unequip geschickt wird
@@ -562,6 +640,50 @@ end
 
 local scanBtn = NeonBtn(saveCard, "🔍  Loadout scannen", D.CyanDim, 30)
 
+-- ── Stage-Tag Auswahl (optional) ─────────────────────────────
+local stageTagLbl = MkLbl(saveCard,"🏷 Stage-Tag (optional):",10,D.TextLow)
+stageTagLbl.Size = UDim2.new(1,0,0,14)
+
+local stageTagScroll = Instance.new("ScrollingFrame", saveCard)
+stageTagScroll.Size=UDim2.new(1,0,0,32); stageTagScroll.CanvasSize=UDim2.new(0,0,0,0)
+stageTagScroll.AutomaticCanvasSize=Enum.AutomaticSize.X
+stageTagScroll.ScrollBarThickness=0; stageTagScroll.BackgroundTransparency=1
+stageTagScroll.BorderSizePixel=0; stageTagScroll.ScrollingDirection=Enum.ScrollingDirection.X
+local stgTagList = Instance.new("UIListLayout", stageTagScroll)
+stgTagList.FillDirection=Enum.FillDirection.Horizontal
+stgTagList.VerticalAlignment=Enum.VerticalAlignment.Center
+stgTagList.Padding=UDim.new(0,4); stgTagList.SortOrder=Enum.SortOrder.LayoutOrder
+
+local _stgTagBtns = {}
+local function syncStgTagBtns()
+    for _, info in ipairs(_stgTagBtns) do
+        local on = info.id == _saveStage
+        Tw(info.btn,{BackgroundColor3=on and info.color or D.CardHover,
+                     BackgroundTransparency=on and 0.1 or 0.55})
+        info.btn.TextColor3 = on and Color3.new(1,1,1) or D.TextMid
+        local st=info.btn:FindFirstChildOfClass("UIStroke")
+        if st then st.Color=on and info.color or D.Border end
+    end
+end
+for _, stage in ipairs(STAGES) do
+    if stage.id ~= "" then
+        local btn=Instance.new("TextButton",stageTagScroll)
+        btn.Size=UDim2.new(0,0,1,0); btn.AutomaticSize=Enum.AutomaticSize.X
+        btn.BackgroundColor3=D.CardHover; btn.BackgroundTransparency=0.55
+        btn.Text=" "..stage.label.." "; btn.TextColor3=D.TextMid
+        btn.TextSize=10; btn.Font=Enum.Font.GothamBold
+        btn.AutoButtonColor=false; btn.BorderSizePixel=0
+        Corner(btn,5); Stroke(btn,D.Border,1,0.4)
+        local cap=stage
+        btn.MouseButton1Click:Connect(function()
+            _saveStage = (_saveStage==cap.id) and "" or cap.id
+            syncStgTagBtns()
+        end)
+        table.insert(_stgTagBtns,{id=stage.id,btn=btn,color=stage.color})
+    end
+end
+syncStgTagBtns()
+
 local function refreshPreview()
     -- scanLoadout gibt jetzt (tags, names, gears, autoUp) zurück
     local tags, names, gears, autoUp = scanLoadout()
@@ -657,10 +779,11 @@ saveBtn.MouseButton1Click:Connect(function()
 
     local entry = {
         name        = teamName,
-        slots       = slotsForDisplay,  -- Anzeigename (für UI)
-        tags        = tagsForSave,       -- Tag = Primary Key für Load
-        gears       = gearsForSave,      -- Gear direkt aus Collection
+        slots       = slotsForDisplay,
+        tags        = tagsForSave,
+        gears       = gearsForSave,
         autoUpgrade = auForSave,
+        stage       = (_saveStage ~= "") and _saveStage or nil,  -- ★ Stage-Tag
         savedAt     = os.time(),
         unitCount   = unitCount,
         version     = VERSION,
@@ -683,6 +806,51 @@ end)
 -- ── TEAM-LISTE ────────────────────────────────────────────────
 local loadCard = Card(TeamsPage); Pad(loadCard,10,12,10,12); VList(loadCard,8)
 SecLbl(loadCard, "📋  GESPEICHERTE TEAMS")
+
+-- ── Stage-Filter Leiste ──────────────────────────────────────
+local stgFiltScroll = Instance.new("ScrollingFrame", loadCard)
+stgFiltScroll.Size=UDim2.new(1,0,0,32); stgFiltScroll.CanvasSize=UDim2.new(0,0,0,0)
+stgFiltScroll.AutomaticCanvasSize=Enum.AutomaticSize.X
+stgFiltScroll.ScrollBarThickness=0; stgFiltScroll.BackgroundTransparency=1
+stgFiltScroll.BorderSizePixel=0; stgFiltScroll.ScrollingDirection=Enum.ScrollingDirection.X
+local stgFiltList = Instance.new("UIListLayout", stgFiltScroll)
+stgFiltList.FillDirection=Enum.FillDirection.Horizontal
+stgFiltList.VerticalAlignment=Enum.VerticalAlignment.Center
+stgFiltList.Padding=UDim.new(0,4); stgFiltList.SortOrder=Enum.SortOrder.LayoutOrder
+
+local _stgFiltBtns = {}
+local function syncStgFiltBtns()
+    for _, info in ipairs(_stgFiltBtns) do
+        local on = info.id == _activeStage
+        Tw(info.btn,{BackgroundColor3=on and info.color or D.CardHover,
+                     BackgroundTransparency=on and 0.1 or 0.55})
+        info.btn.TextColor3 = on and Color3.new(1,1,1) or D.TextMid
+        local st=info.btn:FindFirstChildOfClass("UIStroke")
+        if st then st.Color=on and info.color or D.Border end
+    end
+end
+for _, stage in ipairs(STAGES) do
+    local btn=Instance.new("TextButton",stgFiltScroll)
+    btn.Size=UDim2.new(0,0,1,0); btn.AutomaticSize=Enum.AutomaticSize.X
+    btn.BackgroundColor3=D.CardHover; btn.BackgroundTransparency=0.55
+    btn.Text=" "..stage.label.." "; btn.TextColor3=D.TextMid
+    btn.TextSize=10; btn.Font=Enum.Font.GothamBold
+    btn.AutoButtonColor=false; btn.BorderSizePixel=0
+    Corner(btn,5); Stroke(btn,D.Border,1,0.4)
+    local cap=stage
+    btn.MouseButton1Click:Connect(function()
+        _activeStage=cap.id
+        syncStgFiltBtns()
+        pcall(function() rebuildList(teamSearchBox.Text) end)
+    end)
+    table.insert(_stgFiltBtns,{id=stage.id,btn=btn,color=stage.color})
+end
+syncStgFiltBtns()
+
+-- ── Suchfeld ─────────────────────────────────────────────────
+local teamSearchOuter, teamSearchBox = MkInput(loadCard, "🔍  Team suchen...")
+teamSearchOuter.Size = UDim2.new(1,0,0,30)
+teamSearchBox.ClearTextOnFocus = false
 
 local teamListFrame = Instance.new("ScrollingFrame", loadCard)
 teamListFrame.Size = UDim2.new(1,0,0,230); teamListFrame.CanvasSize = UDim2.new(0,0,0,0)
@@ -723,16 +891,33 @@ VList(detailCard, 3)
 local loadBtn      = NeonBtn(detailCard, "⚡  Team laden", D.Green, 34)
 local loadFeedback = MkLbl(detailCard,"",10,D.TextLow); loadFeedback.Size = UDim2.new(1,0,0,16)
 
--- RebuildTeamsList
-local function rebuildList()
+-- RebuildTeamsList (v2.0: Filter + Stage + Copy-Button)
+local function rebuildList(filter)
+    filter = (filter or ""):lower():match("^%s*(.-)%s*$")
+    local useFilter = filter ~= ""
+
     for _, v in pairs(teamListFrame:GetChildren()) do
         if v:IsA("Frame") then v:Destroy() end
     end
-    emptyLbl.Visible = (#TM_State.Teams == 0)
 
+    -- Filtern: Name + Stage
+    local visible = {}
     for idx, team in ipairs(TM_State.Teams) do
-        local sel  = (TM_State.SelIdx == idx)
-        local hasTags = team.tags ~= nil
+        local nameMatch  = not useFilter or team.name:lower():find(filter,1,true)
+        local stageMatch = _activeStage == "" or team.stage == _activeStage
+        if nameMatch and stageMatch then
+            table.insert(visible, { idx=idx, team=team })
+        end
+    end
+
+    emptyLbl.Visible = (#visible == 0)
+
+    for _, entry in ipairs(visible) do
+        local idx      = entry.idx
+        local team     = entry.team
+        local sel      = (TM_State.SelIdx == idx)
+        local hasTags  = team.tags ~= nil
+        local hasStage = team.stage and team.stage ~= ""
 
         local row = Instance.new("Frame", teamListFrame)
         row.Size = UDim2.new(1,0,0,48)
@@ -740,28 +925,41 @@ local function rebuildList()
         row.BackgroundTransparency = 0.3; row.BorderSizePixel = 0
         Corner(row,8); Stroke(row, sel and D.Cyan or D.Border, 1.5, sel and 0 or 0.5)
 
-        -- Grüner/oranger Streifen: zeigt ob Team Tag-Daten hat
         local stripe = Instance.new("Frame", row)
-        stripe.Size = UDim2.new(0,5,1,0); stripe.BackgroundColor3 = hasTags and D.Green or D.Orange
+        stripe.Size = UDim2.new(0,5,1,0)
+        stripe.BackgroundColor3 = hasTags and D.Green or D.Orange
         stripe.BackgroundTransparency = 0.3; stripe.BorderSizePixel = 0; Corner(stripe,3)
 
         local nameLbl = Instance.new("TextLabel", row)
-        nameLbl.Position = UDim2.new(0,13,0,4); nameLbl.Size = UDim2.new(1,-90,0,20)
+        nameLbl.Position = UDim2.new(0,13,0,4); nameLbl.Size = UDim2.new(1,-104,0,20)
         nameLbl.BackgroundTransparency = 1; nameLbl.Text = "⚔  " .. team.name
         nameLbl.TextColor3 = sel and D.Cyan or D.TextHi; nameLbl.TextSize = 12
         nameLbl.Font = Enum.Font.GothamBold; nameLbl.TextXAlignment = Enum.TextXAlignment.Left
         nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+        nameLbl.TextScaled=false; nameLbl.RichText=true; nameLbl.TextStrokeTransparency=1
 
-        local cnt   = 0; for _ = 1,6 do if team.slots and team.slots[_] then cnt=cnt+1 end end
-        local note  = hasTags and "🏷 Tag-gespeichert" or "⚠ kein Tag (alt)"
+        local cnt  = 0; for _ = 1,6 do if team.slots and team.slots[_] then cnt=cnt+1 end end
+        local sub  = cnt .. "/6"
+        if hasStage then sub = sub .. "  ·  🏷 " .. team.stage end
+        sub = sub .. "  ·  " .. os.date("%d.%m.", team.savedAt or 0)
 
         local subLbl = Instance.new("TextLabel", row)
-        subLbl.Position = UDim2.new(0,13,0,26); subLbl.Size = UDim2.new(1,-90,0,14)
-        subLbl.BackgroundTransparency = 1
-        subLbl.Text = cnt .. "/6  ·  " .. note .. "  ·  " .. os.date("%d.%m.", team.savedAt or 0)
-        subLbl.TextColor3 = hasTags and D.TextMid or D.Orange
+        subLbl.Position = UDim2.new(0,13,0,26); subLbl.Size = UDim2.new(1,-104,0,14)
+        subLbl.BackgroundTransparency = 1; subLbl.Text = sub
+        subLbl.TextColor3 = hasStage and D.CyanDim or (hasTags and D.TextMid or D.Orange)
         subLbl.TextSize = 10; subLbl.Font = Enum.Font.GothamMedium
         subLbl.TextXAlignment = Enum.TextXAlignment.Left
+        subLbl.TextScaled=false; subLbl.RichText=true; subLbl.TextStrokeTransparency=1
+
+        -- ★ Copy-Button (Export)
+        local copyBtn = Instance.new("TextButton", row)
+        copyBtn.Size=UDim2.new(0,28,0,28); copyBtn.Position=UDim2.new(1,-100,0.5,-14)
+        copyBtn.BackgroundColor3=Color3.fromRGB(18,28,48); copyBtn.BackgroundTransparency=0.15
+        copyBtn.Text="📋"; copyBtn.TextColor3=D.CyanDim; copyBtn.TextSize=12
+        copyBtn.Font=Enum.Font.GothamBold; copyBtn.AutoButtonColor=false; copyBtn.BorderSizePixel=0
+        Corner(copyBtn,6); Stroke(copyBtn,D.CyanDim,1,0.35)
+        copyBtn.MouseEnter:Connect(function() Tw(copyBtn,{BackgroundColor3=Color3.fromRGB(22,40,70)}) end)
+        copyBtn.MouseLeave:Connect(function() Tw(copyBtn,{BackgroundColor3=Color3.fromRGB(18,28,48)}) end)
 
         local delBtn = Instance.new("TextButton", row)
         delBtn.Size = UDim2.new(0,32,0,32); delBtn.Position = UDim2.new(1,-38,0.5,-16)
@@ -773,9 +971,35 @@ local function rebuildList()
         delBtn.MouseLeave:Connect(function() Tw(delBtn,{BackgroundColor3=Color3.fromRGB(50,12,12)}) end)
 
         local selBtn = Instance.new("TextButton", row)
-        selBtn.Size = UDim2.new(1,-40,1,0); selBtn.BackgroundTransparency = 1
+        selBtn.Size = UDim2.new(1,-104,1,0); selBtn.BackgroundTransparency = 1
         selBtn.Text = ""; selBtn.BorderSizePixel = 0
-        local capIdx = idx
+        selBtn.MouseEnter:Connect(function()
+            if not sel then Tw(row,{BackgroundColor3=D.TabActive,BackgroundTransparency=0.2}) end
+        end)
+        selBtn.MouseLeave:Connect(function()
+            if not sel then Tw(row,{BackgroundColor3=D.CardHover,BackgroundTransparency=0.3}) end
+        end)
+
+        local capIdx  = idx
+        local capTeam = team
+
+        -- ★ Copy-Button Logik
+        copyBtn.MouseButton1Click:Connect(function()
+            local code, err = exportTeamCode(capTeam)
+            if code then
+                if setclipboard then
+                    setclipboard(code)
+                    copyBtn.Text="✅"; copyBtn.TextColor3=D.GreenBright
+                    task.delay(1.5, function() pcall(function()
+                        copyBtn.Text="📋"; copyBtn.TextColor3=D.CyanDim
+                    end) end)
+                else
+                    setStatus("⚠ setclipboard nicht verfügbar.", D.Orange)
+                end
+            else
+                setStatus("❌ Export Fehler: " .. tostring(err), D.Red)
+            end
+        end)
 
         selBtn.MouseButton1Click:Connect(function()
             TM_State.SelIdx = capIdx
@@ -787,7 +1011,7 @@ local function rebuildList()
                     local name = t.slots and t.slots[i]
                     local tag  = t.tags  and (t.tags[tostring(i)] or t.tags[i])
                     if name then
-                        local display = getDisplayName(name)  -- ★ DisplayName
+                        local display = getDisplayName(name)
                         local tagStr  = tag and ("  [#" .. tag .. "]") or "  [kein Tag]"
                         local gearCnt = 0
                         if t.gears then
@@ -802,7 +1026,7 @@ local function rebuildList()
                     end
                 end
             end
-            rebuildList()
+            rebuildList(teamSearchBox.Text)
         end)
 
         delBtn.MouseButton1Click:Connect(function()
@@ -810,12 +1034,87 @@ local function rebuildList()
                 TM_State.SelIdx = nil; detailCard.Visible = false
             end
             table.remove(TM_State.Teams, capIdx)
-            saveTeamsFile(); rebuildList()
+            saveTeamsFile(); rebuildList(teamSearchBox.Text)
             setStatus("🗑 Team gelöscht.", D.TextMid)
         end)
     end
 end
 _G._RebuildTeamsList = rebuildList
+
+-- ★ Echtzeit-Suche
+teamSearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    pcall(function() rebuildList(teamSearchBox.Text) end)
+end)
+
+-- ════════════════════════════════════════════════════════════
+--  IMPORT-SEKTION
+-- ════════════════════════════════════════════════════════════
+local importCard = Card(TeamsPage); Pad(importCard,10,12,10,12); VList(importCard,6)
+SecLbl(importCard, "📥  TEAM IMPORTIEREN")
+
+local importInfoLbl = MkLbl(importCard,
+    "Code aus 📋-Button kopieren und hier einfügen.",
+    10, D.TextLow)
+importInfoLbl.Size=UDim2.new(1,0,0,0); importInfoLbl.AutomaticSize=Enum.AutomaticSize.Y
+importInfoLbl.TextWrapped=true
+
+local importRow = Instance.new("Frame", importCard)
+importRow.Size=UDim2.new(1,0,0,32); importRow.BackgroundTransparency=1; HList(importRow,6)
+local importOuter, importBox = MkInput(importRow, "Export-Code hier einfügen...")
+importOuter.Size = UDim2.new(0.70,0,0,32)
+
+local importBtn = Instance.new("TextButton", importRow)
+importBtn.Size=UDim2.new(0.27,0,0,32); importBtn.BackgroundColor3=D.Cyan
+importBtn.BackgroundTransparency=0.15; importBtn.Text="📥 Import"
+importBtn.TextColor3=Color3.new(1,1,1); importBtn.TextSize=11; importBtn.Font=Enum.Font.GothamBold
+importBtn.AutoButtonColor=false; importBtn.BorderSizePixel=0
+Corner(importBtn,7); Stroke(importBtn,D.Cyan,1,0.2)
+importBtn.MouseEnter:Connect(function() Tw(importBtn,{BackgroundTransparency=0.05}) end)
+importBtn.MouseLeave:Connect(function() Tw(importBtn,{BackgroundTransparency=0.15}) end)
+
+local importFeedback = MkLbl(importCard,"",10,D.TextLow); importFeedback.Size=UDim2.new(1,0,0,16)
+
+importBtn.MouseButton1Click:Connect(function()
+    local code = (importBox.Text or ""):match("^%s*(.-)%s*$")
+    if code == "" then
+        importFeedback.Text="⚠ Bitte einen Code eingeben."; importFeedback.TextColor3=D.Orange; return
+    end
+
+    local team, err = importTeamCode(code)
+    if not team then
+        importFeedback.Text="❌ " .. tostring(err); importFeedback.TextColor3=D.Red; return
+    end
+
+    -- Duplikat: Namen anpassen
+    local finalName = team.name
+    local exists = false
+    for _, t in ipairs(TM_State.Teams) do
+        if t.name == finalName then exists = true; break end
+    end
+    if exists then
+        local i = 2
+        while (function()
+            for _, t in ipairs(TM_State.Teams) do
+                if t.name == finalName .. " (" .. i .. ")" then return true end
+            end
+            return false
+        end)() do i = i + 1 end
+        finalName = finalName .. " (" .. i .. ")"
+        team.name = finalName
+    end
+
+    team.savedAt = os.time()  -- Import-Zeitstempel aktualisieren
+    table.insert(TM_State.Teams, team)
+    saveTeamsFile()
+
+    importBox.Text = ""
+    importFeedback.Text = "✅ Team '" .. finalName .. "' importiert!"
+    importFeedback.TextColor3 = D.GreenBright
+    rebuildList()
+    setStatus("✅ Importiert: '" .. finalName .. "'", D.GreenBright)
+
+    task.delay(5, function() pcall(function() importFeedback.Text="" end) end)
+end)
 
 -- ── LOAD-BUTTON ───────────────────────────────────────────────
 loadBtn.MouseButton1Click:Connect(function()
