@@ -225,7 +225,7 @@ local function getUnitByTag(targetTag)
     return nil
 end
 
-readGearValue = function(unitFolder, gearKey)
+local function readGearValue(unitFolder, gearKey)
     local obj = unitFolder:FindFirstChild(gearKey)
     if not obj then return nil end
     local v = tostring(obj.Value)
@@ -286,7 +286,7 @@ local function getRemote(...)
     _remoteCache[key] = node; return node
 end
 
-fireUnequipGear = function(unitFolder, slotDef)
+local function fireUnequipGear(unitFolder, slotDef)
     if not unitFolder or not slotDef then return end
     if slotDef.remoteType == "Soul" then
         local r = getRemote("Remote","Server","Units","Soul"); if not r then return end
@@ -301,7 +301,7 @@ fireUnequipGear = function(unitFolder, slotDef)
     end
 end
 
-fireEquipGear = function(unitFolder, slotDef, itemName)
+local function fireEquipGear(unitFolder, slotDef, itemName)
     if not itemName or itemName == "" or not unitFolder then return end
     if slotDef.remoteType == "Soul" then
         local r = getRemote("Remote","Server","Units","Soul"); if not r then return end
@@ -546,11 +546,10 @@ end
 -- ════════════════════════════════════════════════════════════
 --  GUI  — beginnt hier
 -- ════════════════════════════════════════════════════════════
--- Forward-Deklarationen (werden später definiert, aber oben referenziert)
-local refreshGearView   -- wird in Sektion 2 definiert
-local fireUnequipGear   -- wird in Remote-Helper definiert
-local fireEquipGear     -- wird in Remote-Helper definiert
-local readGearValue     -- wird in Collection-Helper definiert
+-- Forward-Deklarationen
+local refreshGearView   -- wird in Sektion 2 definiert (upvalue, Closure-sicher)
+local _selectedTag  = nil
+local _selectedName = nil
 VList(EquipPage, 8)
 MkLbl(EquipPage, "⚙  Equipment Manager", 18, D.Cyan, true)
 MkLbl(EquipPage,
@@ -848,9 +847,6 @@ VList(unitListFrame, 3)
 
 local unitEmptyLbl = MkLbl(unitListFrame, "Noch nicht gescannt.", 11, D.TextLow)
 unitEmptyLbl.Size = UDim2.new(1,0,0,24)
-
-local _selectedTag  = nil
-local _selectedName = nil  -- DisplayName der aktuell gewählten Einheit
 
 -- ════════════════════════════════════════════════════════════
 --  SEKTION 2 — AKTUELLES GEAR
