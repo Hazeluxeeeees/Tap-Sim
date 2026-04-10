@@ -1,14 +1,15 @@
 -- ╔══════════════════════════════════════════════════════════╗
---  HazeHUB – Equip.lua  v2.0.0
+--  HazeHUB – Equip.lua  v3.0.0
 --
---  ✓ Account-gebunden: Equipment_{UserId}.json
---  ✓ Struktur: { [unitTag] = { [setName] = { gear + meta } } }
---  ✓ Collapsible UI: Einheit → Sets (eingerückt)
---  ✓ Nur Einheiten mit Sets erscheinen in der Liste
---  ✓ Remotes identisch zu teams.lua (Gears + Soul)
+--  NEU v3.0.0:
+--    ✓ Stage Auto-Config: optionales Tagging beim Speichern
+--    ✓ Stage-Filter: nur getaggte Sets anzeigen
+--    ✓ Export: Set als kopierbaren Code (JSON+Base64)
+--    ✓ Import: Code einfügen → Set direkt laden & speichern
+--    ✓ Copy-Button pro Set-Eintrag (setclipboard)
 -- ╚══════════════════════════════════════════════════════════╝
 
-local VERSION = "2.0.0"
+local VERSION = "3.0.0"
 
 -- ── HazeShared warten ────────────────────────────────────────
 local _waited = 0
@@ -90,8 +91,109 @@ local function loadFile()
 end
 
 -- ════════════════════════════════════════════════════════════
---  GEAR-SLOT DEFINITIONEN  (identisch zu teams.lua)
+--  STAGE-DEFINITIONEN (optionales Tagging)
 -- ════════════════════════════════════════════════════════════
+local STAGES = {
+    { id = "",               label = "Alle anzeigen",      color = Color3.fromRGB(100,100,108) },
+    { id = "Great Cataclysm",label = "Great Cataclysm",    color = Color3.fromRGB(210,80,80)   },
+    { id = "Fire Force Raid",label = "Fire Force Raid",    color = Color3.fromRGB(220,140,50)  },
+    { id = "Story Farm",     label = "Story Farm",         color = Color3.fromRGB(80,160,230)  },
+    { id = "Raid General",   label = "Raid General",       color = Color3.fromRGB(175,120,220) },
+    { id = "Event",          label = "Event",              color = Color3.fromRGB(220,190,60)  },
+    { id = "PvP",            label = "PvP",                color = Color3.fromRGB(215,75,75)   },
+    { id = "Fire",           label = "🔥 Fire",            color = Color3.fromRGB(220,100,50)  },
+    { id = "Water",          label = "💧 Water",           color = Color3.fromRGB(80,140,220)  },
+    { id = "Lightning",      label = "⚡ Lightning",       color = Color3.fromRGB(230,220,60)  },
+    { id = "Wind",           label = "🌿 Wind",            color = Color3.fromRGB(90,200,110)  },
+    { id = "Dark",           label = "🌑 Dark",            color = Color3.fromRGB(130,80,200)  },
+    { id = "Light",          label = "✨ Light",           color = Color3.fromRGB(235,230,180) },
+}
+
+-- Aktiv gesetzter Stage-Filter ("" = alle)
+local _activeStage = ""
+-- Aktuell ausgewählte Stage beim Speichern ("" = kein Tag)
+local _saveStage   = ""
+
+-- ════════════════════════════════════════════════════════════
+--  BASE64  (Lua-eigene Implementierung, kein externes Modul)
+--  Wird für Export/Import-Codes genutzt.
+-- ════════════════════════════════════════════════════════════
+local B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+local function b64Encode(data)
+    local result, padding = {}, ""
+    local bytes = {data:byte(1, #data)}
+    for i = 1, #bytes, 3 do
+        local b1, b2, b3 = bytes[i], bytes[i+1] or 0, bytes[i+2] or 0
+        local n = b1 * 65536 + b2 * 256 + b3
+        result[#result+1] = B64_CHARS:sub(math.floor(n/262144)%64+1, math.floor(n/262144)%64+1)
+        result[#result+1] = B64_CHARS:sub(math.floor(n/4096)%64+1,   math.floor(n/4096)%64+1)
+        result[#result+1] = bytes[i+1] and B64_CHARS:sub(math.floor(n/64)%64+1, math.floor(n/64)%64+1) or "="
+        result[#result+1] = bytes[i+2] and B64_CHARS:sub(n%64+1, n%64+1) or "="
+    end
+    return table.concat(result)
+end
+
+local function b64Decode(s)
+    s = s:gsub("[^A-Za-z0-9+/=]", "")
+    local result = {}
+    local lookup = {}
+    for i = 1, #B64_CHARS do lookup[B64_CHARS:sub(i,i)] = i-1 end
+    for i = 1, #s, 4 do
+        local c1 = lookup[s:sub(i,i)]   or 0
+        local c2 = lookup[s:sub(i+1,i+1)] or 0
+        local c3 = lookup[s:sub(i+2,i+2)]
+        local c4 = lookup[s:sub(i+3,i+3)]
+        local n  = c1 * 262144 + c2 * 4096
+        result[#result+1] = string.char(math.floor(n/65536) % 256)
+        if c3 then
+            n = n + (c3 or 0) * 64
+            result[#result+1] = string.char(math.floor(n/256) % 256)
+        end
+        if c4 then
+            n = n + (c4 or 0)
+            result[#result+1] = string.char(n % 256)
+        end
+    end
+    return table.concat(result)
+end
+
+-- Exportiert ein einzelnes Set als kopierbaren Code-String
+-- Format: Base64( JSONEncode({ unitTag, setName, setData }) )
+local function exportSetCode(unitTag, setName, setData)
+    local payload = {
+        v       = 1,             -- Version für künftige Kompatibilität
+        unitTag = unitTag,
+        setName = setName,
+        setData = setData,
+    }
+    local ok, json = pcall(function() return Http:JSONEncode(payload) end)
+    if not ok then return nil, "JSON-Fehler: " .. tostring(json) end
+    return b64Encode(json)
+end
+
+-- Importiert einen Code-String. Gibt { unitTag, setName, setData } oder nil, err zurück.
+local function importSetCode(code)
+    code = (code or ""):match("^%s*(.-)%s*$")
+    if code == "" then return nil, "Leerer Code." end
+    local jsonStr = b64Decode(code)
+    if jsonStr == "" then return nil, "Ungültiger Code (Base64-Fehler)." end
+    local ok, payload = pcall(function() return Http:JSONDecode(jsonStr) end)
+    if not ok or type(payload) ~= "table" then
+        return nil, "Ungültiges Format (JSON-Fehler)."
+    end
+    -- Validierung: Pflichtfelder prüfen
+    if type(payload.unitTag) ~= "string" or payload.unitTag == "" then
+        return nil, "Kein unitTag im Code."
+    end
+    if type(payload.setName) ~= "string" or payload.setName == "" then
+        return nil, "Kein setName im Code."
+    end
+    if type(payload.setData) ~= "table" then
+        return nil, "Keine setData im Code."
+    end
+    return payload, nil
+end
 local GEAR_SLOTS = {
     { key = "HeadGear", remoteType = "Gears", unequipKey = "HeadGear", label = "Head" },
     { key = "BodyGear",  remoteType = "Gears", unequipKey = "BodyGear",  label = "Body" },
@@ -358,6 +460,53 @@ SecLbl(saveCard, "💾  SET SPEICHERN")
 local saveUnitLbl = MkLbl(saveCard,"Einheit: —",11,D.TextMid)
 saveUnitLbl.Size = UDim2.new(1,0,0,16)
 
+-- ── Stage-Tag Auswahl (optional) ─────────────────────────────
+local stageTagLbl = MkLbl(saveCard,"🏷 Stage-Tag (optional):",10,D.TextLow)
+stageTagLbl.Size = UDim2.new(1,0,0,14)
+
+local stageTagScroll = Instance.new("ScrollingFrame", saveCard)
+stageTagScroll.Size=UDim2.new(1,0,0,32); stageTagScroll.CanvasSize=UDim2.new(0,0,0,0)
+stageTagScroll.AutomaticCanvasSize=Enum.AutomaticSize.X
+stageTagScroll.ScrollBarThickness=0; stageTagScroll.BackgroundTransparency=1
+stageTagScroll.BorderSizePixel=0; stageTagScroll.ScrollingDirection=Enum.ScrollingDirection.X
+local stageTagList = Instance.new("UIListLayout", stageTagScroll)
+stageTagList.FillDirection=Enum.FillDirection.Horizontal
+stageTagList.VerticalAlignment=Enum.VerticalAlignment.Center
+stageTagList.Padding=UDim.new(0,4); stageTagList.SortOrder=Enum.SortOrder.LayoutOrder
+
+local _stageTagBtns = {}
+local function syncStageTagBtns()
+    for _, info in ipairs(_stageTagBtns) do
+        local isActive = info.id == _saveStage
+        Tw(info.btn, {
+            BackgroundColor3       = isActive and info.color or D.CardHover,
+            BackgroundTransparency = isActive and 0.1 or 0.55,
+        })
+        info.btn.TextColor3 = isActive and Color3.new(1,1,1) or D.TextMid
+        local st = info.btn:FindFirstChildOfClass("UIStroke")
+        if st then st.Color = isActive and info.color or D.Border end
+    end
+end
+
+for _, stage in ipairs(STAGES) do
+    if stage.id ~= "" then  -- "Alle anzeigen" nicht im Save-Dropdown
+        local btn = Instance.new("TextButton", stageTagScroll)
+        btn.Size=UDim2.new(0,0,1,0); btn.AutomaticSize=Enum.AutomaticSize.X
+        btn.BackgroundColor3=D.CardHover; btn.BackgroundTransparency=0.55
+        btn.Text=" " .. stage.label .. " "
+        btn.TextColor3=D.TextMid; btn.TextSize=10; btn.Font=Enum.Font.GothamBold
+        btn.AutoButtonColor=false; btn.BorderSizePixel=0
+        Corner(btn,5); Stroke(btn,D.Border,1,0.4)
+        local capStage = stage
+        btn.MouseButton1Click:Connect(function()
+            _saveStage = (_saveStage == capStage.id) and "" or capStage.id
+            syncStageTagBtns()
+        end)
+        table.insert(_stageTagBtns, { id=stage.id, btn=btn, color=stage.color })
+    end
+end
+syncStageTagBtns()
+
 local setNameRow = Instance.new("Frame", saveCard)
 setNameRow.Size=UDim2.new(1,0,0,32); setNameRow.BackgroundTransparency=1; HList(setNameRow,6)
 local setNameOuter, setNameBox = MkInput(setNameRow, "Set-Name (z.B. Raid-Build)")
@@ -386,6 +535,50 @@ local saveFeedback = MkLbl(saveCard,"",10,D.TextLow); saveFeedback.Size=UDim2.ne
 -- ════════════════════════════════════════════════════════════
 local setsCard = Card(EquipPage); Pad(setsCard,10,12,10,12); VList(setsCard,6)
 SecLbl(setsCard, "📋  GESPEICHERTE SETS")
+
+-- ── Stage-Filter Leiste ──────────────────────────────────────
+local stageFilterScroll = Instance.new("ScrollingFrame", setsCard)
+stageFilterScroll.Size=UDim2.new(1,0,0,32); stageFilterScroll.CanvasSize=UDim2.new(0,0,0,0)
+stageFilterScroll.AutomaticCanvasSize=Enum.AutomaticSize.X
+stageFilterScroll.ScrollBarThickness=0; stageFilterScroll.BackgroundTransparency=1
+stageFilterScroll.BorderSizePixel=0; stageFilterScroll.ScrollingDirection=Enum.ScrollingDirection.X
+local stageFilterList = Instance.new("UIListLayout", stageFilterScroll)
+stageFilterList.FillDirection=Enum.FillDirection.Horizontal
+stageFilterList.VerticalAlignment=Enum.VerticalAlignment.Center
+stageFilterList.Padding=UDim.new(0,4); stageFilterList.SortOrder=Enum.SortOrder.LayoutOrder
+
+local _stageFiltBtns = {}
+local function syncStageFilterBtns()
+    for _, info in ipairs(_stageFiltBtns) do
+        local isActive = info.id == _activeStage
+        Tw(info.btn, {
+            BackgroundColor3       = isActive and info.color or D.CardHover,
+            BackgroundTransparency = isActive and 0.1 or 0.55,
+        })
+        info.btn.TextColor3 = isActive and Color3.new(1,1,1) or D.TextMid
+        local st = info.btn:FindFirstChildOfClass("UIStroke")
+        if st then st.Color = isActive and info.color or D.Border end
+    end
+end
+
+for _, stage in ipairs(STAGES) do
+    local btn = Instance.new("TextButton", stageFilterScroll)
+    btn.Size=UDim2.new(0,0,1,0); btn.AutomaticSize=Enum.AutomaticSize.X
+    btn.BackgroundColor3= stage.id=="" and D.CardHover or D.CardHover
+    btn.BackgroundTransparency=0.55
+    btn.Text=" " .. stage.label .. " "
+    btn.TextColor3=D.TextMid; btn.TextSize=10; btn.Font=Enum.Font.GothamBold
+    btn.AutoButtonColor=false; btn.BorderSizePixel=0
+    Corner(btn,5); Stroke(btn,D.Border,1,0.4)
+    local capStage = stage
+    btn.MouseButton1Click:Connect(function()
+        _activeStage = capStage.id
+        syncStageFilterBtns()
+        pcall(function() rebuildSetList(setSearchBox.Text) end)
+    end)
+    table.insert(_stageFiltBtns, { id=stage.id, btn=btn, color=stage.color })
+end
+syncStageFilterBtns()
 
 -- ── Suchfeld (Sets) ──────────────────────────────────────────
 local setSearchOuter, setSearchBox = MkInput(setsCard, "🔍  Einheit suchen...")
@@ -440,10 +633,21 @@ rebuildSetList = function(filter)
                 if folder then displayName = getDisplayName(folder.Name)
                 else displayName = "Tag:" .. tag end
             end
-            -- ★ Filter: nur Einheiten aufnehmen deren Name den Suchbegriff enthält
+            -- ★ Stage-Filter: Einheit nur anzeigen wenn mindestens ein Set passt
+            local stageMatch = false
+            if _activeStage == "" then
+                stageMatch = true  -- "Alle anzeigen"
+            else
+                for _, sd in pairs(sets) do
+                    if sd.Stage == _activeStage then stageMatch = true; break end
+                end
+            end
+            -- ★ Stage-Filter: Einheit nur aufnehmen wenn DisplayName den Suchbegriff enthält
             if not useFilter or displayName:lower():find(filter, 1, true) then
-                local setCount = 0; for _ in pairs(sets) do setCount = setCount + 1 end
-                table.insert(unitKeys, { tag=tag, displayName=displayName, setCount=setCount })
+                if stageMatch then
+                    local setCount = 0; for _ in pairs(sets) do setCount = setCount + 1 end
+                    table.insert(unitKeys, { tag=tag, displayName=displayName, setCount=setCount })
+                end
             end
         end
     end
@@ -532,25 +736,31 @@ rebuildSetList = function(filter)
 
         -- ── Set-Einträge (nur wenn expanded) ────────────────
         if isExpanded then
-            -- Sets alphabetisch
+            -- Sets alphabetisch, Stage-Filter auf Set-Ebene
             local setNames = {}
-            for sName in pairs(sets) do table.insert(setNames, sName) end
+            for sName, sd in pairs(sets) do
+                if _activeStage == "" or sd.Stage == _activeStage then
+                    table.insert(setNames, sName)
+                end
+            end
             table.sort(setNames)
 
             for _, setName in ipairs(setNames) do
                 local setData = sets[setName]
 
+                -- Reihe höher wenn Stage-Badge vorhanden
+                local hasStage = setData.Stage and setData.Stage ~= ""
+                local rowH = hasStage and 48 or 36
+
                 -- Eingerückter Container
                 local setRow = Instance.new("Frame", setListScroll)
-                setRow.Size=UDim2.new(1,0,0,36)
+                setRow.Size=UDim2.new(1,0,0,rowH)
                 setRow.BackgroundColor3=D.CardHover; setRow.BackgroundTransparency=0.45
                 setRow.BorderSizePixel=0; Corner(setRow,6)
                 Stroke(setRow,D.Border,1,0.5)
-
-                -- Einrückung via Padding links
                 Pad(setRow,0,4,0,24)
 
-                -- Linker Indikator-Strich (zeigt Zugehörigkeit)
+                -- Linker Indikator-Strich
                 local indentLine = Instance.new("Frame", setRow)
                 indentLine.Size=UDim2.new(0,2,0.6,0); indentLine.Position=UDim2.new(0,10,0.2,0)
                 indentLine.BackgroundColor3=D.Cyan; indentLine.BackgroundTransparency=0.5
@@ -558,20 +768,32 @@ rebuildSetList = function(filter)
 
                 -- Set-Name
                 local setNameLbl = Instance.new("TextLabel", setRow)
-                setNameLbl.Position=UDim2.new(0,20,0,4); setNameLbl.Size=UDim2.new(1,-96,0,16)
+                setNameLbl.Position=UDim2.new(0,20,0,4); setNameLbl.Size=UDim2.new(1,-100,0,16)
                 setNameLbl.BackgroundTransparency=1; setNameLbl.Text="🗡  " .. setName
                 setNameLbl.TextColor3=D.TextHi; setNameLbl.TextSize=12; setNameLbl.Font=Enum.Font.GothamBold
                 setNameLbl.TextXAlignment=Enum.TextXAlignment.Left; setNameLbl.TextTruncate=Enum.TextTruncate.AtEnd
                 setNameLbl.TextScaled=false; setNameLbl.RichText=true; setNameLbl.TextStrokeTransparency=1
 
-                -- Gear-Anzahl sub
+                -- Gear-Anzahl + Stage-Badge sub-line
+                local subText = countGear(setData) .. "/5 Slots"
+                if hasStage then subText = subText .. "  ·  🏷 " .. setData.Stage end
                 local gearCountLbl = Instance.new("TextLabel", setRow)
-                gearCountLbl.Position=UDim2.new(0,20,0,22); gearCountLbl.Size=UDim2.new(1,-96,0,11)
-                gearCountLbl.BackgroundTransparency=1
-                gearCountLbl.Text=countGear(setData) .. "/5 Slots"
-                gearCountLbl.TextColor3=D.TextLow; gearCountLbl.TextSize=9; gearCountLbl.Font=Enum.Font.GothamMedium
+                gearCountLbl.Position=UDim2.new(0,20,0,22); gearCountLbl.Size=UDim2.new(1,-100,0,11)
+                gearCountLbl.BackgroundTransparency=1; gearCountLbl.Text=subText
+                gearCountLbl.TextColor3= hasStage and D.CyanDim or D.TextLow
+                gearCountLbl.TextSize=9; gearCountLbl.Font=Enum.Font.GothamMedium
                 gearCountLbl.TextXAlignment=Enum.TextXAlignment.Left
                 gearCountLbl.TextScaled=false; gearCountLbl.RichText=true; gearCountLbl.TextStrokeTransparency=1
+
+                -- ★ Copy-Button (Export)
+                local copyBtn = Instance.new("TextButton", setRow)
+                copyBtn.Size=UDim2.new(0,26,0,26); copyBtn.Position=UDim2.new(1,-96,0.5,-13)
+                copyBtn.BackgroundColor3=Color3.fromRGB(18,28,48); copyBtn.BackgroundTransparency=0.15
+                copyBtn.Text="📋"; copyBtn.TextColor3=D.CyanDim; copyBtn.TextSize=12
+                copyBtn.Font=Enum.Font.GothamBold; copyBtn.AutoButtonColor=false; copyBtn.BorderSizePixel=0
+                Corner(copyBtn,5); Stroke(copyBtn,D.CyanDim,1,0.35)
+                copyBtn.MouseEnter:Connect(function() Tw(copyBtn,{BackgroundColor3=Color3.fromRGB(22,40,70)}) end)
+                copyBtn.MouseLeave:Connect(function() Tw(copyBtn,{BackgroundColor3=Color3.fromRGB(18,28,48)}) end)
 
                 -- Löschen-Button
                 local delBtn = Instance.new("TextButton", setRow)
@@ -595,7 +817,7 @@ rebuildSetList = function(filter)
 
                 -- Hover auf gesamte Row
                 local rowBtn = Instance.new("TextButton", setRow)
-                rowBtn.Size=UDim2.new(1,-66,1,0); rowBtn.BackgroundTransparency=1
+                rowBtn.Size=UDim2.new(1,-100,1,0); rowBtn.BackgroundTransparency=1
                 rowBtn.Text=""; rowBtn.BorderSizePixel=0
                 rowBtn.MouseEnter:Connect(function()
                     Tw(setRow,{BackgroundColor3=D.TabActive,BackgroundTransparency=0.3})
@@ -608,6 +830,26 @@ rebuildSetList = function(filter)
                 local capSetTag  = capTag
                 local capSetName = setName
                 local capSetData = setData
+
+                -- ★ Copy-Button Logik
+                copyBtn.MouseButton1Click:Connect(function()
+                    local code, err = exportSetCode(capSetTag, capSetName, capSetData)
+                    if code then
+                        if setclipboard then
+                            setclipboard(code)
+                            copyBtn.Text="✅"; copyBtn.TextColor3=D.GreenBright
+                            task.delay(1.5, function() pcall(function()
+                                copyBtn.Text="📋"; copyBtn.TextColor3=D.CyanDim
+                            end) end)
+                        else
+                            loadFeedback.Text="⚠ setclipboard nicht verfügbar."
+                            loadFeedback.TextColor3=D.Orange
+                        end
+                    else
+                        loadFeedback.Text="❌ Export Fehler: " .. tostring(err)
+                        loadFeedback.TextColor3=D.Red
+                    end
+                end)
 
                 loadBtn.MouseButton1Click:Connect(function()
                     loadBtn.Active=false
@@ -647,6 +889,73 @@ end
 _G._RebuildEquipSetList = rebuildSetList
 
 -- ════════════════════════════════════════════════════════════
+--  SEKTION 5 — IMPORT / EXPORT
+-- ════════════════════════════════════════════════════════════
+local importCard = Card(EquipPage); Pad(importCard,10,12,10,12); VList(importCard,6)
+SecLbl(importCard, "📥  SET IMPORTIEREN")
+
+local importInfoLbl = MkLbl(importCard,
+    "Code aus Zwischenablage einfügen (📋-Button beim Set-Export).",
+    10, D.TextLow)
+importInfoLbl.Size=UDim2.new(1,0,0,0); importInfoLbl.AutomaticSize=Enum.AutomaticSize.Y
+importInfoLbl.TextWrapped=true
+
+local importRow = Instance.new("Frame", importCard)
+importRow.Size=UDim2.new(1,0,0,32); importRow.BackgroundTransparency=1; HList(importRow,6)
+
+local importOuter, importBox = MkInput(importRow, "Export-Code hier einfügen...")
+importOuter.Size = UDim2.new(0.72,0,0,32)
+
+local importBtn = Instance.new("TextButton", importRow)
+importBtn.Size=UDim2.new(0.25,0,0,32); importBtn.BackgroundColor3=D.Cyan
+importBtn.BackgroundTransparency=0.15; importBtn.Text="📥 Import"
+importBtn.TextColor3=Color3.new(1,1,1); importBtn.TextSize=11; importBtn.Font=Enum.Font.GothamBold
+importBtn.AutoButtonColor=false; importBtn.BorderSizePixel=0
+Corner(importBtn,7); Stroke(importBtn,D.Cyan,1,0.2)
+importBtn.MouseEnter:Connect(function() Tw(importBtn,{BackgroundTransparency=0.05}) end)
+importBtn.MouseLeave:Connect(function() Tw(importBtn,{BackgroundTransparency=0.15}) end)
+
+local importFeedback = MkLbl(importCard,"",10,D.TextLow); importFeedback.Size=UDim2.new(1,0,0,16)
+
+importBtn.MouseButton1Click:Connect(function()
+    local code = (importBox.Text or ""):match("^%s*(.-)%s*$")
+    if code == "" then
+        importFeedback.Text="⚠ Bitte einen Code eingeben."; importFeedback.TextColor3=D.Orange; return
+    end
+
+    local payload, err = importSetCode(code)
+    if not payload then
+        importFeedback.Text="❌ " .. tostring(err); importFeedback.TextColor3=D.Red; return
+    end
+
+    local unitTag  = payload.unitTag
+    local setName  = payload.setName
+    local setData  = payload.setData
+
+    -- Duplikat-Behandlung: Namen mit Suffix versehen wenn schon vorhanden
+    if EquipSets[unitTag] and EquipSets[unitTag][setName] then
+        local i = 2
+        while EquipSets[unitTag][setName .. " (" .. i .. ")"] do i = i + 1 end
+        setName = setName .. " (" .. i .. ")"
+    end
+
+    -- Einschreiben
+    if not EquipSets[unitTag] then EquipSets[unitTag] = {} end
+    EquipSets[unitTag][setName] = setData
+
+    saveFile()
+    _expanded[unitTag] = true  -- Gruppe aufklappen
+
+    importBox.Text = ""
+    importFeedback.Text=string.format("✅ Set '%s' importiert!", setName)
+    importFeedback.TextColor3=D.GreenBright
+    rebuildSetList()
+    setStatus("✅ Importiert: '" .. setName .. "'", D.GreenBright)
+
+    task.delay(5, function() pcall(function() importFeedback.Text="" end) end)
+end)
+
+-- ════════════════════════════════════════════════════════════
 --  SAVE BUTTON LOGIK
 -- ════════════════════════════════════════════════════════════
 saveSetBtn.MouseButton1Click:Connect(function()
@@ -671,8 +980,9 @@ saveSetBtn.MouseButton1Click:Connect(function()
     end
 
     -- Meta-Daten anhängen
-    gear.UnitName    = folder.Name        -- interner Ordnername
-    gear.DisplayName = _selectedName      -- lesbarer Anzeigename
+    gear.UnitName    = folder.Name
+    gear.DisplayName = _selectedName
+    gear.Stage       = (_saveStage ~= "") and _saveStage or nil  -- ★ Stage-Tag
 
     -- In EquipSets einschreiben: [unitTag][setName]
     if not EquipSets[_selectedTag] then EquipSets[_selectedTag] = {} end
